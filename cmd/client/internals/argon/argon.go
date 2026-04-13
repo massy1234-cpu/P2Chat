@@ -2,50 +2,42 @@ package argon
 
 import (
 	"fmt"
-
+	pb "P2Chat/cmd/client/internals/gen/mldsapb"
 	"github.com/awnumar/memguard"
 	"golang.org/x/crypto/argon2"
 )
 
-type ArgonParams struct {
-	time uint32
-	memory uint32
-	threads uint8
-	len uint32
-	version uint8
-	level int
-}
 
+func argon2Params(level int)(*pb.ArgonParams){
 
-func argon2Params(level int)(*ArgonParams){
-
-	var params ArgonParams
+ 	params := &pb.ArgonParams{}
 
 	switch(level){
 	case 1: 
-		params.time = 10
-		params.memory = 1024*1024
-		params.threads = 8
+		params.Time = 10
+		params.Memory = 1024*1024
+		params.Threads = 8
 	case 2:
-		params.time = 8
-		params.memory = 512*1024
-		params.threads = 6
+		params.Time = 8
+		params.Memory = 512*1024
+		params.Threads = 6
 	case 3:
-		params.time = 5
-		params.memory = 256*1024
-		params.threads = 4
+		params.Time = 5
+		params.Memory = 256*1024
+		params.Threads = 4
 	default:
-		params.time = 8
-		params.memory = 512*1024
-		params.threads = 6
+		params.Time = 8
+		params.Memory = 512*1024
+		params.Threads = 6
 	}
 
-	params.len = 32
-	params.version = argon2.Version
-	params.level = level
+	params.Len = 32
+	params.Version = uint32(argon2.Version)
+	params.Level = int32(level)
 
-	return &params
+	return params
 }
+
 
 func HashWithArgon(level int, password *memguard.LockedBuffer, salt []byte) (*memguard.LockedBuffer, error){
 
@@ -56,13 +48,8 @@ func HashWithArgon(level int, password *memguard.LockedBuffer, salt []byte) (*me
 	//create secure buffer
 	passwordHashed := memguard.NewBuffer(32)
 
-	hash := argon2.IDKey(password.Bytes(), salt, argonParams.time, argonParams.memory, argonParams.threads, argonParams.len )
+	hash := argon2.IDKey(password.Bytes(), salt, argonParams.Time, argonParams.Memory, uint8(argonParams.Threads), argonParams.Len )
 	copy(passwordHashed.Bytes(), hash)
-
-	err := ExportEncodedArgonString(level, salt)
-	if err != nil {
-		return nil, fmt.Errorf("Hashing with argon : error during saving params on file %w", err)
-	}
 
 	//cleanup hash in memory
 	memguard.WipeBytes(hash)

@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package mldsapb;
+
+option go_package = "./gen/mldsapb";
+
+//struct for the privatekey
+message PrivateKeyMLDSA {
+    bytes magic_byte = 1;
+    string algorithm = 2;
+    int64 timestamp = 3;
+    bytes nonce = 4;
+    bytes ciphertext = 5;
+    ArgonParams argon_params = 6; 
+}
+
+//struct for the argonparams
+message ArgonParams {
+    uint32 time = 1;
+	uint32 memory = 2;
+	uint32 threads = 3;
+	uint32 len = 4;
+	uint32 version = 5;
+	int32 level = 6; 
+}

@@ -37,7 +37,7 @@ func SaveDataOnFile(dataFile []byte, pathDir string, nameFile string) (error){
 }
 
 
-func CreateKeyStructure(salt []byte, data []byte, secretOrNot bool)([]byte) {
+func CreateKeyStructure(salt []byte, data []byte)([]byte) {
 
 	var dataFile []byte
 

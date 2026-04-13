@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:                         #qui ogni service diventerà un container separato
+  server-app:                     # Nome del container
+    build: ./server               # Cerca il Dockerfile nella cartella /server
+    container_name: go-server
+    ports:
+      - "8080:8080"               # [Porta PC]:[Porta dentro il Container]
+    volumes:
+      - ./cmd/server:/app         # Sincronizza il codice per lo sviluppo
+      - ./server-data:/root/db    # Dove salverai il database (es. SQLite o file)
+    networks:
+      - p2p-net
+
+  client-app:
+    build: ./cmd/client       # Cerca il Dockerfile nella cartella /client
+    container_name: go-client
+    stdin_open: true          # Permette l'interazione da terminale
+    tty: true                 # Fondamentale se il tuo client è a riga di comando
+    depends_on:
+      - server-app            # Non fa partire il client finché il server non è avviato
+    environment:
+      - SERVER_URL=http://server-app:8080 # Il client sa "chi" chiamare
+    networks:
+      - p2p-net               # Crea rete privata
+
+# --- LE INFRASTRUTTURE ---
+networks:
+  p2p-net:                    # Una rete isolata tutta per loro
+    driver: bridge
+
+volumes:
+  server-data:                # Lo "spazio disco" che non sparisce mai

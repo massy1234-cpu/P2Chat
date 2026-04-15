@@ -1,33 +1,39 @@
 package datacontrol
 
 import (
-	"P2Chat/cmd/client/internals/version"
-	"fmt"
+	pb "P2Chat/cmd/client/internals/gen/mldsapb"
+	"P2Chat/pkg/apperr"
+	"encoding/json"
+	"google.golang.org/protobuf/proto"
 	"os"
 	"path/filepath"
-	"crypto/sha256"
 )
 
-func SaveDataOnFile(dataFile []byte, pathDir string, nameFile string) (error){
-	
-	//check dir 
-	err := os.MkdirAll(pathDir, 0700)
-	if err != nil {
-		return fmt.Errorf("Saving data on file -> error to create path %w", err)
-	}
+type PublicKeyMLDSA struct {
+	Algorithm            string `json:"Algorithm"`
+	P2ChatVersion        string `json:"P2Chat Version"`
+	Timestamp            string `json:"Timestamp"`
+	PublicKeyMLDSABase64 string `json:"Public Key raw ( base 64 )"`
+}
 
+func SaveBytesOnFile(dataFile []byte, pathDir string, nameFile string) error {
+
+	//check dir
+	err := os.MkdirAll(pathDir, 0700) //need execution
+	if err != nil {
+		return apperr.Wrap("create data directory", err)
+	}
 
 	//write data and put permission only to the root
 	fullPath := filepath.Join(pathDir, nameFile)
 	err = os.WriteFile(fullPath, dataFile, 0600)
 	if err != nil {
-		return fmt.Errorf("Saving data on file -> error during write data %w", err)
+		return apperr.Wrap("write data file", err)
 	}
-
 
 	err = os.Chmod(fullPath, 0600)
 	if err != nil {
-		return fmt.Errorf("Saving data on file -> error during permission setting %w", err)
+		return apperr.Wrap("set file permissions", err)
 	}
 
 	//0600 -> read and write only owner
@@ -36,40 +42,34 @@ func SaveDataOnFile(dataFile []byte, pathDir string, nameFile string) (error){
 
 }
 
+func SavePrivateKeyMLDSA(privateKey *pb.PrivateKeyMLDSA) error {
 
-func CreateKeyStructure(salt []byte, data []byte)([]byte) {
-
-	var dataFile []byte
-
-	if ( secretOrNot ) {
-		//saving PrivateKey
-		//structure of SK
-		//[magicbyte][nonce][Ciphertext][alldata checksum]
-
-		dataFile = make([]byte, 0, len(version.MagicByte()) + len(salt) + len(data))
-
-		dataFile = append(dataFile, version.MagicByte()...)
-		dataFile = append(dataFile, data...)
-		
-		//checksum for all dataFile
-		checksumDataFile := sha256.Sum256(dataFile)
-
-		dataFile = append(dataFile, checksumDataFile[:]...)
-
-	}else{
-		//saving PublicKey
-		//structure of PK
-		//[Public Key][checksum]
-
-		checksumDataFile := sha256.Sum256(data)
-		dataFile = make([]byte, 0, len(data) + len(checksumDataFile))
-
-		dataFile = append(dataFile, version.MagicByte()...)
-		dataFile = append(dataFile, data... )
-		dataFile = append(dataFile, checksumDataFile[:]...)
-
+	streamByte, err := proto.Marshal(privateKey)
+	if err != nil {
+		return apperr.Wrap("marshal private key", err)
 	}
 
-	return dataFile
+	err = SaveBytesOnFile(streamByte, "data/", "SK.bin")
+	if err != nil {
+		return apperr.Wrap("persist private key", err)
+	}
+
+	return nil
+
+}
+
+func SavePublicKeyMLDSA(publicKey PublicKeyMLDSA) error {
+
+	streamByte, err := json.MarshalIndent(publicKey, "", " ")
+	if err != nil {
+		return apperr.Wrap("marshal public key", err)
+	}
+
+	err = SaveBytesOnFile(streamByte, "data/", "PK.json")
+	if err != nil {
+		return apperr.Wrap("persist public key", err)
+	}
+
+	return nil
 
 }

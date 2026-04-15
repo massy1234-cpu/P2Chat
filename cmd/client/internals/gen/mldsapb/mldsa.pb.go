@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.34.1
-// source: proto/mldsa.proto
+// source: cmd/client/internals/proto/mldsa.proto
 
 package mldsapb
 
@@ -24,7 +24,7 @@ const (
 // struct for the privatekey
 type PrivateKeyMLDSA struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	MagicByte     []byte                 `protobuf:"bytes,1,opt,name=magic_byte,json=magicByte,proto3" json:"magic_byte,omitempty"`
+	P2ChatVersion []byte                 `protobuf:"bytes,1,opt,name=p2chat_version,json=p2chatVersion,proto3" json:"p2chat_version,omitempty"`
 	Algorithm     string                 `protobuf:"bytes,2,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
 	Timestamp     int64                  `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	Nonce         []byte                 `protobuf:"bytes,4,opt,name=nonce,proto3" json:"nonce,omitempty"`
@@ -36,7 +36,7 @@ type PrivateKeyMLDSA struct {
 
 func (x *PrivateKeyMLDSA) Reset() {
 	*x = PrivateKeyMLDSA{}
-	mi := &file_proto_mldsa_proto_msgTypes[0]
+	mi := &file_cmd_client_internals_proto_mldsa_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -48,7 +48,7 @@ func (x *PrivateKeyMLDSA) String() string {
 func (*PrivateKeyMLDSA) ProtoMessage() {}
 
 func (x *PrivateKeyMLDSA) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_mldsa_proto_msgTypes[0]
+	mi := &file_cmd_client_internals_proto_mldsa_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -61,12 +61,12 @@ func (x *PrivateKeyMLDSA) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrivateKeyMLDSA.ProtoReflect.Descriptor instead.
 func (*PrivateKeyMLDSA) Descriptor() ([]byte, []int) {
-	return file_proto_mldsa_proto_rawDescGZIP(), []int{0}
+	return file_cmd_client_internals_proto_mldsa_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *PrivateKeyMLDSA) GetMagicByte() []byte {
+func (x *PrivateKeyMLDSA) GetP2ChatVersion() []byte {
 	if x != nil {
-		return x.MagicByte
+		return x.P2ChatVersion
 	}
 	return nil
 }
@@ -115,13 +115,14 @@ type ArgonParams struct {
 	Len           uint32                 `protobuf:"varint,4,opt,name=len,proto3" json:"len,omitempty"`
 	Version       uint32                 `protobuf:"varint,5,opt,name=version,proto3" json:"version,omitempty"`
 	Level         int32                  `protobuf:"varint,6,opt,name=level,proto3" json:"level,omitempty"`
+	Salt          []byte                 `protobuf:"bytes,7,opt,name=salt,proto3" json:"salt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ArgonParams) Reset() {
 	*x = ArgonParams{}
-	mi := &file_proto_mldsa_proto_msgTypes[1]
+	mi := &file_cmd_client_internals_proto_mldsa_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -133,7 +134,7 @@ func (x *ArgonParams) String() string {
 func (*ArgonParams) ProtoMessage() {}
 
 func (x *ArgonParams) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_mldsa_proto_msgTypes[1]
+	mi := &file_cmd_client_internals_proto_mldsa_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -146,7 +147,7 @@ func (x *ArgonParams) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ArgonParams.ProtoReflect.Descriptor instead.
 func (*ArgonParams) Descriptor() ([]byte, []int) {
-	return file_proto_mldsa_proto_rawDescGZIP(), []int{1}
+	return file_cmd_client_internals_proto_mldsa_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *ArgonParams) GetTime() uint32 {
@@ -191,47 +192,54 @@ func (x *ArgonParams) GetLevel() int32 {
 	return 0
 }
 
-var File_proto_mldsa_proto protoreflect.FileDescriptor
+func (x *ArgonParams) GetSalt() []byte {
+	if x != nil {
+		return x.Salt
+	}
+	return nil
+}
 
-const file_proto_mldsa_proto_rawDesc = "" +
+var File_cmd_client_internals_proto_mldsa_proto protoreflect.FileDescriptor
+
+const file_cmd_client_internals_proto_mldsa_proto_rawDesc = "" +
 	"\n" +
-	"\x11proto/mldsa.proto\x12\amldsapb\"\xdb\x01\n" +
-	"\x0fPrivateKeyMLDSA\x12\x1d\n" +
-	"\n" +
-	"magic_byte\x18\x01 \x01(\fR\tmagicByte\x12\x1c\n" +
+	"&cmd/client/internals/proto/mldsa.proto\x12\amldsapb\"\xe3\x01\n" +
+	"\x0fPrivateKeyMLDSA\x12%\n" +
+	"\x0ep2chat_version\x18\x01 \x01(\fR\rp2chatVersion\x12\x1c\n" +
 	"\talgorithm\x18\x02 \x01(\tR\talgorithm\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x14\n" +
 	"\x05nonce\x18\x04 \x01(\fR\x05nonce\x12\x1e\n" +
 	"\n" +
 	"ciphertext\x18\x05 \x01(\fR\n" +
 	"ciphertext\x127\n" +
-	"\fargon_params\x18\x06 \x01(\v2\x14.mldsapb.ArgonParamsR\vargonParams\"\x95\x01\n" +
+	"\fargon_params\x18\x06 \x01(\v2\x14.mldsapb.ArgonParamsR\vargonParams\"\xa9\x01\n" +
 	"\vArgonParams\x12\x12\n" +
 	"\x04time\x18\x01 \x01(\rR\x04time\x12\x16\n" +
 	"\x06memory\x18\x02 \x01(\rR\x06memory\x12\x18\n" +
 	"\athreads\x18\x03 \x01(\rR\athreads\x12\x10\n" +
 	"\x03len\x18\x04 \x01(\rR\x03len\x12\x18\n" +
 	"\aversion\x18\x05 \x01(\rR\aversion\x12\x14\n" +
-	"\x05level\x18\x06 \x01(\x05R\x05levelB\x0fZ\r./gen/mldsapbb\x06proto3"
+	"\x05level\x18\x06 \x01(\x05R\x05level\x12\x12\n" +
+	"\x04salt\x18\a \x01(\fR\x04saltB\"Z cmd/client/internals/gen/mldsapbb\x06proto3"
 
 var (
-	file_proto_mldsa_proto_rawDescOnce sync.Once
-	file_proto_mldsa_proto_rawDescData []byte
+	file_cmd_client_internals_proto_mldsa_proto_rawDescOnce sync.Once
+	file_cmd_client_internals_proto_mldsa_proto_rawDescData []byte
 )
 
-func file_proto_mldsa_proto_rawDescGZIP() []byte {
-	file_proto_mldsa_proto_rawDescOnce.Do(func() {
-		file_proto_mldsa_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_mldsa_proto_rawDesc), len(file_proto_mldsa_proto_rawDesc)))
+func file_cmd_client_internals_proto_mldsa_proto_rawDescGZIP() []byte {
+	file_cmd_client_internals_proto_mldsa_proto_rawDescOnce.Do(func() {
+		file_cmd_client_internals_proto_mldsa_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_cmd_client_internals_proto_mldsa_proto_rawDesc), len(file_cmd_client_internals_proto_mldsa_proto_rawDesc)))
 	})
-	return file_proto_mldsa_proto_rawDescData
+	return file_cmd_client_internals_proto_mldsa_proto_rawDescData
 }
 
-var file_proto_mldsa_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_proto_mldsa_proto_goTypes = []any{
+var file_cmd_client_internals_proto_mldsa_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_cmd_client_internals_proto_mldsa_proto_goTypes = []any{
 	(*PrivateKeyMLDSA)(nil), // 0: mldsapb.PrivateKeyMLDSA
 	(*ArgonParams)(nil),     // 1: mldsapb.ArgonParams
 }
-var file_proto_mldsa_proto_depIdxs = []int32{
+var file_cmd_client_internals_proto_mldsa_proto_depIdxs = []int32{
 	1, // 0: mldsapb.PrivateKeyMLDSA.argon_params:type_name -> mldsapb.ArgonParams
 	1, // [1:1] is the sub-list for method output_type
 	1, // [1:1] is the sub-list for method input_type
@@ -240,26 +248,26 @@ var file_proto_mldsa_proto_depIdxs = []int32{
 	0, // [0:1] is the sub-list for field type_name
 }
 
-func init() { file_proto_mldsa_proto_init() }
-func file_proto_mldsa_proto_init() {
-	if File_proto_mldsa_proto != nil {
+func init() { file_cmd_client_internals_proto_mldsa_proto_init() }
+func file_cmd_client_internals_proto_mldsa_proto_init() {
+	if File_cmd_client_internals_proto_mldsa_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_mldsa_proto_rawDesc), len(file_proto_mldsa_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cmd_client_internals_proto_mldsa_proto_rawDesc), len(file_cmd_client_internals_proto_mldsa_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_proto_mldsa_proto_goTypes,
-		DependencyIndexes: file_proto_mldsa_proto_depIdxs,
-		MessageInfos:      file_proto_mldsa_proto_msgTypes,
+		GoTypes:           file_cmd_client_internals_proto_mldsa_proto_goTypes,
+		DependencyIndexes: file_cmd_client_internals_proto_mldsa_proto_depIdxs,
+		MessageInfos:      file_cmd_client_internals_proto_mldsa_proto_msgTypes,
 	}.Build()
-	File_proto_mldsa_proto = out.File
-	file_proto_mldsa_proto_goTypes = nil
-	file_proto_mldsa_proto_depIdxs = nil
+	File_cmd_client_internals_proto_mldsa_proto = out.File
+	file_cmd_client_internals_proto_mldsa_proto_goTypes = nil
+	file_cmd_client_internals_proto_mldsa_proto_depIdxs = nil
 }

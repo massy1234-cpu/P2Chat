@@ -1,16 +1,16 @@
 package encryption
 
 import (
-	"fmt"
+	"P2Chat/pkg/apperr"
 	"crypto/rand"
 )
 
-func GenerateSalt(lenght int) ( []byte, error ) {
-	salt := make([]byte, lenght)
+func GenerateSalt() ([]byte, error) {
+	salt := make([]byte, 32)
 	_, err := rand.Read(salt) //creation of salt
 
 	if err != nil {
-		return nil,fmt.Errorf("Generator Salt -> failed to generate salt %w", err)
+		return nil, apperr.Wrap("generate salt", err)
 	}
 
 	return salt[:], nil

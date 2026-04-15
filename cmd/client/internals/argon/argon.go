@@ -1,14 +1,13 @@
 package argon
 
 import (
-	"fmt"
 	pb "P2Chat/cmd/client/internals/gen/mldsapb"
 	"github.com/awnumar/memguard"
 	"golang.org/x/crypto/argon2"
 )
 
 
-func argon2Params(level int)(*pb.ArgonParams){
+func CreateArgonParams(level int)(*pb.ArgonParams){
 
  	params := &pb.ArgonParams{}
 
@@ -42,10 +41,10 @@ func argon2Params(level int)(*pb.ArgonParams){
 func HashWithArgon(level int, password *memguard.LockedBuffer, salt []byte) (*memguard.LockedBuffer, error){
 
 	//create params for use Argon2Id
-	argonParams := argon2Params(level)
+	argonParams := CreateArgonParams(level)
 
 
-	//create secure buffer
+	//create secure buffer, 32 byte AES-256 friendly
 	passwordHashed := memguard.NewBuffer(32)
 
 	hash := argon2.IDKey(password.Bytes(), salt, argonParams.Time, argonParams.Memory, uint8(argonParams.Threads), argonParams.Len )

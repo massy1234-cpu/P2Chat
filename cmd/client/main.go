@@ -3,8 +3,8 @@ package main
 import (
 	"P2Chat/cmd/client/internals/errors"
 	"P2Chat/cmd/client/internals/keys"
-	"P2Chat/cmd/client/internals/argon"
 	"fmt"
+	"github.com/awnumar/memguard"
 )
 
 func main(){
@@ -14,14 +14,10 @@ func main(){
 	}()
 
 
-	err := keys.CreateKeys()
+	password := memguard.NewBuffer(len("prova"))
+	copy(password.Bytes(), []byte("prova"))
+	err := keys.CreateKeys(3, password)
 
-	if err != nil {
-		fmt.Println("Errore : %w", err)
-	}
-
-	_, hash, err := argon.ExtractParams()
-	fmt.Print(hash)
-	fmt.Print(err)
+	fmt.Println(err)
 
 }

@@ -5,86 +5,95 @@ import (
 	"P2Chat/cmd/client/internals/argon"
 	"P2Chat/cmd/client/internals/datacontrol"
 	"P2Chat/cmd/client/internals/encryption"
-	"fmt"
 	pb "P2Chat/cmd/client/internals/gen/mldsapb"
+	"P2Chat/cmd/client/internals/p2version"
+	"P2Chat/pkg/apperr"
+	"encoding/base64"
 	"github.com/awnumar/memguard"
+	"time"
 )
 
-
-
-func CreateKeys() (error) {
+func CreateKeys(level int, password *memguard.LockedBuffer) error {
 
 	//Generation of the keys
-	publicKey, privateKey, err := mldsa87.GenerateKey(nil)
-
+	publicKey, privateKeyExposed, err := mldsa87.GenerateKey(nil)
 	if err != nil {
-		return fmt.Errorf("Errore nella creazione delle chiavi... %w", err)
+		return apperr.Wrap("generate ML-DSA keypair", err)
 	}
 
-	//delete the struct and other variablesin memory and keep only bytes 
-	privateKeySecured := memguard.NewBuffer(mldsa87.PrivateKeySize)
+	privateKey := memguard.NewBuffer(privateKeyExposed.Scheme().PrivateKeySize())
+	rawPrivate := privateKeyExposed.Bytes()
+	copy(privateKey.Bytes(), rawPrivate)
+	memguard.WipeBytes(rawPrivate)
+	privateKeyExposed.Destroy()
 
-	rawBytes := privateKey.Bytes()
-	copy(privateKeySecured.Bytes(), rawBytes)
-	privateKey.Destroy()
-	memguard.WipeBytes(rawBytes)
+	//encrypt private key ML-DSA-87
+	rawKeyEncrypted, nonce, salt, err := encryption.EncryptPrivateKeyMLDSA(password, privateKey, level)
+	if err != nil {
+		return apperr.Wrap("protect private key", err)
+	}
 
-	pass := memguard.NewBuffer(len("prova"))
+	err = StoreKeys(level, rawKeyEncrypted, publicKey.Bytes(), nonce, salt)
+	if err != nil {
+		return apperr.Wrap("store generated keys", err)
+	}
 
-	err = protectAndStoreKeys(pass, 3, privateKeySecured, *publicKey)
-
-	return err
+	return nil
 
 }
 
+// function that create the keys ( protect the memory with memguard ) and save the keys in the data folder
+func StoreKeys(level int, rawKeyPrivateEncrypted []byte, rawKeyPublic []byte, nonce []byte, salt []byte) error {
 
-//function that create the keys ( protect the memory with memguard ) and save the keys in the data folder
-func protectAndStoreKeys(password *memguard.LockedBuffer, level int, privateKey *memguard.LockedBuffer, publicKey mldsa87.PublicKey) (error) {
-
-	//creation of struct for the privatekey ML-DSA and argonparams
-	privateKeyMLDSA := &pb.PrivateKeyMLDSA{}
-	argon
-
-	defer password.Destroy()
-
-	salt, err := encryption.GenerateSalt(16) //minimum number of byte for a secure derivation
+	//PrivateKey struct
+	privateKeyMLDSA, err := fillPrivateKeyMLDSA(level, "ML-DSA-87", rawKeyPrivateEncrypted, nonce, salt)
 	if err != nil {
-		return fmt.Errorf("Encrypt : failed to create salt -> %w", err)
+		return apperr.Wrap("build private key payload", err)
 	}
 
-	passwordHashed, err := argon.HashWithArgon(level, password, salt)
-	defer passwordHashed.Destroy()
+	//PublicKey struct
+	publicKeyMLDSA := fillPublicKeyMLDSA("ML-DSA-87", rawKeyPublic)
+
+	//save keys on file
+	err = datacontrol.SavePrivateKeyMLDSA(privateKeyMLDSA)
 	if err != nil {
-		return fmt.Errorf("Encrypt : failed to hashing password with Argon -> %w", err)
+		return err
 	}
 
-
-	//Structure of ciphertext
-	//[nonce + ciphertext + checksum]
-	ciphertext, err := encryption.EncryptAes256(passwordHashed, privateKey)
-	defer privateKey.Destroy() 
-
+	err = datacontrol.SavePublicKeyMLDSA(*publicKeyMLDSA)
 	if err != nil {
-		return fmt.Errorf("Encrypt : failed to encrypt with AES256 -> %w", err)
+		return err
 	}
-	
-
-	//da qui va cambiato 
-	dataFile := datacontrol.CreateKeyStructure(salt, ciphertext, true)
-
-	err = datacontrol.SaveDataOnFile(dataFile, "data", "SK.dat")
-	if err != nil {
-		return fmt.Errorf("Encrypt : failed to save SK -> %w", err)
-	}
-
-
-	dataFile = datacontrol.CreateKeyStructure(nil, publicKey.Bytes(), false)
-
-	err = datacontrol.SaveDataOnFile(dataFile, "data", "PK.dat")
-	if err != nil {
-		return fmt.Errorf("Encrypt : failed to save PK -> %w", err)
-	}
-
 
 	return nil
+}
+
+func fillPrivateKeyMLDSA(level int, algorithm string, rawKeyEncrypted []byte, nonce []byte, salt []byte) (*pb.PrivateKeyMLDSA, error) {
+
+	privateKeyStruct := &pb.PrivateKeyMLDSA{}
+	argonParams := argon.CreateArgonParams(level)
+
+	privateKeyStruct.Algorithm = algorithm
+	privateKeyStruct.ArgonParams = argon.CreateArgonParams(level)
+	privateKeyStruct.Ciphertext = rawKeyEncrypted
+	privateKeyStruct.Nonce = nonce
+	privateKeyStruct.P2ChatVersion = p2version.MagicByte()
+	privateKeyStruct.Timestamp = time.Now().Unix()
+
+	argonParams.Salt = salt
+
+	privateKeyStruct.ArgonParams = argonParams
+
+	return privateKeyStruct, nil
+}
+
+func fillPublicKeyMLDSA(algoritm string, rawPublicKey []byte) *datacontrol.PublicKeyMLDSA {
+
+	var publicKey datacontrol.PublicKeyMLDSA
+	publicKey.Algorithm = algoritm
+	publicKey.P2ChatVersion = string(p2version.MagicByte())
+	publicKey.Timestamp = time.Now().String()
+	publicKey.PublicKeyMLDSABase64 = base64.StdEncoding.EncodeToString(rawPublicKey)
+
+	return &publicKey
 }

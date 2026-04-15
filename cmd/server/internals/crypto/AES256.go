@@ -1,34 +1,34 @@
 package crypto
 
 import (
-	"fmt"
-	"crypto/rand"
-	"github.com/awnumar/memguard"
+	"P2Chat/pkg/apperr"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
+	"github.com/awnumar/memguard"
 )
 
-func GenerateSalt(lenght int) ( []byte, error ) {
+func GenerateSalt(lenght int) ([]byte, error) {
 	salt := make([]byte, lenght)
 	_, err := rand.Read(salt) //creation of salt
 
 	if err != nil {
-		return nil,fmt.Errorf("Generator Salt -> failed to generate salt %w", err)
+		return nil, apperr.Wrap("generate salt", err)
 	}
 
 	return salt[:], nil
 }
 
-func EncryptAes256(passwordHashed *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuffer)([]byte, error){
+func EncryptAes256(passwordHashed *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuffer) ([]byte, error) {
 
 	block, err := aes.NewCipher(passwordHashed.Bytes())
 	if err != nil {
-		return nil, fmt.Errorf("AES New Chiper : error %w", err)
+		return nil, apperr.Wrap("create AES cipher", err)
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("Chiper New GCM : error %w", err)
+		return nil, apperr.Wrap("create AES-GCM", err)
 	}
 
 	//creating nonce
@@ -36,10 +36,10 @@ func EncryptAes256(passwordHashed *memguard.LockedBuffer, byteToEncrypt *memguar
 	_, err = rand.Read(nonce)
 
 	if err != nil {
-		return nil, fmt.Errorf("Encrypt Creating Nounce : error %w", err)
+		return nil, apperr.Wrap("generate nonce", err)
 	}
 
-	ciphertext := gcm.Seal(nonce, nonce, byteToEncrypt.Bytes() , nil)
+	ciphertext := gcm.Seal(nonce, nonce, byteToEncrypt.Bytes(), nil)
 
 	return ciphertext, nil
 }

@@ -2,11 +2,11 @@ syntax = "proto3";
 
 package mldsapb;
 
-option go_package = "./gen/mldsapb";
+option go_package = "cmd/client/internals/gen/mldsapb";
 
 //struct for the privatekey
 message PrivateKeyMLDSA {
-    bytes magic_byte = 1;
+    bytes p2chat_version = 1;
     string algorithm = 2;
     int64 timestamp = 3;
     bytes nonce = 4;
@@ -21,5 +21,6 @@ message ArgonParams {
 	uint32 threads = 3;
 	uint32 len = 4;
 	uint32 version = 5;
-	int32 level = 6; 
+	int32 level = 6;
+    bytes salt = 7; 
 }

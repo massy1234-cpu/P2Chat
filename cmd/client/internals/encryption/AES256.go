@@ -8,14 +8,18 @@ import (
 	"github.com/awnumar/memguard"
 )
 
-func EncryptAes256(passwordHashed *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuffer) ([]byte, []byte, error) {
+//the key in the encrypt and decrypt must be 32 bytes
 
-	password := passwordHashed.Bytes()
+func EncryptAes256(aesKey *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuffer) ([]byte, []byte, error) {
+
+	//aesKey.Bytes() return a reference to the protect memory area, so when i wipebytes the password i wipe also the aesKey
+	password := make([]byte, len(aesKey.Bytes()))
+	copy(password, aesKey.Bytes())
 	block, err := aes.NewCipher(password)
-	memguard.WipeBytes(password)
 	if err != nil {
 		return nil, nil, apperr.Wrap("create AES cipher", err)
 	}
+	defer memguard.WipeBytes(password)
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
@@ -36,13 +40,16 @@ func EncryptAes256(passwordHashed *memguard.LockedBuffer, byteToEncrypt *memguar
 	return ciphertext, nonce, nil
 }
 
-func DecryptAes256(passwordHashed *memguard.LockedBuffer, nonce []byte, byteToDecypt []byte) (*memguard.LockedBuffer, error) {
-	password := passwordHashed.Bytes()
+
+func DecryptAes256(aesKey *memguard.LockedBuffer, nonce []byte, byteToDecypt []byte) (*memguard.LockedBuffer, error) {
+	
+password := make([]byte, len(aesKey.Bytes()))
+	copy(password, aesKey.Bytes())
 	block, err := aes.NewCipher(password)
-	memguard.WipeBytes(password)
 	if err != nil {
 		return nil, apperr.Wrap("create AES cipher", err)
 	}
+	defer memguard.WipeBytes(password)
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
@@ -58,7 +65,9 @@ func DecryptAes256(passwordHashed *memguard.LockedBuffer, nonce []byte, byteToDe
 	}
 
 	plaintextSecured := memguard.NewBuffer(len(plaintext))
-	copy(plaintextSecured.Bytes(), plaintext[:])
+	copy(plaintextSecured.Bytes(), plaintext)
+	
+	defer memguard.WipeBytes(plaintext)
 
 	return plaintextSecured, nil
 }

@@ -71,7 +71,6 @@ func StoreKeys(level int, rawKeyPrivateEncrypted []byte, rawKeyPublic []byte, no
 func fillPrivateKeyMLDSA(level int, algorithm string, rawKeyEncrypted []byte, nonce []byte, salt []byte) (*pb.PrivateKeyMLDSA, error) {
 
 	privateKeyStruct := &pb.PrivateKeyMLDSA{}
-	argonParams := argon.CreateArgonParams(level)
 
 	privateKeyStruct.Algorithm = algorithm
 	privateKeyStruct.ArgonParams = argon.CreateArgonParams(level)
@@ -80,9 +79,7 @@ func fillPrivateKeyMLDSA(level int, algorithm string, rawKeyEncrypted []byte, no
 	privateKeyStruct.P2ChatVersion = p2version.MagicByte()
 	privateKeyStruct.Timestamp = time.Now().Unix()
 
-	argonParams.Salt = salt
-
-	privateKeyStruct.ArgonParams = argonParams
+	privateKeyStruct.ArgonParams.Salt = salt
 
 	return privateKeyStruct, nil
 }

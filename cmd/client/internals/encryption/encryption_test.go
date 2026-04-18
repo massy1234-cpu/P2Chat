@@ -47,6 +47,4 @@ func TestEncryptionAndDecryption(t *testing.T) {
 		t.Fatalf("error, decrypt failed")
 	}
 
-
-
 }

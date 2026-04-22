@@ -10,16 +10,18 @@ import (
 
 //the key in the encrypt and decrypt must be 32 bytes
 
-func EncryptAes256(aesKey *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuffer) ([]byte, []byte, error) {
+func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuffer) ([]byte, []byte, error) {
 
-	//aesKey.Bytes() return a reference to the protect memory area, so when i wipebytes the password i wipe also the aesKey
-	password := make([]byte, len(aesKey.Bytes()))
-	copy(password, aesKey.Bytes())
-	block, err := aes.NewCipher(password)
+	//the check for the minimum lenght of the key is do on another func
+
+	//cannot wipe directly aeskey.Bytes()
+	aesKey := make([]byte, len(key.Bytes()))
+	copy(aesKey, key.Bytes())
+	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		return nil, nil, apperr.Wrap("create AES cipher", err)
 	}
-	defer memguard.WipeBytes(password)
+	defer memguard.WipeBytes(aesKey)
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
@@ -41,15 +43,15 @@ func EncryptAes256(aesKey *memguard.LockedBuffer, byteToEncrypt *memguard.Locked
 }
 
 
-func DecryptAes256(aesKey *memguard.LockedBuffer, nonce []byte, byteToDecypt []byte) (*memguard.LockedBuffer, error) {
+func DecryptAes256(key *memguard.LockedBuffer, nonce []byte, byteToDecypt []byte) (*memguard.LockedBuffer, error) {
 	
-password := make([]byte, len(aesKey.Bytes()))
-	copy(password, aesKey.Bytes())
-	block, err := aes.NewCipher(password)
+	aesKey := make([]byte, len(key.Bytes()))
+	copy(aesKey, key.Bytes())
+	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		return nil, apperr.Wrap("create AES cipher", err)
 	}
-	defer memguard.WipeBytes(password)
+	defer memguard.WipeBytes(aesKey)
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {

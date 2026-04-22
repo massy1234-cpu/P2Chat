@@ -3,30 +3,24 @@ package encryption
 import (
 	"P2Chat/cmd/client/internals/argon"
 	"bytes"
-	"encoding/base64"
-	"fmt"
 	"testing"
 
 	"github.com/awnumar/memguard"
 )
 
+//Simple test that encrypt and decrypt
 func TestEncryptionAndDecryption(t *testing.T) {
 
-	a := []byte("password")
-	s := []byte("that's a really important secret!")
+	password := Encaps("password")
+	secret := Encaps("really important secret!!!")
 
-	pass := memguard.NewBuffer(len(a))
-	copy(pass.Bytes(), a)
-
-	secret := memguard.NewBuffer(len(s))
-	copy(secret.Bytes(), s)
 
 	salt, err := GenerateSalt()
 	if err != nil {
 		t.Fatalf("error during generating salt")
 	}
 
-	aesKey, err := argon.HashWithArgon(3, pass, salt)
+	aesKey, err := argon.HashWithArgon(3, password, salt)
 	if err != nil{
 		t.Fatalf("error during create aeskey")
 	}
@@ -35,16 +29,90 @@ func TestEncryptionAndDecryption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error during encrypting")
 	}
-	fmt.Println("cipertext ( base64 ) : ", base64.RawStdEncoding.EncodeToString(ciphertext))
 
 	plaintext, err := DecryptAes256(aesKey, nonce, ciphertext)
 	if err != nil {
 		t.Fatal("error during decrypt",err)
 	}
-	fmt.Println("plaintext ( base64 ) : ", string(plaintext.Bytes()))
 
 	if !( bytes.Equal(plaintext.Bytes(), secret.Bytes() ) ) {
 		t.Fatalf("error, decrypt failed")
 	}
 
+}
+
+//Encrypt and Decrypt byt with fuzz ( randomic inputs )
+func FuzzEncryptAndDecrypt(f *testing.F) {
+	f.Add([]byte("password"), []byte("secret"))
+	f.Add([]byte("password2"), []byte("secret2"))
+
+	f.Fuzz(func(t *testing.T, password []byte, plain []byte){
+		
+		//func doesnt accept password that are nil
+		if len(password) == 0 {
+			t.Skip()
+		}
+
+
+		pass := memguard.NewBuffer(len(password))
+		copy(pass.Bytes(), password)
+
+		secret := memguard.NewBuffer(len(plain))
+		copy(secret.Bytes(), plain)
+
+		salt, err := GenerateSalt()
+		if err != nil {
+			t.Fatal("error during generating salt", err)
+		}
+
+		aesKey, err := argon.HashWithArgon(3, pass, salt)
+		if err != nil{
+			t.Fatal("error during create aeskey", err, len(password))
+		}
+
+		ciphertext, nonce, err := EncryptAes256(aesKey,secret )
+		if err != nil {
+			t.Fatal("error during encrypting", err)
+		}
+
+		plaintext, err := DecryptAes256(aesKey, nonce, ciphertext)
+		if err != nil {
+			t.Fatal("error during decrypt",err)
+		}
+
+		if !( bytes.Equal(plaintext.Bytes(), secret.Bytes() ) ) {
+			t.Fatalf("error, decrypt failed")
+		}
+	})
+}
+
+
+//Test the case we want to decrypt something with wrong password
+func TestEncryptFailed(t *testing.T){
+
+	password := Encaps("password_correct")
+	secret := Encaps("really important secret!!!")
+
+
+	salt, err := GenerateSalt()
+	if err != nil {
+		t.Fatalf("error during generating salt")
+	}
+
+	aesKey, err := argon.HashWithArgon(3, password, salt)
+	if err != nil{
+		t.Fatalf("error during create aeskey")
+	}
+
+	ciphertext, nonce, err := EncryptAes256(aesKey,secret )
+	if err != nil {
+		t.Fatalf("error during encrypting")
+	}
+
+	//tries to decrypt with wrong password
+	aesKey, err = argon.HashWithArgon(3, Encaps("wrong_password"), salt)
+	_, err = DecryptAes256(aesKey, nonce, ciphertext)
+	if err != nil {
+		t.Log("wrong password detected, decrypt failed")
+	}
 }

@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-//Generate the pair of ml-dsa87 keys and choose if save on file
+// Generate the pair of ml-dsa87 keys and choose if save on file
 func CreateMLDSAKeys(level int, password *memguard.LockedBuffer, store bool) (*pb.PrivateKeyMLDSA, *datacontrol.PublicKeyMLDSA, error) {
 
 	//Generation of the keys
@@ -24,23 +24,26 @@ func CreateMLDSAKeys(level int, password *memguard.LockedBuffer, store bool) (*p
 
 	privateKey := memguard.NewBuffer(privateKeyExposed.Scheme().PrivateKeySize())
 	rawPrivate := privateKeyExposed.Bytes()
+
 	copy(privateKey.Bytes(), rawPrivate)
 	memguard.WipeBytes(rawPrivate)
-	privateKeyExposed.Destroy()
+	defer privateKeyExposed.Destroy()
 
 	//encrypt private key ML-DSA-87
 	rawKeyEncrypted, nonce, salt, err := encryption.EncryptPrivateKey(password, privateKey, level)
 	if err != nil {
-		return nil, nil,apperr.Wrap("protect private key", err)
+		return nil, nil, apperr.Wrap("protect private key", err)
 	}
 
-	var privateKeyStruct *pb.PrivateKeyMLDSA
-	var publicKeyStruct *datacontrol.PublicKeyMLDSA
+	privateKeyStruct, publicKeyStruct, err := fillKeyPairMLDSA(level, "ML-DSA-87", rawKeyEncrypted, publicKey.Bytes(), nonce, salt)
+	if err != nil {
+		return nil, nil, apperr.Wrap("build generated key payloads", err)
+	}
 
 	if store {
-		privateKeyStruct, publicKeyStruct, err = StoreKeys(level, rawKeyEncrypted, publicKey.Bytes(), nonce, salt)
+		err = StoreKeysMLDSA(privateKeyStruct, *publicKeyStruct)
 		if err != nil {
-			return nil, nil,apperr.Wrap("store generated keys", err)
+			return nil, nil, apperr.Wrap("store generated keys", err)
 		}
 	}
 
@@ -48,28 +51,36 @@ func CreateMLDSAKeys(level int, password *memguard.LockedBuffer, store bool) (*p
 
 }
 
-//Receive the keys and saves in the "data" folder
-func StoreKeys(level int, rawKeyPrivateEncrypted []byte, rawKeyPublic []byte, nonce []byte, salt []byte) ( *pb.PrivateKeyMLDSA, *datacontrol.PublicKeyMLDSA, error ) {
+// Create both key payloads starting from the generated raw data.
+func fillKeyPairMLDSA(level int, algorithm string, rawKeyEncrypted []byte, rawKeyPublic []byte, nonce []byte, salt []byte) (*pb.PrivateKeyMLDSA, *datacontrol.PublicKeyMLDSA, error) {
 
-	//PrivateKey struct
-	privateKeyMLDSA, err := fillPrivateKeyMLDSA(level, "ML-DSA-87", rawKeyPrivateEncrypted, nonce, salt)
+	privateKeyMLDSA, err := fillPrivateKeyMLDSA(level, algorithm, rawKeyEncrypted, nonce, salt)
 	if err != nil {
 		return nil, nil, apperr.Wrap("build private key payload", err)
 	}
 
-	//PublicKey struct
-	publicKeyMLDSA, err := fillPublicKeyMLDSA("ML-DSA-87", rawKeyPublic)
+	publicKeyMLDSA, err := fillPublicKeyMLDSA(algorithm, rawKeyPublic)
 	if err != nil {
 		return nil, nil, apperr.Wrap("build public key payload", err)
 	}
 
-	//save keys on file
-	err = datacontrol.SavePairKeyMLDSA(privateKeyMLDSA,*publicKeyMLDSA)
-
 	return privateKeyMLDSA, publicKeyMLDSA, nil
 }
 
-//Create the proto struct for the ml-dsa87 private key
+
+// Receive the keys and saves in the "data" folder
+func StoreKeysMLDSA(privateKey *pb.PrivateKeyMLDSA, publicKey datacontrol.PublicKeyMLDSA) error {
+
+	//save keys on file
+	err := datacontrol.SavePairKeyMLDSA(privateKey, publicKey)
+	if err != nil {
+		return apperr.Wrap("save keys ", err)
+	}
+
+	return nil
+}
+
+// Create a proto struct and fill with ml-dsa87 private key params
 func fillPrivateKeyMLDSA(level int, algorithm string, rawKeyEncrypted []byte, nonce []byte, salt []byte) (*pb.PrivateKeyMLDSA, error) {
 
 	privateKeyStruct := &pb.PrivateKeyMLDSA{}
@@ -86,8 +97,8 @@ func fillPrivateKeyMLDSA(level int, algorithm string, rawKeyEncrypted []byte, no
 	return privateKeyStruct, nil
 }
 
-//Create the json struct for the ml-dsa87 public key
-func fillPublicKeyMLDSA(algoritm string, rawPublicKey []byte) ( *datacontrol.PublicKeyMLDSA, error ) {
+// Create the json struct and fill with the ml-dsa87 public key params
+func fillPublicKeyMLDSA(algoritm string, rawPublicKey []byte) (*datacontrol.PublicKeyMLDSA, error) {
 
 	var publicKey datacontrol.PublicKeyMLDSA
 	publicKey.Algorithm = algoritm

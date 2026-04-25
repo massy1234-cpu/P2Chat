@@ -7,9 +7,11 @@ import (
 	pb "P2Chat/cmd/client/internals/gen/mldsapb"
 	"P2Chat/pkg/apperr"
 	"encoding/base64"
+
 	"github.com/awnumar/memguard"
 )
 
+//Decode the ml-dsa87 public key in a raw type ready for Verify()
 func DecodePublicKeyMLDSA(publicKey *datacontrol.PublicKeyMLDSA)(*mldsa87.PublicKey,error) {
 	var rawKey mldsa87.PublicKey
 
@@ -22,7 +24,7 @@ func DecodePublicKeyMLDSA(publicKey *datacontrol.PublicKeyMLDSA)(*mldsa87.Public
 	//convert bytes in mldsa87.PublicKey type
 	err = rawKey.UnmarshalBinary(bytes)
 	if err != nil {
-		return nil, apperr.Wrap("copnvert bytes in public key",err)
+		return nil, apperr.Wrap("convert bytes in public key",err)
 	}
 
 	return &rawKey, nil
@@ -30,7 +32,7 @@ func DecodePublicKeyMLDSA(publicKey *datacontrol.PublicKeyMLDSA)(*mldsa87.Public
 }
 
 
-//return the raw private key in memguard.Enclave for reuse 
+//Decode the ml-dsa87 private key in a raw type ready for toSign()
 func DecodePrivateKeyMLDSA(privateKey *pb.PrivateKeyMLDSA, aesKey *memguard.LockedBuffer, level int, salt []byte)(*memguard.Enclave, error) {
 	bytes := privateKey.Ciphertext
 
@@ -45,4 +47,20 @@ func DecodePrivateKeyMLDSA(privateKey *pb.PrivateKeyMLDSA, aesKey *memguard.Lock
 	defer plaintext.Destroy()
 
 	return enclave, nil
+}
+
+
+//Decode the ml-dsa87 pair of keys
+func DecodePairKeysMLDSA(publicKey *datacontrol.PublicKeyMLDSA, privateKey *pb.PrivateKeyMLDSA, aesKey *memguard.LockedBuffer, level int, salt []byte ) (*mldsa87.PublicKey,*memguard.Enclave, error){
+	rawPublicKey, err := DecodePublicKeyMLDSA(publicKey)
+	if err != nil {
+		return nil, nil, apperr.Wrap("decode ml-dsa87 public key from file",err)
+	}
+
+	rawPrivateKey, err := DecodePrivateKeyMLDSA(privateKey,aesKey,level,salt)
+	if err != nil {
+		return nil, nil, apperr.Wrap("decode ml-dsa87 private key from file",err)
+	}
+
+	return rawPublicKey,rawPrivateKey,nil
 }

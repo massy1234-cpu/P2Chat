@@ -12,7 +12,7 @@ import (
 )
 
 //Test if the signature of a pair of ml-dsa87 key works.
-//The test call internal the method CreateKey
+//The test call the method CreateKey()
 func TestSignature(t *testing.T) {
 
 	privateKeyStruct, publicKeyStruct, err := CreateMLDSAKeys(3, encryption.Encaps("password1"),false) 
@@ -28,19 +28,14 @@ func TestSignature(t *testing.T) {
 		t.Fatal("Hashing password with params",err)
 	}
 
-	privateKey,err := DecodePrivateKeyMLDSA(privateKeyStruct, aesKey,3,privateKeyStruct.ArgonParams.Salt)
+	rawPublicKey, rawPrivateKey,err := DecodePairKeysMLDSA(publicKeyStruct,privateKeyStruct,aesKey,3,privateKeyStruct.ArgonParams.Salt)
 	if err != nil {
-		t.Fatal("error during decoding private key from struct",err)
-	}
-
-	publicKey,err := DecodePublicKeyMLDSA(publicKeyStruct)
-	if err != nil {
-		t.Fatal("error during decoding public key from struct")
+		t.Fatal("error during decoding keys from struct",err)
 	}
 
 	var rawKey mldsa87.PrivateKey
 
-	buffer,err := privateKey.Open()
+	buffer,err := rawPrivateKey.Open()
 	if err != nil {
 		t.Fatal("error during open Enclave")
 	}
@@ -53,7 +48,7 @@ func TestSignature(t *testing.T) {
 
 	//if signature succeeded, then i try to do the opposite operation
 
-	verify := mldsa87.Verify(publicKey,msg,ctx,signature)
+	verify := mldsa87.Verify(rawPublicKey,msg,ctx,signature)
 	if verify == false {
 		t.Fatal("error verify of the message",err)
 	}

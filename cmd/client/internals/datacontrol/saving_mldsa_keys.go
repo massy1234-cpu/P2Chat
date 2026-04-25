@@ -89,5 +89,7 @@ func SavePairKeyMLDSA(privateKey *pb.PrivateKeyMLDSA, publicKey PublicKeyMLDSA) 
 	if err != nil {
 		return apperr.Wrap("Saving public key ml-dsa87",err)
 	}
+
+	return nil
 }
 

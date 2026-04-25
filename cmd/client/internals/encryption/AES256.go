@@ -1,3 +1,5 @@
+//the key in the encrypt and decrypt func must to be 32 bytes of lenght
+
 package encryption
 
 import (
@@ -8,20 +10,24 @@ import (
 	"github.com/awnumar/memguard"
 )
 
-//the key in the encrypt and decrypt must be 32 bytes
-
+//Encrypt bytes with a 32bytes key in a *memguard.LockedBuffer memory
 func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuffer) ([]byte, []byte, error) {
 
-	//the check for the minimum lenght of the key is do on another func
+	//check lenght of key
+	if len(key.Bytes()) != 32 {
+		return nil, nil, apperr.New("wrong key as param")
+	}
 
-	//cannot wipe directly aeskey.Bytes()
-	aesKey := make([]byte, len(key.Bytes()))
-	copy(aesKey, key.Bytes())
-	block, err := aes.NewCipher(aesKey)
+	//check if bytes are not null
+	if byteToEncrypt == nil {
+		return nil, nil, apperr.New("byte to encrpyt are null")
+	}
+
+
+	block, err := aes.NewCipher(key.Bytes())
 	if err != nil {
 		return nil, nil, apperr.Wrap("create AES cipher", err)
 	}
-	defer memguard.WipeBytes(aesKey)
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
@@ -45,13 +51,25 @@ func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuf
 
 func DecryptAes256(key *memguard.LockedBuffer, nonce []byte, byteToDecypt []byte) (*memguard.LockedBuffer, error) {
 	
-	aesKey := make([]byte, len(key.Bytes()))
-	copy(aesKey, key.Bytes())
-	block, err := aes.NewCipher(aesKey)
+	//check lenght of key
+	if len(key.Bytes()) != 32 {
+		return nil, apperr.New("wrong key as param")
+	}
+
+	//check if nonce is not null
+	if nonce == nil {
+		return nil, apperr.New("nonce is null")
+	}
+
+	//check if byte to decrypt are not null
+	if byteToDecypt == nil {
+		return nil, apperr.New("byte to decrypt are null")
+	}
+
+	block, err := aes.NewCipher(key.Bytes())
 	if err != nil {
 		return nil, apperr.Wrap("create AES cipher", err)
 	}
-	defer memguard.WipeBytes(aesKey)
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {

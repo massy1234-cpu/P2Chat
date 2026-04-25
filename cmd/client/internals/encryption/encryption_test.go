@@ -7,7 +7,7 @@ import (
 	"github.com/awnumar/memguard"
 )
 
-//Simple test that encrypt and decrypt
+//Simple test that encrypt and decrypt text 
 func TestEncryptionAndDecryption(t *testing.T) {
 
 	password := Encaps("password")
@@ -40,7 +40,7 @@ func TestEncryptionAndDecryption(t *testing.T) {
 
 }
 
-//Encrypt and Decrypt byt with fuzz ( randomic inputs )
+//Encrypt and Decrypt strings with fuzz ( randomic inputs )
 func FuzzEncryptAndDecrypt(f *testing.F) {
 	f.Add([]byte("password"), []byte("secret"))
 	f.Add([]byte("password2"), []byte("secret2"))
@@ -86,7 +86,7 @@ func FuzzEncryptAndDecrypt(f *testing.F) {
 }
 
 
-//Test the case we want to decrypt something with wrong password
+//Test the case we want to decrypt something with a wrong password
 func TestEncryptFailed(t *testing.T){
 
 	password := Encaps("password_correct")

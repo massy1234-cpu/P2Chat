@@ -6,22 +6,22 @@ import (
 	"github.com/awnumar/memguard"
 )
 
+//Encrypt a generic private key in a safe memory area. private key in the area MUST TO BE like []bytes
 func EncryptPrivateKey(password *memguard.LockedBuffer, privateKey *memguard.LockedBuffer, level int) ([]byte, []byte, []byte, error) {
 
-	//create salt
+	//Generate salt
 	salt, err := GenerateSalt()
 	if err != nil {
 		return nil, nil, nil, apperr.Wrap("generate salt", err)
 	}
 
-	//hashing password with argon2id
+	//KDF of password with argon2id
 	aesKey, err := argon.HashWithArgon(level, password, salt)
 	if err != nil {
 		return nil, nil, nil, apperr.Wrap("derive encryption key with argon2id", err)
 	}
 
-	//Structure of ciphertext
-	//[ciphertext + tag]
+	//the ciphertext contains the tag for integrity ( checksum )
 	rawKeyEncrypted, nonce, err := EncryptAes256(aesKey, privateKey)
 	if err != nil {
 		return nil, nil, nil, apperr.Wrap("encrypt private key", err)

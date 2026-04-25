@@ -2,11 +2,13 @@ package argon
 
 import (
 	pb "P2Chat/cmd/client/internals/gen/mldsapb"
+	"P2Chat/pkg/apperr"
+
 	"github.com/awnumar/memguard"
 	"golang.org/x/crypto/argon2"
 )
 
-
+//Create the struct that contain the correct params for argon derivation func
 func CreateArgonParams(level int)(*pb.ArgonParams){
 
  	params := &pb.ArgonParams{}
@@ -38,7 +40,13 @@ func CreateArgonParams(level int)(*pb.ArgonParams){
 }
 
 
+//create the KDF with argon and store in a secure memory buffer
 func HashWithArgon(level int, password *memguard.LockedBuffer, salt []byte) (*memguard.LockedBuffer, error){
+
+	//control the params
+	if len(password.Bytes()) == 0 || salt == nil || level > 3 || level < 1{
+		return nil, apperr.New("input are not correct")
+	}
 
 	//create params for use Argon2Id
 	argonParams := CreateArgonParams(level)
@@ -47,11 +55,11 @@ func HashWithArgon(level int, password *memguard.LockedBuffer, salt []byte) (*me
 	//create secure buffer, 32 byte AES-256 friendly
 	passwordHashed := memguard.NewBuffer(32)
 
-	hash := argon2.IDKey(password.Bytes(), salt, argonParams.Time, argonParams.Memory, uint8(argonParams.Threads), argonParams.Len )
-	copy(passwordHashed.Bytes(), hash)
+	kdf := argon2.IDKey(password.Bytes(), salt, argonParams.Time, argonParams.Memory, uint8(argonParams.Threads), argonParams.Len )
+	copy(passwordHashed.Bytes(), kdf)
 
-	//cleanup hash in memory
-	memguard.WipeBytes(hash)
+	//cleanup clear hash in memory
+	memguard.WipeBytes(kdf)
 
 	return passwordHashed, nil
 }

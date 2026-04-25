@@ -1,7 +1,6 @@
 package datacontrol
 
 import (
-	//"fmt"
 	pb "P2Chat/cmd/client/internals/gen/mldsapb"
 	"P2Chat/pkg/apperr"
 	"encoding/json"
@@ -11,6 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+//Read and return the bytes readed in the path specified
 func LoadByteFromFile(pathDir string, nameFile string)([]byte, error){
 
 	fullPath := filepath.Join(pathDir, nameFile)
@@ -27,10 +27,11 @@ func LoadByteFromFile(pathDir string, nameFile string)([]byte, error){
 	return streamByte, nil
 }
 
+//Return a *pb.PrivateKeyMLDSA type after reading the file SK.bin
 func LoadPrivateKeyMLDSAFromFile(pathDir string, nameFile string)(*pb.PrivateKeyMLDSA, error){
 
 	//read byte from file
-	streamByte, err := LoadByteFromFile("data/", "SK.bin")
+	streamByte, err := LoadByteFromFile(pathDir, nameFile)
 	if err != nil {
 		return nil, apperr.Wrap("reading file", err)
 	}
@@ -46,10 +47,11 @@ func LoadPrivateKeyMLDSAFromFile(pathDir string, nameFile string)(*pb.PrivateKey
 	return PrivateKeyStruct, nil
 }
 
+//Return a PublicKeyMLDSA type after reading the file PK.bin
 func LoadPublicKeyMLDSAFromFile(pathDir string, nameFile string)(*PublicKeyMLDSA, error){
 
 	//read byte from file
-	streamByte, err := LoadByteFromFile("data/", "PK.json")
+	streamByte, err := LoadByteFromFile(pathDir, nameFile)
 	if err != nil {
 		return nil, apperr.Wrap("reading file", err)
 	}

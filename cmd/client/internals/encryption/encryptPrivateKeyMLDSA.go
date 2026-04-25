@@ -6,7 +6,7 @@ import (
 	"github.com/awnumar/memguard"
 )
 
-func EncryptPrivateKeyMLDSA(password *memguard.LockedBuffer, privateKey *memguard.LockedBuffer, level int) ([]byte, []byte, []byte, error) {
+func EncryptPrivateKey(password *memguard.LockedBuffer, privateKey *memguard.LockedBuffer, level int) ([]byte, []byte, []byte, error) {
 
 	//create salt
 	salt, err := GenerateSalt()

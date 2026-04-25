@@ -4,7 +4,6 @@ import (
 	"P2Chat/cmd/client/internals/argon"
 	"bytes"
 	"testing"
-
 	"github.com/awnumar/memguard"
 )
 

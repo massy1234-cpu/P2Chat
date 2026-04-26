@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package mldsapb;
 
-option go_package = "cmd/client/internals/gen/mldsapb";
+option go_package = "cmd/client/internals/mldsa/gen/mldsapb";
 
 //struct for the privatekey
 message PrivateKeyMLDSA {

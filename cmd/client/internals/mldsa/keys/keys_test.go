@@ -2,20 +2,20 @@ package keys
 
 import (
 	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
-	"P2Chat/cmd/client/internals/argon"
 	"P2Chat/cmd/client/internals/encryption"
+	"P2Chat/cmd/client/internals/mldsa/argon"
 	"P2Chat/cmd/client/internals/p2version"
 	"encoding/base64"
+	"google.golang.org/protobuf/proto"
 	"reflect"
 	"testing"
-	"google.golang.org/protobuf/proto"
 )
 
-//Test if the signature of a pair of ml-dsa87 key works.
-//The test call the method CreateKey()
+// Test if the signature of a pair of ml-dsa87 key works.
+// The test call the method CreateKey()
 func TestSignature(t *testing.T) {
 
-	privateKeyStruct, publicKeyStruct, err := CreateMLDSAKeys(3, encryption.Encaps("password1"),false) 
+	privateKeyStruct, publicKeyStruct, err := CreateMLDSAKeys(3, encryption.Encaps("password1"), false)
 
 	//signature will contain the sign of the key and ctx is an another control that during the Verify() must coincide
 	msg := []byte("message to verify")
@@ -23,34 +23,34 @@ func TestSignature(t *testing.T) {
 	ctx := []byte("test")
 
 	//i decided to manage the hash with argon not internal at DecodePrivateKeyMLDSA for better control of the aesKey and for efficency
-	aesKey,err := argon.HashWithArgon(3, encryption.Encaps("password1"),privateKeyStruct.ArgonParams.Salt)
+	aesKey, err := argon.HashWithArgon(3, encryption.Encaps("password1"), privateKeyStruct.ArgonParams.Salt)
 	if err != nil {
-		t.Fatal("Hashing password with params",err)
+		t.Fatal("Hashing password with params", err)
 	}
 
-	rawPublicKey, rawPrivateKey,err := DecodePairKeysMLDSA(publicKeyStruct,privateKeyStruct,aesKey,3,privateKeyStruct.ArgonParams.Salt)
+	rawPublicKey, rawPrivateKey, err := DecodePairKeysMLDSA(publicKeyStruct, privateKeyStruct, aesKey, 3, privateKeyStruct.ArgonParams.Salt)
 	if err != nil {
-		t.Fatal("error during decoding keys from struct",err)
+		t.Fatal("error during decoding keys from struct", err)
 	}
 
 	var rawKey mldsa87.PrivateKey
 
-	buffer,err := rawPrivateKey.Open()
+	buffer, err := rawPrivateKey.Open()
 	if err != nil {
 		t.Fatal("error during open Enclave")
 	}
 
 	err = rawKey.UnmarshalBinary(buffer.Bytes())
-	err = mldsa87.SignTo(&rawKey,msg,ctx,true,signature)		//randomized add entropy to the sign
+	err = mldsa87.SignTo(&rawKey, msg, ctx, true, signature) //randomized add entropy to the sign
 	if err != nil {
-		t.Fatal("error during Signature of the message",err)
+		t.Fatal("error during Signature of the message", err)
 	}
 
 	//if signature succeeded, then i try to do the opposite operation
 
-	verify := mldsa87.Verify(rawPublicKey,msg,ctx,signature)
+	verify := mldsa87.Verify(rawPublicKey, msg, ctx, signature)
 	if verify == false {
-		t.Fatal("error verify of the message",err)
+		t.Fatal("error verify of the message", err)
 	}
 }
 
@@ -58,7 +58,7 @@ func TestSignature(t *testing.T) {
 func TestCreateKeysFields(t *testing.T) {
 	const level = 3
 
-	privateKeyStruct, publicKeyStruct, err := CreateMLDSAKeys(level, encryption.Encaps("password1"),false)
+	privateKeyStruct, publicKeyStruct, err := CreateMLDSAKeys(level, encryption.Encaps("password1"), false)
 	if err != nil {
 		t.Fatal("error during key creation", err)
 	}
@@ -96,7 +96,7 @@ func TestCreateKeysFields(t *testing.T) {
 	}
 
 	expectedArgon := argon.CreateArgonParams(level)
-	
+
 	expectedArgon.Salt = privateKeyStruct.ArgonParams.Salt
 
 	//proto.equal is better than reflect when compared
@@ -149,4 +149,3 @@ func TestCreateKeysFields(t *testing.T) {
 		t.Fatal("public key raw bytes size is not correct")
 	}
 }
-

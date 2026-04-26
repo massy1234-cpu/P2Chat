@@ -2,10 +2,10 @@ package keys
 
 import (
 	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
-	"P2Chat/cmd/client/internals/argon"
-	"P2Chat/cmd/client/internals/datacontrol"
-	"P2Chat/cmd/client/internals/encryption"
-	pb "P2Chat/cmd/client/internals/gen/mldsapb"
+	"P2Chat/cmd/client/internals/mldsa/argon"
+	"P2Chat/cmd/client/internals/mldsa/datacontrol"
+	mldsaencryption "P2Chat/cmd/client/internals/mldsa/encryption"
+	pb "P2Chat/cmd/client/internals/mldsa/gen/mldsapb"
 	"P2Chat/cmd/client/internals/p2version"
 	"P2Chat/pkg/apperr"
 	"encoding/base64"
@@ -30,7 +30,7 @@ func CreateMLDSAKeys(level int, password *memguard.LockedBuffer, store bool) (*p
 	defer privateKeyExposed.Destroy()
 
 	//encrypt private key ML-DSA-87
-	rawKeyEncrypted, nonce, salt, err := encryption.EncryptPrivateKey(password, privateKey, level)
+	rawKeyEncrypted, nonce, salt, err := mldsaencryption.EncryptPrivateKey(password, privateKey, level)
 	if err != nil {
 		return nil, nil, apperr.Wrap("protect private key", err)
 	}
@@ -66,7 +66,6 @@ func fillKeyPairMLDSA(level int, algorithm string, rawKeyEncrypted []byte, rawKe
 
 	return privateKeyMLDSA, publicKeyMLDSA, nil
 }
-
 
 // Receive the keys and saves in the "data" folder
 func StoreKeysMLDSA(privateKey *pb.PrivateKeyMLDSA, publicKey datacontrol.PublicKeyMLDSA) error {

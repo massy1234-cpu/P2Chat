@@ -1,4 +1,4 @@
-package crypto
+package mldsa
 
 import (
 	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"

@@ -1,7 +1,7 @@
 package datacontrol
 
 import (
-	pb "P2Chat/cmd/client/internals/gen/mldsapb"
+	pb "P2Chat/cmd/client/internals/mldsa/gen/mldsapb"
 	"P2Chat/pkg/apperr"
 	"encoding/json"
 	"google.golang.org/protobuf/proto"
@@ -16,7 +16,7 @@ type PublicKeyMLDSA struct {
 	PublicKeyMLDSABase64 string `json:"Public Key raw ( base 64 )"`
 }
 
-//Save generic bytes on file
+// Save generic bytes on file
 func SaveBytesOnFile(dataFile []byte, pathDir string, nameFile string) error {
 
 	//check dir
@@ -43,7 +43,7 @@ func SaveBytesOnFile(dataFile []byte, pathDir string, nameFile string) error {
 
 }
 
-//Save the private key ml-dsa87 on the file
+// Save the private key ml-dsa87 on the file
 func SavePrivateKeyMLDSA(privateKey *pb.PrivateKeyMLDSA) error {
 
 	streamByte, err := proto.Marshal(privateKey)
@@ -60,7 +60,7 @@ func SavePrivateKeyMLDSA(privateKey *pb.PrivateKeyMLDSA) error {
 
 }
 
-//Save the public key ml-dsa87 on the file
+// Save the public key ml-dsa87 on the file
 func SavePublicKeyMLDSA(publicKey PublicKeyMLDSA) error {
 
 	streamByte, err := json.MarshalIndent(publicKey, "", " ")
@@ -77,19 +77,17 @@ func SavePublicKeyMLDSA(publicKey PublicKeyMLDSA) error {
 
 }
 
-
-//Save the pair ok ml-dsa87 keys on file
+// Save the pair ok ml-dsa87 keys on file
 func SavePairKeyMLDSA(privateKey *pb.PrivateKeyMLDSA, publicKey PublicKeyMLDSA) error {
 	err := SavePrivateKeyMLDSA(privateKey)
 	if err != nil {
-		return apperr.Wrap("Saving private key ml-dsa87",err)
+		return apperr.Wrap("Saving private key ml-dsa87", err)
 	}
 
 	err = SavePublicKeyMLDSA(publicKey)
 	if err != nil {
-		return apperr.Wrap("Saving public key ml-dsa87",err)
+		return apperr.Wrap("Saving public key ml-dsa87", err)
 	}
 
 	return nil
 }
-

@@ -1,4 +1,4 @@
-package crypto
+package mldsa
 
 import (
 	"P2Chat/cmd/server/internals/version"

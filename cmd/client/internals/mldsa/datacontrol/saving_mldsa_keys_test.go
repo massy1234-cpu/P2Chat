@@ -1,11 +1,11 @@
 package datacontrol
 
 import (
-	pb "P2Chat/cmd/client/internals/gen/mldsapb"
+	pb "P2Chat/cmd/client/internals/mldsa/gen/mldsapb"
 	"encoding/json"
+	"google.golang.org/protobuf/proto"
 	"reflect"
 	"testing"
-	"google.golang.org/protobuf/proto"
 )
 
 // Test if the serialized keys written by the test match the keys loaded from disk.

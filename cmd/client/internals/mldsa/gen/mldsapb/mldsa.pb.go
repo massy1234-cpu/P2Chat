@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.34.1
-// source: cmd/client/internals/proto/mldsa.proto
+// source: cmd/client/internals/mldsa/proto/mldsa.proto
 
 package mldsapb
 

@@ -1,16 +1,17 @@
 package encryption
 
 import (
-	"P2Chat/cmd/client/internals/argon"
+	baseencryption "P2Chat/cmd/client/internals/encryption"
+	"P2Chat/cmd/client/internals/mldsa/argon"
 	"P2Chat/pkg/apperr"
 	"github.com/awnumar/memguard"
 )
 
-//Encrypt a generic private key in a safe memory area. private key in the area MUST TO BE like []bytes
+// Encrypt a generic private key in a safe memory area. private key in the area MUST TO BE like []bytes
 func EncryptPrivateKey(password *memguard.LockedBuffer, privateKey *memguard.LockedBuffer, level int) ([]byte, []byte, []byte, error) {
 
 	//Generate salt
-	salt, err := GenerateSalt()
+	salt, err := baseencryption.GenerateSalt()
 	if err != nil {
 		return nil, nil, nil, apperr.Wrap("generate salt", err)
 	}
@@ -22,7 +23,7 @@ func EncryptPrivateKey(password *memguard.LockedBuffer, privateKey *memguard.Loc
 	}
 
 	//the ciphertext contains the tag for integrity ( checksum )
-	rawKeyEncrypted, nonce, err := EncryptAes256(aesKey, privateKey)
+	rawKeyEncrypted, nonce, err := baseencryption.EncryptAes256(aesKey, privateKey)
 	if err != nil {
 		return nil, nil, nil, apperr.Wrap("encrypt private key", err)
 	}

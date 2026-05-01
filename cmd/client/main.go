@@ -2,7 +2,7 @@ package main
 
 import (
 	"P2Chat/cmd/client/internals/errors"
-	"P2Chat/cmd/client/internals/mldsa/keys"
+	keys "P2Chat/cmd/client/internals/keys/mldsa"
 	"fmt"
 	"github.com/awnumar/memguard"
 )

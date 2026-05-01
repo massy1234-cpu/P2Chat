@@ -2,8 +2,10 @@ package keys
 
 import (
 	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
+	"P2Chat/cmd/client/internals/argon"
+	mldsadatacontrol "P2Chat/cmd/client/internals/datacontrol/mldsa"
 	"P2Chat/cmd/client/internals/encryption"
-	"P2Chat/cmd/client/internals/mldsa/argon"
+	pb "P2Chat/cmd/client/internals/gen/mldsa/mldsapb"
 	"P2Chat/cmd/client/internals/p2version"
 	"encoding/base64"
 	"google.golang.org/protobuf/proto"
@@ -79,8 +81,8 @@ func TestCreateKeysFields(t *testing.T) {
 		t.Fatal("unexpected private key algorithm")
 	}
 
-	if len(privateKeyStruct.Ciphertext) == 0 {
-		t.Fatal("private key ciphertext is empty")
+	if len(privateKeyStruct.Key) == 0 {
+		t.Fatal("private key key field is empty")
 	}
 
 	if len(privateKeyStruct.Nonce) == 0 {
@@ -147,5 +149,66 @@ func TestCreateKeysFields(t *testing.T) {
 
 	if len(publicKeyBytes) != mldsa87.PublicKeySize {
 		t.Fatal("public key raw bytes size is not correct")
+	}
+}
+
+func TestDecodePublicKeyMLDSAErrors(t *testing.T) {
+	publicKey := &mldsadatacontrol.PublicKeyMLDSA{
+		PublicKeyMLDSABase64: "%%%not-base64%%%",
+	}
+
+	_, err := DecodePublicKeyMLDSA(publicKey)
+	if err == nil {
+		t.Fatal("invalid base64 public key should return error")
+	}
+
+	publicKey.PublicKeyMLDSABase64 = base64.StdEncoding.EncodeToString([]byte("short"))
+
+	_, err = DecodePublicKeyMLDSA(publicKey)
+	if err == nil {
+		t.Fatal("invalid raw public key bytes should return error")
+	}
+}
+
+func TestDecodePrivateKeyMLDSAWrongPassword(t *testing.T) {
+	privateKeyStruct, _, err := CreateMLDSAKeys(3, encryption.Encaps("password1"), false)
+	if err != nil {
+		t.Fatal("error during key creation", err)
+	}
+
+	wrongAESKey, err := argon.HashWithArgon(3, encryption.Encaps("wrong-password"), privateKeyStruct.ArgonParams.Salt)
+	if err != nil {
+		t.Fatal("error during wrong key derivation", err)
+	}
+
+	_, err = DecodePrivateKeyMLDSA(privateKeyStruct, wrongAESKey, 3, privateKeyStruct.ArgonParams.Salt)
+	if err == nil {
+		t.Fatal("wrong password should not decrypt private key")
+	}
+}
+
+func TestDecodePrivateKeyMLDSAInvalidKeyField(t *testing.T) {
+	privateKeyStruct, _, err := CreateMLDSAKeys(3, encryption.Encaps("password1"), false)
+	if err != nil {
+		t.Fatal("error during key creation", err)
+	}
+
+	corruptedPrivateKey := &pb.PrivateKeyMLDSA{
+		Algorithm:     privateKeyStruct.Algorithm,
+		P2ChatVersion: privateKeyStruct.P2ChatVersion,
+		Key:           []byte("broken"),
+		Nonce:         privateKeyStruct.Nonce,
+		Timestamp:     privateKeyStruct.Timestamp,
+		ArgonParams:   privateKeyStruct.ArgonParams,
+	}
+
+	aesKey, err := argon.HashWithArgon(3, encryption.Encaps("password1"), privateKeyStruct.ArgonParams.Salt)
+	if err != nil {
+		t.Fatal("error during key derivation", err)
+	}
+
+	_, err = DecodePrivateKeyMLDSA(corruptedPrivateKey, aesKey, 3, privateKeyStruct.ArgonParams.Salt)
+	if err == nil {
+		t.Fatal("invalid private key field should return error")
 	}
 }

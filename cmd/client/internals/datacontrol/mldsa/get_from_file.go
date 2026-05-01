@@ -1,7 +1,7 @@
 package datacontrol
 
 import (
-	pb "P2Chat/cmd/client/internals/mldsa/gen/mldsapb"
+	pb "P2Chat/cmd/client/internals/gen/mldsa/mldsapb"
 	"P2Chat/pkg/apperr"
 	"encoding/json"
 	"os"

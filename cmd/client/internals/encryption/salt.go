@@ -5,8 +5,8 @@ import (
 	"crypto/rand"
 )
 
-func GenerateSalt() ([]byte, error) {
-	salt := make([]byte, 32)
+func GenerateSalt(number int) ([]byte, error) {
+	salt := make([]byte, number)
 	_, err := rand.Read(salt) //creation of salt
 
 	if err != nil {

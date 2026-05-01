@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package mldsapb;
 
-option go_package = "cmd/client/internals/mldsa/gen/mldsapb";
+option go_package = "P2Chat/cmd/client/internals/gen/mldsa/mldsapb";
 
 //struct for the privatekey
 message PrivateKeyMLDSA {
@@ -10,7 +10,7 @@ message PrivateKeyMLDSA {
     string algorithm = 2;
     int64 timestamp = 3;
     bytes nonce = 4;
-    bytes ciphertext = 5;
+    bytes key = 5;
     ArgonParams argon_params = 6; 
 }
 

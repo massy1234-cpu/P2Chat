@@ -9,10 +9,12 @@ import (
 	"encoding/asn1"
 	"errors"
 	"io"
+	"unsafe"
 
 	"P2Chat/cirl-custom/circl/sign"
 	common "P2Chat/cirl-custom/circl/sign/internal/dilithium"
 	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87/internal"
+	"github.com/awnumar/memguard"
 )
 
 const (
@@ -155,6 +157,31 @@ func (sk *PrivateKey) Pack(buf *[PrivateKeySize]byte) {
 	(*internal.PrivateKey)(sk).Pack(buf)
 }
 
+// PackToLockedBuffer packs the private key directly into protected memory.
+func (sk *PrivateKey) PackToLockedBuffer(buf *memguard.LockedBuffer) error {
+	if buf == nil {
+		return errors.New("memguard buffer is nil")
+	}
+
+	bytes := buf.Bytes()
+	if len(bytes) != PrivateKeySize {
+		return errors.New("memguard buffer size does not match mldsa87.PrivateKeySize")
+	}
+
+	sk.Pack((*[PrivateKeySize]byte)(unsafe.Pointer(&bytes[0])))
+	return nil
+}
+
+// LockedBuffer returns the packed private key in protected memory.
+func (sk *PrivateKey) LockedBuffer() (*memguard.LockedBuffer, error) {
+	buf := memguard.NewBuffer(PrivateKeySize)
+	if err := sk.PackToLockedBuffer(buf); err != nil {
+		buf.Destroy()
+		return nil, err
+	}
+	return buf, nil
+}
+
 // Packs the public key.
 func (pk *PublicKey) Bytes() []byte {
 	var buf [PublicKeySize]byte
@@ -198,6 +225,21 @@ func (sk *PrivateKey) UnmarshalBinary(data []byte) error {
 	var buf [PrivateKeySize]byte
 	copy(buf[:], data)
 	sk.Unpack(&buf)
+	return nil
+}
+
+// UnmarshalBinaryFromLockedBuffer unpacks a private key from protected memory.
+func (sk *PrivateKey) UnmarshalBinaryFromLockedBuffer(buf *memguard.LockedBuffer) error {
+	if buf == nil {
+		return errors.New("memguard buffer is nil")
+	}
+
+	bytes := buf.Bytes()
+	if len(bytes) != PrivateKeySize {
+		return errors.New("packed private key must be of mldsa87.PrivateKeySize bytes")
+	}
+
+	sk.Unpack((*[PrivateKeySize]byte)(unsafe.Pointer(&bytes[0])))
 	return nil
 }
 

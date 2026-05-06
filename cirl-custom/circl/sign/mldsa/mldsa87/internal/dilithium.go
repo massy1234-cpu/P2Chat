@@ -71,19 +71,39 @@ type PrivateKey struct {
 	t0h VecK // NTT(t₀)
 
 	buf *memguard.LockedBuffer // Control over the private key destruction
-	
+
 	// Disabled for security: do not retain the original seed in memory.
 	// seed    [common.SeedSize]byte
 	// seedSet bool
 }
 
-//custom method for destroying data of SK inside the RAM
-func (sk *PrivateKey) Destroy() {
-	if sk.buf != nil {
-		sk.buf.Destroy()
-	}
+func newProtectedPrivateKey() *PrivateKey {
+	buf := memguard.NewBuffer(int(unsafe.Sizeof(PrivateKey{})))
+	bytes := buf.Bytes()
+	sk := (*PrivateKey)(unsafe.Pointer(&bytes[0]))
+	sk.buf = buf
+	return sk
 }
 
+// NewPrivateKeyFromPacked allocates a protected private key and unpacks buf into it.
+func NewPrivateKeyFromPacked(buf *[PrivateKeySize]byte) *PrivateKey {
+	sk := newProtectedPrivateKey()
+	sk.Unpack(buf)
+	return sk
+}
+
+// custom method for destroying data of SK inside the RAM
+func (sk *PrivateKey) Destroy() {
+	if sk == nil {
+		return
+	}
+	if sk.buf != nil {
+		sk.buf.Destroy()
+		return
+	}
+
+	*sk = PrivateKey{}
+}
 
 type unpackedSignature struct {
 	z    VecL
@@ -208,9 +228,7 @@ func NewKeyFromSeed(seed *[common.SeedSize]byte) (*PublicKey, *PrivateKey) {
 
 	var pk PublicKey
 
-	//PrivateKeySize is not enought for convert a struct 
-	sk1 := memguard.NewBuffer(int(unsafe.Sizeof(PrivateKey{})))
-	sk := (*PrivateKey)(unsafe.Pointer(&sk1.Bytes()[0]))
+	sk := newProtectedPrivateKey()
 
 	//var sSeed [64]byte
 	sSeed := memguard.NewBuffer(64)
@@ -269,8 +287,6 @@ func NewKeyFromSeed(seed *[common.SeedSize]byte) (*PublicKey, *PrivateKey) {
 
 	// Finish cache of public key
 	pk.tr = &sk.tr
-
-	sk.buf = sk1
 
 	return &pk, sk
 }

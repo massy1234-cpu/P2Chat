@@ -7,7 +7,8 @@ import (
 	"github.com/awnumar/memguard"
 )
 
-// Encrypt a generic private key in a safe memory area. private key in the area MUST TO BE like []bytes
+// EncryptPrivateKey derives an AES key from the password, encrypts the packed
+// ML-DSA private key, and returns ciphertext, nonce, and salt.
 func EncryptPrivateKey(password *memguard.LockedBuffer, privateKey *memguard.LockedBuffer, level int) ([]byte, []byte, []byte, error) {
 
 	//Generate salt

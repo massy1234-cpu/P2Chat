@@ -3,15 +3,62 @@ package keys
 import (
 	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/argon"
-	mldsadatacontrol "P2Chat/cmd/client/internals/datacontrol/mldsa"
+	datacontrol "P2Chat/cmd/client/internals/datacontrol/mldsa"
 	"P2Chat/cmd/client/internals/encryption"
 	pb "P2Chat/cmd/client/internals/gen/mldsa/mldsapb"
 	"P2Chat/cmd/client/internals/p2version"
-	"encoding/base64"
 	"google.golang.org/protobuf/proto"
 	"reflect"
 	"testing"
 )
+
+// Test if keys are stored correcly - the func try to generate and then read the keys
+func TestStoreKeys(t *testing.T) {
+	tempDir := t.TempDir()
+
+	//test with some pre-created key for import cycle error
+	//the test want only to verificate that the write and read of the keys is correcly set
+
+	privateKey, publicKey, err := CreateMLDSAKeys(3, encryption.Encaps("password"), true)
+
+	privateKeyBytes, err := proto.Marshal(privateKey)
+	if err != nil {
+		t.Fatal("error during private key marshaling", err)
+	}
+
+	err = datacontrol.SaveBytesOnFile(privateKeyBytes, tempDir, "SK.bin")
+	if err != nil {
+		t.Fatal("error during private key save", err)
+	}
+
+	publicKeyBytes, err := proto.Marshal(publicKey)
+	if err != nil {
+		t.Fatal("error during public key marshaling", err)
+	}
+
+	err = datacontrol.SaveBytesOnFile(publicKeyBytes, tempDir, "PK.bin")
+	if err != nil {
+		t.Fatal("error during public key save", err)
+	}
+
+	privateKeyStruct, err := datacontrol.LoadPrivateKeyMLDSAFromFile(tempDir, "SK.bin")
+	if err != nil {
+		t.Fatal("error during loading private key", err)
+	}
+
+	publicKeyStruct, err := datacontrol.LoadPublicKeyMLDSAFromFile(tempDir, "PK.bin")
+	if err != nil {
+		t.Fatal("error during loading public key", err)
+	}
+
+	if !proto.Equal(privateKey, privateKeyStruct) {
+		t.Fatal("private key doesnt match with file SK.bin")
+	}
+
+	if !proto.Equal(publicKey, publicKeyStruct) {
+		t.Fatal("public key doesnt match with file PK.bin")
+	}
+}
 
 // Test if the signature of a pair of ml-dsa87 key works.
 // The test call the method CreateKey()
@@ -19,12 +66,12 @@ func TestSignature(t *testing.T) {
 
 	privateKeyStruct, publicKeyStruct, err := CreateMLDSAKeys(3, encryption.Encaps("password1"), false)
 
-	//signature will contain the sign of the key and ctx is an another control that during the Verify() must coincide
+	// signature will contain the sign of the key and ctx is an another control that during the Verify() must coincide
 	msg := []byte("message to verify")
 	signature := make([]byte, mldsa87.SignatureSize)
 	ctx := []byte("test")
 
-	//i decided to manage the hash with argon not internal at DecodePrivateKeyMLDSA for better control of the aesKey and for efficency
+	// i decided to manage the hash with argon not internal at DecodePrivateKeyMLDSA for better control of the aesKey and for efficency
 	aesKey, err := argon.HashWithArgon(3, encryption.Encaps("password1"), privateKeyStruct.ArgonParams.Salt)
 	if err != nil {
 		t.Fatal("Hashing password with params", err)
@@ -37,18 +84,24 @@ func TestSignature(t *testing.T) {
 
 	var rawKey mldsa87.PrivateKey
 
+	// open the enclave and save protected buffer
 	buffer, err := rawPrivateKey.Open()
 	if err != nil {
 		t.Fatal("error during open Enclave")
 	}
+	defer buffer.Destroy()
 
-	err = rawKey.UnmarshalBinary(buffer.Bytes())
+	// i create the raw private key inside rawKey for use the signature function
+	err = rawKey.UnmarshalBinaryFromLockedBuffer(buffer)
+	if err != nil {
+		t.Fatal("error during private key unmarshal from protected buffer", err)
+	}
 	err = mldsa87.SignTo(&rawKey, msg, ctx, true, signature) //randomized add entropy to the sign
+	
+	// if signature succeeded, then i try to do the opposite operation
 	if err != nil {
 		t.Fatal("error during Signature of the message", err)
 	}
-
-	//if signature succeeded, then i try to do the opposite operation
 
 	verify := mldsa87.Verify(rawPublicKey, msg, ctx, signature)
 	if verify == false {
@@ -134,37 +187,26 @@ func TestCreateKeysFields(t *testing.T) {
 		t.Fatal("public key P2Chat version is not correct")
 	}
 
-	if publicKeyStruct.Timestamp == "" {
+	if publicKeyStruct.Timestamp == 0 {
 		t.Fatal("public key timestamp is empty")
 	}
 
-	if publicKeyStruct.PublicKeyMLDSABase64 == "" {
-		t.Fatal("public key base64 is empty")
+	if len(publicKeyStruct.Key) == 0 {
+		t.Fatal("public key bytes are empty")
 	}
 
-	publicKeyBytes, err := base64.StdEncoding.DecodeString(publicKeyStruct.PublicKeyMLDSABase64)
-	if err != nil {
-		t.Fatal("public key base64 is not valid", err)
-	}
-
-	if len(publicKeyBytes) != mldsa87.PublicKeySize {
+	if len(publicKeyStruct.Key) != mldsa87.PublicKeySize {
 		t.Fatal("public key raw bytes size is not correct")
 	}
+
 }
 
 func TestDecodePublicKeyMLDSAErrors(t *testing.T) {
-	publicKey := &mldsadatacontrol.PublicKeyMLDSA{
-		PublicKeyMLDSABase64: "%%%not-base64%%%",
+	publicKey := &pb.PublicKeyMLDSA{
+		Key: []byte("short"),
 	}
 
 	_, err := DecodePublicKeyMLDSA(publicKey)
-	if err == nil {
-		t.Fatal("invalid base64 public key should return error")
-	}
-
-	publicKey.PublicKeyMLDSABase64 = base64.StdEncoding.EncodeToString([]byte("short"))
-
-	_, err = DecodePublicKeyMLDSA(publicKey)
 	if err == nil {
 		t.Fatal("invalid raw public key bytes should return error")
 	}

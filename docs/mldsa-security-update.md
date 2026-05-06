@@ -215,4 +215,76 @@ ho chiesto a Codex di generarmi dei casi limite e verificare se gli errori venis
 
 I prossimi test che hanno piu valore sono:
 
-- checksum sulle chiavi così da evitare qualsiasi tipo di problema con corruzione dei dati, da modificare quindi la funzione che corrompe i dati 
+- usare un tipo diverso di cheksum, hash non basta in quanto una persona potrebbe modificare il tutto e successivamente ricreare il checksum
+  
+- controllare che quando vado a leggere le paia di chiavi queste siano un paio corretto ( usando una signature come prova )
+
+### HMAC With Proto Structs - TPM
+
+**problem** -> i cant be sure that a key is not compromised without a cypher but the problem is : **what key can i use to cipher these keys ?**
+there are 2 solutions :
+- use TPM ( interesting solution and best security level ) -> where the TPM store the password for the key and i use the HMAC func with the data key and the password
+- use a password that choose the user but this would be have already 2 or more password ( 1 for Private Key encryption and 1 for hashing keys )
+
+
+i choose ( for educative reasons ) to use the TPM but now i have a new idea, to generate inside the TPM the aesKey also for cipher the Private Key ml-dsa
+
+with this choise the user can choose to :
+- use an own password ( exposed temporary on ram ) for cipher the private key mldsa and the other keys 
+- use the TPM for generate the keys and use a more secure system for store cipher keys
+- is an user want we can combine password + TPM ( codex for merge functions )
+
+
+### Implement TPM in cipher aes-256
+
+the problem is that the keys mldsa and other keys that i want to use in my architecture are too big for let the TPM cipher so we need to change architecture
+
+the main idea is :
+- i request the TPM a small secret
+- use the small secret with a KDF for derivation ( argon )
+- use the derivation key for  cipher with AES-256
+
+and i have already the main functions for do this job, now i have to implement :
+- TPM managment ( linux, windows, apple )
+- TPM creation key
+
+then i will pass the secret to argon and then use aes256 for cipher the secret
+
+**optional** -> add a function for merge the secret of user ( password ) with TPM secret
+
+
+### Problems with this implemetation
+
+i have multiple choises for implement the TPM in the application but all have some type of compromise
+
+there are the ideas 
+
+1. i can generate a secret inside the TPM and the use memguard for use the secret with AES 
+    - benefit : super fast and not too much complex for now
+    - problems : possible exposure in memory
+2. create a Private and Public key inside the TPM for seal and unseal the secret with the cipher but
+    - benefit : super secure
+    - problems : problems with integrity ( TPM dont support GCM ) and i will need to chunk the secret because the keys are too big
+
+
+for now i choose to implement the first so
+1. generate the **root** secret inside the TPM
+2. generate the HKDF with the secret and another secret inside the TPM
+3. export the key and put it directly inside a memguard secure memory space ( critic phase )
+4. use the key for aes cipher 
+
+for now i think that is the most efficent and realistic architecture for implement in my application
+
+
+TPM
+├── root_key (non esportabile)
+├── Derive(root_key, context) → session_key  [in TPM]
+└── HMAC(data, root_key) → tag              [in TPM]
+
+Memory (memguard)
+└── session_key (solo durante uso)
+
+Storage
+├── encrypted_key = AES(session_key, plaintext_key)
+└── tag = TPM_HMAC(encrypted_key, root_key)  ← integrity
+

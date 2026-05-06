@@ -1,4 +1,4 @@
-//the key in the encrypt and decrypt func must to be 32 bytes of lenght
+// EncryptAes256 and DecryptAes256 expect a 32-byte AES-256 key.
 
 package encryption
 
@@ -10,9 +10,8 @@ import (
 	"github.com/awnumar/memguard"
 )
 
-//Encrypt bytes with a 32bytes key in a *memguard.LockedBuffer memory
+// EncryptAes256 encrypts protected plaintext with AES-256-GCM and returns ciphertext and nonce.
 func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuffer) ([]byte, []byte, error) {
-	
 	//check key
 	if key == nil {
 		return nil, nil, apperr.New("key is null")
@@ -23,12 +22,8 @@ func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuf
 		return nil, nil, apperr.New("byte to encrpyt are null")
 	}
 
-	//copy
-	plainKey := ReturnCopy(key, 0)
-	defer memguard.WipeBytes(plainKey)
-
-	plainBytes := ReturnCopy(byteToEncrypt, 0)
-	defer memguard.WipeBytes(plainBytes)
+	plainKey := key.Bytes()
+	plainBytes := byteToEncrypt.Bytes()
 
 	//check lenght key
 	if len(plainKey) != 32 {
@@ -59,16 +54,15 @@ func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuf
 	return ciphertext, nonce, nil
 }
 
-
+// DecryptAes256 decrypts AES-256-GCM ciphertext and moves the plaintext back into protected memory.
 func DecryptAes256(key *memguard.LockedBuffer, nonce []byte, byteToDecypt []byte) (*memguard.LockedBuffer, error) {
-	
+
 	if key == nil {
 		return nil, apperr.New("wrong key as param")
 	}
 
-	plainKey := ReturnCopy(key, 0)
-	defer memguard.WipeBytes(plainKey)
-	
+	plainKey := key.Bytes()
+
 	//check lenght of key
 	if len(plainKey) != 32 {
 		return nil, apperr.New("wrong key as param")
@@ -104,7 +98,7 @@ func DecryptAes256(key *memguard.LockedBuffer, nonce []byte, byteToDecypt []byte
 
 	plaintextSecured := memguard.NewBuffer(len(plaintext))
 	copy(plaintextSecured.Bytes(), plaintext)
-	
+
 	defer memguard.WipeBytes(plaintext)
 
 	return plaintextSecured, nil

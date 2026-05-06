@@ -3,18 +3,10 @@ package datacontrol
 import (
 	pb "P2Chat/cmd/client/internals/gen/mldsa/mldsapb"
 	"P2Chat/pkg/apperr"
-	"encoding/json"
 	"google.golang.org/protobuf/proto"
 	"os"
 	"path/filepath"
 )
-
-type PublicKeyMLDSA struct {
-	Algorithm            string `json:"Algorithm"`
-	P2ChatVersion        string `json:"P2Chat Version"`
-	Timestamp            string `json:"Timestamp"`
-	PublicKeyMLDSABase64 string `json:"Public Key raw ( base 64 )"`
-}
 
 // Save generic bytes on file
 func SaveBytesOnFile(dataFile []byte, pathDir string, nameFile string) error {
@@ -46,11 +38,19 @@ func SaveBytesOnFile(dataFile []byte, pathDir string, nameFile string) error {
 // Save the private key ml-dsa87 on the file
 func SavePrivateKeyMLDSA(privateKey *pb.PrivateKeyMLDSA) error {
 
+	// set checksum
+	err := privateKey.SetChecksum()
+	if err != nil {
+		return apperr.Wrap("set checksum private key mldsa",err)
+	}
+
+	// convert key in bytes
 	streamByte, err := proto.Marshal(privateKey)
 	if err != nil {
 		return apperr.Wrap("marshal private key", err)
 	}
 
+	// write bytes
 	err = SaveBytesOnFile(streamByte, "data/", "SK.bin")
 	if err != nil {
 		return apperr.Wrap("persist private key", err)
@@ -61,14 +61,22 @@ func SavePrivateKeyMLDSA(privateKey *pb.PrivateKeyMLDSA) error {
 }
 
 // Save the public key ml-dsa87 on the file
-func SavePublicKeyMLDSA(publicKey PublicKeyMLDSA) error {
+func SavePublicKeyMLDSA(publicKey *pb.PublicKeyMLDSA) error {
 
-	streamByte, err := json.MarshalIndent(publicKey, "", " ")
+	// set checksum
+	err := publicKey.SetChecksum()
+	if err != nil {
+		return apperr.Wrap("set checksum public key mldsa",err)
+	}
+
+	// convert key in bytes
+	streamByte, err := proto.Marshal(publicKey)
 	if err != nil {
 		return apperr.Wrap("marshal public key", err)
 	}
 
-	err = SaveBytesOnFile(streamByte, "data/", "PK.json")
+	// write bytes
+	err = SaveBytesOnFile(streamByte, "data/", "PK.bin")
 	if err != nil {
 		return apperr.Wrap("persist public key", err)
 	}
@@ -78,7 +86,8 @@ func SavePublicKeyMLDSA(publicKey PublicKeyMLDSA) error {
 }
 
 // Save the pair ok ml-dsa87 keys on file
-func SavePairKeyMLDSA(privateKey *pb.PrivateKeyMLDSA, publicKey PublicKeyMLDSA) error {
+func SavePairKeyMLDSA(privateKey *pb.PrivateKeyMLDSA, publicKey *pb.PublicKeyMLDSA) error {
+	
 	err := SavePrivateKeyMLDSA(privateKey)
 	if err != nil {
 		return apperr.Wrap("Saving private key ml-dsa87", err)

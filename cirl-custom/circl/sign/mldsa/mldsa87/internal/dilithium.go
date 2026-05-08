@@ -228,6 +228,7 @@ func NewKeyFromSeed(seed *[common.SeedSize]byte) (*PublicKey, *PrivateKey) {
 
 	var pk PublicKey
 
+	// return a private key ml-dsa87 pointer in a secure memory area
 	sk := newProtectedPrivateKey()
 
 	//var sSeed [64]byte

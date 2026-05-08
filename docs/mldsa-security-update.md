@@ -275,7 +275,6 @@ for now i choose to implement the first so
 
 for now i think that is the most efficent and realistic architecture for implement in my application
 
-
 TPM
 ├── root_key (non esportabile)
 ├── Derive(root_key, context) → session_key  [in TPM]
@@ -287,4 +286,524 @@ Memory (memguard)
 Storage
 ├── encrypted_key = AES(session_key, plaintext_key)
 └── tag = TPM_HMAC(encrypted_key, root_key)  ← integrity
+
+
+### TPM implementation
+
+but what is **TPM** ?
+
+is a chip with RAM, NVRAM ( resist to reboot ), crittogrphic engine and PCR registers for sensibles operations
+TPM store the keys like a tree
+
+```
+Owner Hierarchy (TPMRHOwner)
+└── SRK - Storage Root Key
+    ├── Chiave A (sealed)
+    ├── Chiave B (sealed)
+    └── Chiave C (sealed)
+```
+
+and everything is wrapped by the keys that are up the key itself
+
+for create a secret inside the TPM we must use the ```tpm2.Create``` function that do :
+- create some random bytes
+- create the struct tpm2b_private 
+``` 
+type TPM2BPrivate struct {
+    size   uint16  // lunghezza del buffer
+    buffer []byte  // il contenuto cifrato
+}
+```
+- cipher the key with the keys of his parents and with the SRK ( storage root key )
+- cipher the TPM2BPrivate with the SRK
+- return the 
+  - OutPrivate -> the secret sealed with all the keys 
+  - OutPublic -> metadata about the secret
+
+
+then when i need to load the key i use ```tpm2.Load``` for :
+- pass the OutPrivate and OutPublic
+- decipher the key 
+- load the key on the internal RAM
+- return an **handle** like a refer ( not pointer ) to the specific internal area that contains the key
+**IMPORTANT** the handle is NOT a pointer so i cannot access directly to the key in memory , i can only request to the TPM to access to the key
+
+then when i'm done with the key i use ```tpm2.FlushContext``` to remove the key from the internal RAM of the TPM (the handle becomes invalid after this)
+
+---
+
+### TPM HMAC Key — the correct mechanism to export a secret
+
+so far we have seen how the TPM creates and loads generic keys. now let's look at which key type to use for our specific case.
+
+the key type we care about is a **HMAC key** (type `TPM_ALG_KEYEDHASH`). this is how it works:
+
+```
+TPM
+└── HMAC key (TPM_ALG_KEYEDHASH)
+        │   never exportable, never visible outside the TPM
+        │
+        TPM2_HMAC(handle, label) ← called by the application
+        │
+        ▼
+    output: 32 bytes   ← the ONLY thing that leaves the TPM
+```
+
+the fundamental point is this: the **root key never touches the process RAM**. it does not exit during Load, it does not exit during HMAC. the only thing that exits is the HMAC result, which is already derived and reveals nothing about the original key material.
+
+this is very different from "generate a secret and seal it", where the secret exists as plaintext at some point in its lifecycle. with a HMAC key, the raw cryptographic material never exists outside the chip.
+
+#### `TPM2_HMAC` — what it does concretely
+
+```go
+// 1. load the HMAC key into TPM (from its sealed form on disk)
+hmacHandle, err := tpm2.Load(tpmDev, srkHandle, outPrivate, outPublic)
+
+// 2. the TPM runs HMAC internally using its own key
+//    "mldsa-sk-v1" is the label that identifies the purpose (domain separation)
+result, err := tpm2.HMAC(tpmDev, tpm2.TPMAlgSHA256, hmacHandle, []byte("mldsa-sk-v1"))
+
+// result is 32 bytes — this is the only data that exits
+// the HMAC key stays inside the TPM
+```
+
+the `label` matters: using different labels produces different outputs from the same root key. this is called **domain separation** and allows deriving multiple independent secrets without creating any dependency between them.
+
+```
+same HMAC key, different labels:
+
+TPM2_HMAC("mldsa-sk-v1")   → secret_A   (protects ML-DSA SK)
+TPM2_HMAC("mlkem-sk-v1")   → secret_B   (protects ML-KEM SK in the future)
+TPM2_HMAC("integrity-v1")  → secret_C   (HMAC integrity tag for stored files)
+```
+
+all three are derived from the same root key but are fully independent.
+
+---
+
+### Dual Factor: TPM + Password — why it is not excessive
+
+the question is legitimate: is adding the user password on top of the TPM secret really necessary?
+
+**yes, it is the correct choice.** here is why.
+
+the TPM secret alone protects against **software** attacks (RAM dumps, remote theft of the encrypted file), but not against **physical** attacks:
+
+```
+scenario without password:
+
+attacker physically steals the laptop
+    │
+    ▼
+removes disk, copies SK.bin
+    │
+    ▼
+reinserts disk into the same laptop (the TPM is still there)
+    │
+    ▼
+boots the system, requests the secret from the TPM
+    │
+    ▼
+gets the keys  ← the TPM cannot distinguish the owner from the attacker
+```
+
+with password + TPM:
+
+```
+attacker steals the laptop
+    │
+    ├── has the physical TPM
+    ├── has SK.bin
+    └── does NOT have the password
+            │
+            ▼
+        cannot derive the AES key
+        cannot decrypt SK
+```
+
+the three required factors are:
+1. **SK.bin file** on disk
+2. **physical TPM** of the machine
+3. **user password**
+
+losing any one of them makes the keys permanently inaccessible.
+
+---
+
+### Creating a secret inside the TPM — full code walkthrough
+
+This section shows the complete Go code to create a TPM-bound HMAC key and derive a secret from it. Every single line is explained.
+
+The library used is `github.com/google/go-tpm/tpm2`, which is the standard Go library for TPM 2.0.
+
+---
+
+#### Step 1 — open the TPM device
+
+```go
+tpmDev, err := tpm2.OpenTPM("/dev/tpmrm0")
+if err != nil {
+    return nil, fmt.Errorf("cannot open TPM: %w", err)
+}
+defer tpmDev.Close()
+```
+
+- `tpm2.OpenTPM("/dev/tpmrm0")` opens a file descriptor to the TPM resource manager. On Linux the resource manager lives at `/dev/tpmrm0` and handles all context management automatically (flushing handles when the process exits, preventing handle exhaustion).
+- `tpmDev` is just a file handle — not a pointer into TPM memory, just a channel to send commands.
+- `defer tpmDev.Close()` closes the file descriptor when the function returns. This does NOT destroy any keys inside the TPM.
+
+---
+
+#### Step 2 — create the primary key (SRK equivalent)
+
+But first, what is a **template**?
+It is a way for the TPM to manage the secret associated with an instance of the template. The secret can be deterministic or non-deterministic depending on the key type.
+
+The **primary key** associates a deterministic secret with the template, so every time we create the primary key from the same template on the same TPM, the secret is always the same.
+
+The **child key** has a NON-deterministic secret, so every time we create an instance of the child key, the TPM generates a different secret.
+
+```go
+primaryTemplate := tpm2.Public{
+    Type:       tpm2.AlgRSA,
+    NameAlg:    tpm2.AlgSHA256,
+    Attributes: tpm2.FlagStorageDefault,
+    RSAParameters: &tpm2.RSAParams{
+        Symmetric: &tpm2.SymScheme{
+            Alg:     tpm2.AlgAES,
+            KeyBits: 128, // AES-256 offers better quantum resistance, but AES-128 is already more than sufficient here since this key only protects internal child key blobs, not user data directly
+        },
+        KeyBits: 2048,
+    },
+}
+
+primaryHandle, _, err := tpm2.CreatePrimary(
+    tpmDev,             // the TPM file descriptor
+    tpm2.HandleOwner,   // hierarchy: Owner (TPM_RH_OWNER)
+    tpm2.PCRSelection{},// no PCR binding for now
+    "",                 // hierarchy auth (empty = no password on hierarchy)
+    "",                 // key auth (empty = no password on this key)
+    primaryTemplate,    // the template that describes the key
+)
+if err != nil {
+    return nil, fmt.Errorf("CreatePrimary failed: %w", err)
+}
+defer tpm2.FlushContext(tpmDev, primaryHandle)
+```
+
+`primaryTemplate` is the instruction set for the TPM describing how to create the key.
+
+Note that the syntax `Type: tpm2.AlgRSA` is a composite literal — we assign to a struct field a constant value defined in the tpm2 library.
+
+For example, `tpm2.AlgRSA` has the value `0x0001`, which is not just a library constant but a specific ID defined by the TPM 2.0 specification that tells the TPM to use the RSA algorithm to generate the key.
+
+<br>
+
+- `tpm2.Public` is the struct that describes what kind of key you want to create. It is the "blueprint" sent to the TPM.
+It is called **public** because it represents the **public portion** of the key object in the TPM 2.0 protocol (corresponding to `TPMT_PUBLIC` in the spec). This is public in the cryptographic sense: it contains attributes, algorithms, and the key's *name* — information that can be shared safely. The private part (`TPM2B_PRIVATE`) is the sensitive area, encrypted inside the blob and never exposed.
+- `Type: tpm2.AlgRSA` — this primary key is an RSA key. Its job is NOT to sign or encrypt your data directly. Its job is to **wrap and protect child keys** (like our HMAC key). This is why it needs to be a storage key.
+- `NameAlg: tpm2.AlgSHA256` — the algorithm used to compute the key's "name" (a unique identity fingerprint of the key inside the TPM). SHA256 is the standard choice.
+- `Attributes: tpm2.FlagStorageDefault` — marks this key as a **storage parent**: it can wrap and unwrap child keys. It cannot sign or decrypt user data directly.
+- `RSAParameters.Symmetric` — defines how the sensitive area of child keys is encrypted when stored. AES-128 is the symmetric cipher used by the TPM to seal the child's secret material.
+- `RSAParameters.KeyBits: 2048` — the RSA key size. 2048 bits is the TPM 2.0 standard for storage keys.
+- `tpm2.CreatePrimary` sends all of this to the TPM. The TPM generates the SRK (Storage Root Key) deterministically from the hierarchy seed + template. This means: **calling CreatePrimary with the same template on the same TPM always produces the same key**. No blob needs to be saved to disk for the primary.
+**IMPORTANT:** using the same template does NOT mean you can unwrap a secret on a different TPM. If you created the secret inside TPM A, only TPM A can unwrap it, because the key is derived from seeds that are physically bound to that specific chip and never leave it.
+- `tpm2.HandleOwner` (= `TPM_RH_OWNER`) — the Owner hierarchy is the normal user-space hierarchy. There are three hierarchies (Owner, Endorsement, Platform). Owner is the right one for application keys.
+- `tpm2.PCRSelection{}` — empty means we are NOT binding the key to any PCR values. If you provided PCR values here, the key could only be used when the platform is in a specific measured boot state.
+**PCR** (Platform Configuration Registers) are special registers inside the TPM that record measurements of the machine's boot state.
+- `primaryHandle` — the handle returned. It is a 32-bit integer that identifies a slot in the TPM's loaded-objects table in RAM. It is valid until you call `FlushContext` or close the device. **It is not a persistent value** — it only exists in the TPM's internal RAM for the duration of the session.
+- `defer tpm2.FlushContext(tpmDev, primaryHandle)` — removes the primary key from the TPM's internal RAM when done. The key is NOT deleted — it can always be recreated deterministically. Flushing just frees the RAM slot.
+
+---
+
+#### Step 3 — define and create the HMAC key
+
+```go
+hmacTemplate := tpm2.Public{
+    Type:    tpm2.AlgKeyedHash,
+    NameAlg: tpm2.AlgSHA256,
+    Attributes: tpm2.FlagFixedTPM |
+                tpm2.FlagFixedParent |
+                tpm2.FlagSensitiveDataOrigin |
+                tpm2.FlagUserWithAuth |
+                tpm2.FlagSign,
+    KeyedHashParameters: &tpm2.KeyedHashParams{
+        Alg:  tpm2.AlgHMAC,
+        Hash: tpm2.AlgSHA256,
+    },
+}
+
+private, public, err := tpm2.Create(
+    tpmDev,             // TPM file descriptor
+    primaryHandle,      // parent key that will seal this key
+    tpm2.PCRSelection{},// no PCR binding
+    "",                 // key auth password (empty for now)
+    "",                 // sensitive data (not used here)
+    hmacTemplate,       // blueprint for the HMAC key
+)
+if err != nil {
+    return nil, fmt.Errorf("Create HMAC key failed: %w", err)
+}
+```
+
+- `tpm2.AlgKeyedHash` — this is the TPM key type for HMAC and XOR operations. Unlike RSA or ECC, a KeyedHash key holds a symmetric secret (the HMAC key material) rather than an asymmetric keypair.
+- `tpm2.FlagFixedTPM` — the key **cannot be duplicated** to another TPM. This is the flag that makes it hardware-bound: even if someone exports the sealed blob, it is useless on a different TPM.
+- `tpm2.FlagFixedParent` — the key cannot be moved to a different parent inside the same TPM. It is permanently tied to `primaryHandle`.
+- `tpm2.FlagSensitiveDataOrigin` — the key material was **generated by the TPM itself**, not imported from outside. This is the flag that guarantees the secret was born inside the chip.
+- `tpm2.FlagUserWithAuth` — normal user-level authorization is sufficient to use this key (as opposed to requiring special admin-level auth).
+- `tpm2.FlagSign` — this key is allowed to perform signing operations. For HMAC keys, "sign" means "compute HMAC". Without this flag the TPM would refuse HMAC requests.
+- `KeyedHashParameters.Alg: tpm2.AlgHMAC` — specifies that this KeyedHash key does HMAC (not XOR).
+- `KeyedHashParameters.Hash: tpm2.AlgSHA256` — HMAC-SHA256 specifically. The output will always be 32 bytes.
+- `tpm2.Create` sends the template to the TPM. The TPM generates random key material internally and returns two blobs:
+  - `private` — the key material **encrypted under the parent key** (primaryHandle). This blob is useless without the parent and without this specific TPM.
+  - `public` — metadata about the key (type, algorithm, attributes, name). Not secret, but needed to reload the key later.
+- **Important**: at this point the key is NOT loaded into the TPM's active RAM. It has been created and returned as sealed blobs. You must call `Load` before you can use it.
+
+---
+
+#### Step 4 — save the sealed blobs to disk
+
+```go
+// these two blobs must be persisted — they are needed every time you want to use the key
+err = os.WriteFile("tpm_hmac_private.bin", private, 0600)
+if err != nil {
+    return nil, fmt.Errorf("cannot save private blob: %w", err)
+}
+
+err = os.WriteFile("tpm_hmac_public.bin", public, 0600)
+if err != nil {
+    return nil, fmt.Errorf("cannot save public blob: %w", err)
+}
+```
+
+- `private` and `public` are just byte slices returned by `tpm2.Create`. They are safe to store on disk.
+- `private` looks like random bytes to anyone who reads it — it is AES-encrypted by the parent key inside the TPM. Without the same TPM it is meaningless.
+- `public` is readable metadata. It is not a secret but it is needed to reconstruct the key's name and verify integrity on Load.
+- `0600` — file permissions: owner read/write only. This is the minimum correct permission for sensitive blobs.
+- These two files together are the **persistent form of your HMAC key**. Every time the application starts it reads these, calls `Load`, gets a handle, and uses it.
+
+---
+
+#### Step 5 — load the key and get a usable handle
+
+```go
+// read blobs back from disk
+private, err := os.ReadFile("tpm_hmac_private.bin")
+if err != nil {
+    return nil, fmt.Errorf("cannot read private blob: %w", err)
+}
+public, err := os.ReadFile("tpm_hmac_public.bin")
+if err != nil {
+    return nil, fmt.Errorf("cannot read public blob: %w", err)
+}
+
+// recreate the primary key (it is deterministic, no disk storage needed)
+primaryHandle, _, err := tpm2.CreatePrimary(tpmDev, tpm2.HandleOwner, tpm2.PCRSelection{}, "", "", primaryTemplate)
+if err != nil {
+    return nil, fmt.Errorf("CreatePrimary failed: %w", err)
+}
+defer tpm2.FlushContext(tpmDev, primaryHandle)
+
+// we pass the public and private blobs to Load, using the primaryHandle as parent, to get back the hmacHandle
+hmacHandle, _, err := tpm2.Load(
+    tpmDev,        // TPM file descriptor
+    primaryHandle, // parent key — must be the same one that created this key
+    "",            // parent key auth (empty, matches what we set at Create time)
+    public,        // public blob from disk
+    private,       // private blob from disk — the TPM decrypts this internally
+)
+if err != nil {
+    return nil, fmt.Errorf("Load HMAC key failed: %w", err)
+}
+defer tpm2.FlushContext(tpmDev, hmacHandle)
+```
+
+- `tpm2.Load` takes the sealed blobs and asks the TPM to decrypt `private` using `primaryHandle`. The decrypted key material goes into the TPM's internal RAM (not your process RAM).
+- The TPM verifies that the `public` blob is consistent with the decrypted `private` blob. If someone tampered with either blob on disk, `Load` fails here.
+- `hmacHandle` — a new handle pointing to the now-loaded HMAC key inside the TPM. This handle is valid for the lifetime of the session.
+- The primary key must be recreated with `CreatePrimary` before calling `Load` because a handle is just a reference to the TPM's internal RAM — it does not persist across sessions. `Load` then uses that handle as the parent to decrypt the private blob. Recreating the primary is instant and deterministic (same template = same key every time).
+
+---
+
+#### Step 6 — derive the secret with HMAC
+
+```go
+// label is a public domain-separation string — not a secret
+label := []byte("mldsa-sk-v1")
+
+// use the loaded hmacHandle to compute HMAC over the label — the key itself never leaves the TPM
+result, err := tpm2.HMAC(
+    tpmDev,             // TPM file descriptor
+    tpm2.AlgSHA256,     // hash algorithm for HMAC-SHA256
+    hmacHandle,         // handle to the loaded HMAC key inside the TPM
+    label,              // the input data — your domain separation label
+)
+if err != nil {
+    return nil, fmt.Errorf("TPM HMAC failed: %w", err)
+}
+
+// immediately move the result into protected memory
+secret, err := memguard.NewBufferFromBytes(result)
+if err != nil {
+    return nil, fmt.Errorf("memguard failed: %w", err)
+}
+memguard.WipeBytes(result) // wipe the plain slice immediately after — result is the critical secret
+```
+
+- `tpm2.HMAC` **uses** the already-loaded key to compute a digest — it does not create anything. The TPM takes `hmacHandle` (the key in its internal RAM) and `label` (your input bytes) and computes `HMAC-SHA256(key, label)` entirely inside the chip.
+- `result` is a plain `[]byte` of 32 bytes that arrives in your process RAM. This is the only moment the derived secret exists in regular memory, and it is the most critical value to protect.
+- `label` is NOT a secret — it is a public domain-separation string that anyone can know. There is no need to protect it in memory.
+- `memguard.NewBufferFromBytes(result)` copies those 32 bytes into a locked, mprotected memory region. From this point the secret is in protected RAM.
+- `memguard.WipeBytes(result)` immediately zeroes the original plain slice. The window of exposure is a few microseconds between the HMAC call return and this wipe.
+- The HMAC key itself never appeared in `result` — only the derived output did. Even if `result` were leaked, an attacker cannot reverse HMAC to recover the key.
+
+
+<br>
+
+### Summary
+
+When we want to create a key inside the TPM we must define two types of template:
+- **primary** → the SRK that will wrap the child
+- **child** → the key we actually want to use
+
+For example we define the primary template:
+```
+primaryTemplate := tpm2.Public{
+    Type:       tpm2.AlgRSA,
+
+    // the Name identifies the key uniquely inside the TPM
+    // Name = ( AlgSHA256 || hash(TPMT_PUBLIC) )
+
+    NameAlg:    tpm2.AlgSHA256,
+    Attributes: tpm2.FlagStorageDefault, // can seal and unseal child keys
+    
+    // RSAParameters defines the properties of the RSA key object
+    RSAParameters: &tpm2.RSAParams{
+
+        // Symmetric defines the cipher used to encrypt the sensitive area of child keys
+        Symmetric: &tpm2.SymScheme{
+            Alg:     tpm2.AlgAES,
+            KeyBits: 128,
+        },
+        KeyBits: 2048,
+    },
+}
+```
+The primary template uses 2 layers to protect the child:
+- **AES (SymScheme)** encrypts the *sensitive area* of the child key — the actual secret material
+- **RSA** wraps the AES key itself, binding the child to the parent through key wrapping
+
+Then to instantiate this template and load the primary key into the TPM's RAM, we call `CreatePrimary`:
+
+```
+primaryHandle, _, err := tpm2.CreatePrimary(
+    tpmDev,             // the TPM file descriptor
+    tpm2.HandleOwner,   // hierarchy: Owner (TPM_RH_OWNER)
+    tpm2.PCRSelection{},// no PCR binding for now
+    "",                 // hierarchy auth (empty = no password on hierarchy)
+    "",                 // key auth (empty = no password on this key)
+    primaryTemplate,    // the template that describes the key
+)
+```
+
+<br>
+<br>
+
+#### Generate the child key
+
+Now we define the **child key**:
+```
+hmacTemplate := tpm2.Public{
+    Type:    tpm2.AlgKeyedHash,
+    NameAlg: tpm2.AlgSHA256,
+    Attributes: tpm2.FlagFixedTPM |
+                tpm2.FlagFixedParent |
+                tpm2.FlagSensitiveDataOrigin |
+                tpm2.FlagUserWithAuth |
+                tpm2.FlagSign,
+    KeyedHashParameters: &tpm2.KeyedHashParams{
+        Alg:  tpm2.AlgHMAC,
+        Hash: tpm2.AlgSHA256,
+    },
+}
+```
+
+`AlgKeyedHash` is a key type that holds a symmetric secret and can produce a keyed hash (HMAC) from it.
+`KeyedHashParameters` defines the algorithm and hash function to use — in this case HMAC-SHA256.
+The `Attributes` field defines security properties of the child key: hardware-binding, parent-binding, TPM-generated origin, and usage permissions.
+
+<br>
+
+#### Create the HMAC key
+
+Now, with both templates defined, we create the **HMAC key** sealed under the primary:
+
+```
+private, public, err := tpm2.Create(
+    tpmDev,             // TPM file descriptor
+    primaryHandle,      // parent key that will seal this key
+    tpm2.PCRSelection{},// no PCR binding
+    "",                 // key auth password (empty for now)
+    "",                 // sensitive data (not used here)
+    hmacTemplate,       // blueprint for the HMAC key
+)
+```
+
+In this function we pass:
+- the path to the TPM resource manager
+- the primary handle (SRK)
+- the key auth password (controls who can use the key)
+- the hmacTemplate (the blueprint for the child key)
+
+**With this function the TPM creates the child key sealed under the primary.**
+
+When `tpm2.Create` runs, the TPM internally generates:
+- **public struct**: attributes and params
+- **sensitive area**: the real secret material, not yet encrypted
+
+Then from the **sensitive area** the TPM encrypts with the symmetric scheme (AES), binds it with the parent key (RSA wrapping), and adds integrity checks — this produces the **private blob**.
+
+<br>
+
+#### Load
+
+`CreatePrimary` is called first to recreate the `primaryHandle` in the TPM's RAM (it is deterministic, so no disk storage is needed — a handle is a volatile RAM reference, not a persistent value). Then `Load` is called with the public and private blobs, using `primaryHandle` as the parent — the TPM decrypts the private blob internally and returns an `hmacHandle`. Finally `tpm2.HMAC` uses that handle to **compute** HMAC(key, label) and return the derived output.
+
+#### Step 7 — flush and close
+
+```go
+tpm2.FlushContext(tpmDev, hmacHandle)
+tpm2.FlushContext(tpmDev, primaryHandle)
+tpmDev.Close()
+```
+
+- `FlushContext` removes the key from the TPM's internal RAM. the TPM has a very limited number of slots (typically 3). if you do not flush, subsequent Load calls may fail with `TPM_RC_OBJECT_MEMORY`.
+- the key is NOT deleted — the sealed blobs on disk are unchanged. next time you need the secret you run the same Load → HMAC → FlushContext cycle.
+- `tpmDev.Close()` closes the file descriptor. the `defer` statements placed earlier handle this automatically in the real code.
+
+---
+
+#### Complete picture — what lives where at each step
+
+```
+                      DISK                      TPM internal RAM          process RAM
+                      ────                      ────────────────          ───────────
+after Create:   tpm_hmac_private.bin      (nothing loaded yet)         (nothing)
+                tpm_hmac_public.bin
+
+after Load:     tpm_hmac_private.bin      primaryHandle → primary key  (nothing)
+                tpm_hmac_public.bin       hmacHandle    → HMAC key
+
+after HMAC:     tpm_hmac_private.bin      primaryHandle → primary key  result []byte  ← brief
+                tpm_hmac_public.bin       hmacHandle    → HMAC key
+
+after memguard: tpm_hmac_private.bin      primaryHandle → primary key  secret (mlock'd, mprotect'd)
+                tpm_hmac_public.bin       hmacHandle    → HMAC key     result wiped
+
+after Flush:    tpm_hmac_private.bin      (both handles flushed)       secret (mlock'd, mprotect'd)
+                tpm_hmac_public.bin
+
+```
+
+the HMAC key material itself never appears in the "process RAM" column. only its 32-byte derived output does, and only briefly before memguard takes over.
 

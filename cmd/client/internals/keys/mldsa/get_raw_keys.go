@@ -9,8 +9,7 @@ import (
 	"github.com/awnumar/memguard"
 )
 
-// DecodePublicKeyMLDSA converts the packed public-key bytes from the protobuf
-// payload into a raw ML-DSA public key ready for verification.
+// DecodePublicKeyMLDSA converts the packed public-key bytes from the protobuf payload into a raw ML-DSA public key ready for signature.
 func DecodePublicKeyMLDSA(publicKey *pb.PublicKeyMLDSA) (*mldsa87.PublicKey, error) {
 	var rawKey mldsa87.PublicKey
 
@@ -23,8 +22,7 @@ func DecodePublicKeyMLDSA(publicKey *pb.PublicKeyMLDSA) (*mldsa87.PublicKey, err
 
 }
 
-// DecodePrivateKeyMLDSA decrypts the stored private-key payload and returns it
-// sealed in a memguard Enclave until the caller explicitly opens it.
+// DecodePrivateKeyMLDSA decrypts the stored private-key payload and returns it sealed in a memguard Enclave until the caller explicitly opens it.
 func DecodePrivateKeyMLDSA(privateKey *pb.PrivateKeyMLDSA, aesKey *memguard.LockedBuffer, level int, salt []byte) (*memguard.Enclave, error) {
 	bytes := privateKey.Key
 

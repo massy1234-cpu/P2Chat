@@ -9,4 +9,7 @@ require (
 	google.golang.org/protobuf v1.36.11
 )
 
-require github.com/awnumar/memcall v0.4.0 // indirect
+require (
+	github.com/awnumar/memcall v0.4.0 // indirect
+	github.com/google/go-tpm v0.9.8 // indirect
+)

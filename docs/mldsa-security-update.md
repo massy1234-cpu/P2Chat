@@ -807,3 +807,207 @@ after Flush:    tpm_hmac_private.bin      (both handles flushed)       secret (m
 
 the HMAC key material itself never appears in the "process RAM" column. only its 32-byte derived output does, and only briefly before memguard takes over.
 
+---
+
+## Implementazione TPM effettiva
+
+### Architettura finale: Sealed Blob (non HMAC)
+
+Dopo la fase di studio documentata sopra, l'architettura implementata si discosta dall'approccio HMAC descritto nelle sezioni precedenti. La scelta finale è il **sealed blob**:
+
+- il TPM genera internamente un segreto casuale
+- lo sigilla sotto la chiave primaria (blob cifrato, inutile su qualsiasi altro TPM)
+- i due blob (`OutPrivate` + `OutPublic`) vengono salvati su disco
+- quando il segreto serve, si chiama `Unseal`: il TPM disigilla e restituisce il segreto in RAM per un istante, poi `memguard` lo prende in carico
+
+Rispetto all'approccio HMAC:
+
+| aspetto | HMAC key | Sealed blob (scelto) |
+|---|---|---|
+| il segreto esce mai dalla RAM del TPM? | no (esce solo il derivato) | sì, brevemente durante Unseal |
+| complessità | maggiore (label, domain separation) | minore |
+| adatto alla fase attuale | no (over-engineering) | sì |
+
+L'approccio HMAC rimane documentato in [`linux_legacy.go`](/Users/massy/Desktop/P2Chat/cmd/client/internals/tpm/linux_legacy.go) come riferimento commentato.
+
+---
+
+### Nuova API go-tpm (command-based)
+
+Il codice legacy mostrato nelle sezioni precedenti usa la vecchia API procedurale di `go-tpm` (`tpm2.OpenTPM`, `tpm2.Create`, ecc.). L'implementazione reale usa la **nuova API command-based**:
+
+```
+libreria: github.com/google/go-tpm/tpm2
+transport: github.com/google/go-tpm/tpm2/transport/linuxtpm
+```
+
+Il pattern cambia da:
+
+```go
+// vecchia API (legacy)
+tpm2.CreatePrimary(tpmDev, tpm2.HandleOwner, ...)
+```
+
+a:
+
+```go
+// nuova API (command struct + Execute)
+tpm2.CreatePrimary{
+    PrimaryHandle: tpm2.TPMRHOwner,
+    InPublic:      tpm2.New2B(primaryTemplate),
+}.Execute(tpm)
+```
+
+ogni comando è una struct con campi espliciti — più leggibile, più type-safe, allineato con la spec TPM 2.0.
+
+un'altra differenza importante è `tpm2.NamedHandle`: nella nuova API, quando si passa un handle come parent a `Load`, bisogna passare anche il `Name` crittografico, non solo l'handle numerico. questo garantisce che il TPM verifichi l'identità del parent prima di procedere.
+
+```go
+parentHandle := tpm2.NamedHandle{
+    Handle: primaryResp.ObjectHandle,
+    Name:   primaryResp.Name,
+}
+```
+
+---
+
+### Primary template aggiornato
+
+Il template nella nuova API specifica gli attributi e la modalità AES in modo esplicito:
+
+```go
+var primaryTemplate = tpm2.TPMTPublic{
+    Type:    tpm2.TPMAlgRSA,
+    NameAlg: tpm2.TPMAlgSHA256,
+    ObjectAttributes: tpm2.TPMAObject{
+        FixedTPM:            true,
+        FixedParent:         true,
+        SensitiveDataOrigin: true,
+        UserWithAuth:        true,
+        Restricted:          true,
+        Decrypt:             true,
+    },
+    Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgRSA, &tpm2.TPMSRSAParms{
+        Symmetric: tpm2.TPMTSymDefObject{
+            Algorithm: tpm2.TPMAlgAES,
+            KeyBits:   tpm2.NewTPMUSymKeyBits(tpm2.TPMAlgAES, tpm2.TPMKeyBits(128)),
+            Mode:      tpm2.NewTPMUSymMode(tpm2.TPMAlgAES, tpm2.TPMAlgCFB), // CFB esplicito
+        },
+        Scheme:  tpm2.TPMTRSAScheme{Scheme: tpm2.TPMAlgNull},
+        KeyBits: 2048,
+    }),
+}
+```
+
+il template è definito a livello di package (non di funzione) perché `CreateTPMResponse` e `UnsealSecret` devono usare **esattamente lo stesso template**: `CreatePrimary` è deterministico, stesso template + stesso TPM = stessa chiave. se i due template differissero anche di un bit, `Load` fallirebbe.
+
+---
+
+### Secret template: `TPMAlgNull` = sealed blob
+
+Il template del segreto figlio usa `TPMAlgNull` come scheme:
+
+```go
+secretTemplate := tpm2.TPMTPublic{
+    Type:    tpm2.TPMAlgKeyedHash,
+    NameAlg: tpm2.TPMAlgSHA256,
+    ObjectAttributes: tpm2.TPMAObject{
+        FixedTPM:            true,
+        FixedParent:         true,
+        SensitiveDataOrigin: true,
+        UserWithAuth:        true,
+        // nota: niente FlagSign — non è una HMAC key
+    },
+    Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgKeyedHash, &tpm2.TPMSKeyedHashParms{
+        Scheme: tpm2.TPMTKeyedHashScheme{Scheme: tpm2.TPMAlgNull}, // sealed blob, non HMAC
+    }),
+}
+```
+
+`TPMAlgNull` come scheme dice al TPM: questo oggetto non è una chiave operativa (non firma, non fa HMAC), è solo un contenitore di dati sigillati. il TPM genera il segreto casualmente internamente e lo sigilla — l'unica operazione permessa è `Unseal`.
+
+---
+
+### Funzioni implementate
+
+Riferimento: [`linux.go`](/Users/massy/Desktop/P2Chat/cmd/client/internals/tpm/linux.go)
+
+#### `AvailableTPM() bool`
+controlla la presenza di `/dev/tpmrm0` (il TPM resource manager). restituisce `true` se il file esiste.
+
+#### `StatusTPM() (bool, error)`
+legge `/sys/class/tpm/tpm0/tpm_version_major` e verifica che la versione sia >= 2. restituisce `false` con errore se il TPM non è disponibile o la versione non è supportata.
+
+#### `CreateTPMResponse() (*tpm2.CreateResponse, error)`
+crea il sealed blob e restituisce la coppia `OutPrivate + OutPublic`. il segreto non esce dal TPM durante questa chiamata — esce solo come blob cifrato. il chiamante deve poi passare la risposta a `StoreBlobs`.
+
+flusso interno:
+1. apre `/dev/tpmrm0`
+2. `CreatePrimary` con `primaryTemplate` → `primaryHandle`
+3. `Create` con `secretTemplate` → `createResp` (contiene private e public blob)
+4. `FlushContext` sul primary handle
+5. restituisce `createResp`
+
+#### `UnsealSecret(private TPM2BPrivate, public TPM2BPublic) (*memguard.LockedBuffer, error)`
+ricrea la chiave primaria (deterministicamente), carica il blob figlio con `Load`, disigilla con `Unseal`, e immediatamente copia il segreto in un `memguard.LockedBuffer` (mlock). i byte grezzi vengono azzerati con `WipeBytes` prima di restituire.
+
+```go
+buf := memguard.NewBuffer(len(unsealResp.OutData.Buffer))
+copy(buf.Bytes(), unsealResp.OutData.Buffer)
+memguard.WipeBytes(unsealResp.OutData.Buffer) // azzeramento immediato
+```
+
+la finestra di esposizione in RAM ordinaria è la stessa pochi microsecondi tra `Unseal` e `WipeBytes`.
+
+#### `StoreBlobs(private TPM2BPrivate, public TPM2BPublic) error`
+serializza i blob con `tpm2.Marshal` (che produce il formato binario canonico TPM 2.0) e li salva su file tramite `datacontrol.SaveBytesOnFile`:
+
+```
+/data/blobs/privateBlob.bin  ← blob cifrato (inutile senza il TPM che l'ha creato)
+/data/blobs/publicBlob.bin   ← metadati pubblici (necessari per Load)
+```
+
+---
+
+### Flusso completo aggiornato (Sealed Blob)
+
+```
+                      DISK                      TPM internal RAM          process RAM
+                      ────                      ────────────────          ───────────
+after Create:   privateBlob.bin           (nothing loaded yet)          (nothing)
+                publicBlob.bin
+
+after Load:     privateBlob.bin           primaryHandle → primary key   (nothing)
+                publicBlob.bin            childHandle   → sealed blob
+
+after Unseal:   privateBlob.bin           primaryHandle → primary key   secret []byte  ← brevissimo
+                publicBlob.bin            childHandle   → sealed blob
+
+after memguard: privateBlob.bin           primaryHandle → primary key   secret (mlock'd)
+                publicBlob.bin            childHandle   → sealed blob   raw bytes wiped
+
+after Flush:    privateBlob.bin           (tutti gli handle flushed)    secret (mlock'd)
+                publicBlob.bin
+```
+
+---
+
+### Supporto multi-OS
+
+| OS | stato |
+|---|---|
+| Linux | implementato (`linux.go`) |
+| Windows | non ancora implementato (`windows.go` vuoto) |
+| macOS | non ancora implementato (`macos.go` vuoto) |
+
+macOS non ha un TPM standard (ha il Secure Enclave, ma con API completamente diverse). Windows ha un TPM accessibile tramite `tbs.dll` (TPM Base Services). entrambi sono lasciati come estensione futura.
+
+---
+
+### Rischi residui aggiornati (TPM)
+
+- il segreto esiste in RAM ordinaria per un brevissimo intervallo tra `Unseal` e `memguard.WipeBytes` — finestra non eliminabile ma molto ristretta
+- se il processo viene killato tra `Unseal` e `WipeBytes`, il segreto potrebbe restare in memoria — il watchdog con `memguard.Purge()` riduce questo rischio ma non lo elimina nei crash violenti
+- i blob su disco (`privateBlob.bin`) sono inutili senza il TPM che li ha creati, ma la loro integrità non è verificata con HMAC — un attaccante che li corrompe causa un errore al `Load`, non una compromissione silenziosa
+- il TPM da solo non protegge da un attaccante con accesso fisico al laptop acceso e al TPM non bloccato — combinare con password (come descritto nella sezione Dual Factor) rimane la scelta corretta
+

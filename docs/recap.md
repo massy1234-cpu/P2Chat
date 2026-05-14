@@ -1011,3 +1011,114 @@ macOS non ha un TPM standard (ha il Secure Enclave, ma con API completamente div
 - i blob su disco (`privateBlob.bin`) sono inutili senza il TPM che li ha creati, ma la loro integrità non è verificata con HMAC — un attaccante che li corrompe causa un errore al `Load`, non una compromissione silenziosa
 - il TPM da solo non protegge da un attaccante con accesso fisico al laptop acceso e al TPM non bloccato — combinare con password (come descritto nella sezione Dual Factor) rimane la scelta corretta
 
+---
+
+## TPM NV Optimization — persisting the primary key
+
+### The problem: CreatePrimary is slow
+
+Every time `CreateTPMResponse` or `UnsealSecret` ran, the first thing they did was call `CreatePrimary`. That command generates a fresh 2048-bit RSA key inside the TPM hardware — a real cryptographic operation happening on a small dedicated chip. Depending on the hardware, that is anywhere from 100ms to 500ms. Every. Single. Time the app touched the TPM.
+
+For a one-off setup this is fine. But once the TPM becomes part of the normal startup flow (decrypt keys → unseal TPM secret → derive AES key → decrypt private key), that cost hits on every launch. It adds up fast and makes the app feel sluggish for no good reason.
+
+### The fix: persist the primary key in NV memory
+
+The TPM has a small area of non-volatile memory ( NV memory ) — think of it as a tiny internal hard drive that survives reboots and power-offs. You can move a transient key (one that lives only in the TPM's internal RAM) into that NV area using the `EvictControl` command, and assign it a **persistent handle**: a fixed 32-bit address you choose in the owner hierarchy range. We use `0x81000001`.
+
+Once the primary key lives there, instead of running `CreatePrimary` every time, you just call `ReadPublic` on the persistent handle. `ReadPublic` is a trivial lookup — no cryptographic computation, no RSA keygen. The TPM just returns the key's metadata and its `Name` (a SHA256 hash that uniquely identifies the key and is used internally for cryptographic binding). Order of magnitude faster.
+For `Unseal` the TPM doesn't need the **private key** stored in the TPM, it recalculate only the private key every time we call `Unseal` using the public key, the seed and the parameters 
+
+### Why the sealed blobs stay valid on both paths
+
+Here is the key insight: `CreatePrimary` in TPM2 is **deterministic**. Same template + same physical TPM chip = same key, always. Even after a reboot. Even if the key was flushed from internal RAM and recreated later from scratch. This is a fundamental TPM2 spec guarantee — the primary key is derived from seeds that are permanently burned into the chip and never leave it.
+
+This means the `OutPrivate` + `OutPublic` blobs saved on disk are always valid, regardless of whether the parent was loaded from NV or freshly regenerated via `CreatePrimary`. The sealed child blob is bound to the key material, not to a specific session or handle. So:
+
+- **NV fast path** (primary already persisted): `ReadPublic` → get `Name` → build `NamedHandle` → use as parent
+- **CreatePrimary slow path** (first run, or NV not populated yet): generate the same key from scratch → use as parent
+
+Both produce the exact same parent. `Load` and `Unseal` work correctly on both.
+
+### The new function: `EnsurePrimaryNV`
+
+```go
+func EnsurePrimaryNV(tpm transport.TPM) (*tpm2.ReadPublicResponse, bool, error) {
+    PublicRead, err := tpm2.ReadPublic{ObjectHandle: persistentHandle}.Execute(tpm)
+    if err == nil {
+        return PublicRead, true, nil
+    }
+    return nil, false, nil
+}
+```
+
+Takes a `transport.TPM` connection from the caller (no internal connection opening — shares the caller's connection, single connection for the whole operation). Calls `ReadPublic` on `persistentHandle` for ensure that the **persistent handle** is not empty. If found, returns the full response — that is the Public Key including the `Name` needed to construct a valid `NamedHandle`. If not found, returns `nil, false, nil` — no error, just "not there".
+
+So `PublicRead` is used effectly only for the parameter `Name` that allows the TPM to verify that `PublicRead` really corrispond to the **primary template**
+
+The interface is `transport.TPM` (not `TPMCloser`) because `EnsurePrimaryNV` has no business closing the connection. The caller owns the lifecycle.
+
+### How CreateTPMResponse and UnsealSecret use it
+
+Both functions now follow the same pattern: open one connection, call `EnsurePrimaryNV` on it, branch on the result.
+
+```go
+tpm, err := linuxtpm.Open("/dev/tpmrm0")
+// ...
+defer tpm.Close()
+
+// check if the NV contains something
+pubResp, found, err := EnsurePrimaryNV(tpm)
+
+if found && err == nil {
+    
+    // fast path: primary is in NV, skip CreatePrimary entirely
+    parentHandle = tpm2.NamedHandle{
+        Handle: persistentHandle,
+        Name:   pubResp.Name,
+    }
+} else {
+    
+    // slow path: first run or NV not populated
+    primaryResp, err := tpm2.CreatePrimary{...}.Execute(tpm)
+    // ...
+    parentHandle = tpm2.NamedHandle{
+        Handle: primaryResp.ObjectHandle,
+        Name:   primaryResp.Name,
+    }
+}
+```
+
+One connection, one `ReadPublic` call, no redundant operations. If `ReadPublic` fails (key not there), we fall back to `CreatePrimary` — same result, slightly slower, but correct.
+
+**Note:** with the `EnsurePrimary` we check only if the TPM contains some primary template but doesnt check if the public key corrispond to the primary template, this check will do nextly in this part
+
+```go
+loadResp, err := tpm2.Load{
+		ParentHandle: parentHandle,
+		
+		// load the blobs
+		InPrivate: private,
+		InPublic:  public,
+	}.Execute(tpm)
+	if err != nil {
+		return nil, apperr.Wrap("Load failed", err)
+	}
+```
+
+if the public key doesnt match the `Load` fail
+
+### Before vs after
+
+Before: every `CreateTPMResponse` or `UnsealSecret` call opened a connection and immediately ran `CreatePrimary` (RSA 2048-bit keygen on hardware).
+
+After:
+- first run ever: `CreatePrimary` once, then `EvictControl` stores the key in NV
+- every subsequent run: `ReadPublic` on the persistent handle, no keygen at all
+
+The security properties are unchanged. The NV-persisted primary key is the same key that `CreatePrimary` would have generated — it is just cached inside the chip instead of being regenerated each time. The sealed blobs on disk remain hardware-bound to this specific TPM and useless anywhere else.
+
+### Performance Comparison
+
+before the optimization the file `linux_tpm_test.go` did the test in about **15 second each time.**
+With the new optimization, the first time is still 15 seconds BUT the other times that we want to create a new secret or `Unseal` a blob the function took only **0.4 seconds** in average, the function `BenchmarkCreateTPMResponse` do this comparison ( use -v option )
+So the optimization improve the speed of the operation ( from the second time ) of **30 times faster** than the first one 

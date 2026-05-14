@@ -4,18 +4,17 @@ package linux
 import (
 	datacontrol "P2Chat/cmd/client/internals/datacontrol/mldsa"
 	"P2Chat/pkg/apperr"
-	"os"
-	"strconv"
-	"strings"
-
 	"github.com/awnumar/memguard"
 	"github.com/google/go-tpm/tpm2"
+	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/linuxtpm"
 )
 
+// persistend handler ( optimization )
+const persistentHandle = tpm2.TPMHandle(0x81000001) 
+
 // primaryTemplate is package-level so CreateTPMResponse and UnsealSecret always use the
-// identical template — CreatePrimary is deterministic: same template + same TPM = same key.
-// i use the same primaryTemplate for all the TPM operations
+// identical primary template — CreatePrimary is deterministic: same template + same TPM = same key.
 var primaryTemplate = tpm2.TPMTPublic{
 	Type:    tpm2.TPMAlgRSA,
 	NameAlg: tpm2.TPMAlgSHA256,
@@ -38,49 +37,41 @@ var primaryTemplate = tpm2.TPMTPublic{
 	}),
 }
 
-// check if there is a TPM in the
-func AvailableTPM() bool {
-
-	// check the tpmrm0 ( tpm manager )
-	_, err := os.Stat("/dev/tpmrm0")
-	if err == nil {
-		return true
-	} else {
-		return false
+// Get tpm version from file
+func AvailableTPM() (bool, error) {
+	
+	// the better way to understand if the TPM is available and understand if the app can use it, is try to open it
+	tpm, err := linuxtpm.Open("/dev/tpmrm0")
+	if err != nil {
+		return false, apperr.Wrap("TPM not usable or not available", err)
 	}
+	defer tpm.Close()
+	return true, nil
 
 }
 
-// get tpm version from file
-func StatusTPM() (bool, error) {
 
-	if AvailableTPM() {
-
-		// read the file that contains the version of the TPM
-		data, err := os.ReadFile("/sys/class/tpm/tpm0/tpm_version_major")
-		if err != nil {
-			return false, apperr.Wrap("reading version tpm ", err)
-		}
-
-		// eliminate spaces
-		version := strings.TrimSpace(string(data))
-
-		// convert the in an int type
-		v, err := strconv.Atoi(version)
-		if err != nil {
-			return false, apperr.Wrap("number not valid in tpm version", err)
-		}
-		return v >= 2, nil
-	} else {
-		return false, apperr.New("TPM is not available in this machine")
+// Check if the TPM has stored the primary template in the memory ( NV ) and return the public key
+func EnsurePrimaryNV(tpm transport.TPM) ( *tpm2.ReadPublicResponse, bool, error ) {                                                                                     
+																			
+	// check if the primary template handler exist in the NV, reading his public key
+	PublicRead, err := tpm2.ReadPublic{ObjectHandle: persistentHandle}.Execute(tpm)
+	if err == nil {                                                             
+		return PublicRead, true, nil                
+	}else{
+		return nil, false, nil
 	}
-
 }
+
 
 // CreateTPMResponse generates a TPM-bound sealed secret and returns the blob pair
-// (OutPrivate + OutPublic) that must be persisted to disk. The secret never leaves
-// the TPM during this call.
+// (OutPrivate + OutPublic) that must be persisted to disk to be recreated later 
 func CreateTPMResponse() (*tpm2.CreateResponse, error) {
+
+	// check if tpm is available
+	if res,err := AvailableTPM();res == false {
+		return nil, apperr.Wrap("Cannot use tpm secret ",err)
+	}
 
 	// open connection with TPM
 	tpm, err := linuxtpm.Open("/dev/tpmrm0")
@@ -89,14 +80,43 @@ func CreateTPMResponse() (*tpm2.CreateResponse, error) {
 	}
 	defer tpm.Close()
 
-	primaryResp, err := tpm2.CreatePrimary{
-		PrimaryHandle: tpm2.TPMRHOwner,
-		InPublic:      tpm2.New2B(primaryTemplate),
-	}.Execute(tpm)
-	if err != nil {
-		return nil, apperr.Wrap("CreatePrimary failed", err)
+	var parentHandle tpm2.NamedHandle
+
+	// check if primary template is persistent in NV memory
+	pubResp, res, err := EnsurePrimaryNV(tpm) 
+	if ( res == true && err == nil ) {
+
+		// create the handler
+		parentHandle = tpm2.NamedHandle{
+			Handle: persistentHandle,
+			Name:   pubResp.Name,
+		}
+
+	}else{
+
+		// if primary template is not in NV memory, i create it
+		primaryResp, err := tpm2.CreatePrimary{
+			PrimaryHandle: tpm2.TPMRHOwner,
+			InPublic:      tpm2.New2B(primaryTemplate),
+		}.Execute(tpm)
+		if err != nil {
+			return nil, apperr.Wrap("CreatePrimary failed", err)
+		}
+
+		// PersistPrimaryNV store the primary template ( public key + parameters ) in NV memory
+		if err := PersistPrimaryNV(tpm, primaryResp); err != nil {
+			tpm2.FlushContext{FlushHandle: primaryResp.ObjectHandle}.Execute(tpm)
+			return nil, err
+		}
+		tpm2.FlushContext{FlushHandle: primaryResp.ObjectHandle}.Execute(tpm)
+
+		parentHandle = tpm2.NamedHandle{
+			Handle: persistentHandle,
+			Name:   primaryResp.Name,
+		}
+
 	}
-	defer tpm2.FlushContext{FlushHandle: primaryResp.ObjectHandle}.Execute(tpm)
+
 
 	// TPMAlgNull scheme = sealed blob, TPM generates the secret internally
 	secretTemplate := tpm2.TPMTPublic{
@@ -113,11 +133,6 @@ func CreateTPMResponse() (*tpm2.CreateResponse, error) {
 		}),
 	}
 
-	parentHandle := tpm2.NamedHandle{
-		Handle: primaryResp.ObjectHandle,
-		Name:   primaryResp.Name,
-	}
-
 	// createResp contains the public and private blob — secret is sealed inside OutPrivate
 	createResp, err := tpm2.Create{
 		ParentHandle: parentHandle,
@@ -129,6 +144,8 @@ func CreateTPMResponse() (*tpm2.CreateResponse, error) {
 
 	return createResp, nil
 }
+
+
 
 // UnsealSecret recreates the primary key from the package-level template (deterministic),
 // loads the child blob, unseals the secret, and immediately wraps it in a memguard
@@ -143,22 +160,44 @@ func UnsealSecret(private tpm2.TPM2BPrivate, public tpm2.TPM2BPublic ) (*memguar
 	}
 	defer tpm.Close()
 
-	// same template = same primary key on the same physical TPM chip
-	primaryResp, err := tpm2.CreatePrimary{
-		PrimaryHandle: tpm2.TPMRHOwner,
-		InPublic:      tpm2.New2B(primaryTemplate),
-	}.Execute(tpm)
-	if err != nil {
-		return nil, apperr.Wrap("CreatePrimary failed", err)
+	var parentHandle tpm2.NamedHandle
+
+	// check if primary template is persistent in NV memory
+	pubResp, res, err := EnsurePrimaryNV(tpm) 
+	if ( res == true && err == nil ) {
+
+		// create the handler
+		parentHandle = tpm2.NamedHandle{
+			Handle: persistentHandle,
+			Name:   pubResp.Name,
+		}
+
+	}else{
+		// same template = same primary key on the same physical TPM chip
+		primaryResp, err := tpm2.CreatePrimary{
+			PrimaryHandle: tpm2.TPMRHOwner,
+			InPublic:      tpm2.New2B(primaryTemplate),
+		}.Execute(tpm)
+		if err != nil {
+			return nil, apperr.Wrap("CreatePrimary failed", err)
+		}
+
+		if err := PersistPrimaryNV(tpm, primaryResp); err != nil {
+			tpm2.FlushContext{FlushHandle: primaryResp.ObjectHandle}.Execute(tpm)
+			return nil, err
+		}
+		tpm2.FlushContext{FlushHandle: primaryResp.ObjectHandle}.Execute(tpm)
+
+		parentHandle = tpm2.NamedHandle{
+			Handle: persistentHandle,
+			Name:   primaryResp.Name,
+		}
 	}
-	defer tpm2.FlushContext{FlushHandle: primaryResp.ObjectHandle}.Execute(tpm)
 
 	// load the child blob — TPM verifies the cryptographic binding to the primary
 	loadResp, err := tpm2.Load{
-		ParentHandle: tpm2.NamedHandle{
-			Handle: primaryResp.ObjectHandle,
-			Name:   primaryResp.Name,
-		},
+		ParentHandle: parentHandle,
+		
 		// load the blobs
 		InPrivate: private,
 		InPublic:  public,
@@ -211,3 +250,41 @@ func StoreBlobs(private tpm2.TPM2BPrivate, public tpm2.TPM2BPublic) error {
 	return nil
 }
 
+
+// PersistPrimaryNV stores the primary key handle into NV at persistentHandle so future
+// calls skip CreatePrimary and reuse the already-computed key directly.
+func PersistPrimaryNV(tpm transport.TPM, primary *tpm2.CreatePrimaryResponse) error {
+	_, err := tpm2.EvictControl{
+		Auth: tpm2.TPMRHOwner,
+		ObjectHandle: tpm2.NamedHandle{
+			Handle: primary.ObjectHandle,
+			Name:   primary.Name,
+		},
+		PersistentHandle: persistentHandle,
+	}.Execute(tpm)
+	return apperr.Wrap("EvictControl failed", err)
+}
+
+
+// Function that delete the public key and parameters stored in the NV at the persistentHandle address
+func DeletePrimaryNV(tpm transport.TPM) error {                                                                                                                                                                           
+	
+	// check if template is stored in NV
+	pub, exists, _ := EnsurePrimaryNV(tpm)                                                                                                                                                                        
+	
+	// if not exist - nothing to do
+	if !exists {                                                                                                                                                                                                          
+		return nil
+	}                                                                                                                                                                                                                     
+
+	// delete the 
+	_, err := tpm2.EvictControl{                                                                                                                                                                                          
+		Auth: tpm2.TPMRHOwner,                                                                                                                                                                                          
+		ObjectHandle: tpm2.NamedHandle{
+			Handle: persistentHandle,                                                                                                                                                                                     
+			Name:   pub.Name,
+		},                                                                                                                                                                                                                
+		PersistentHandle: persistentHandle,                                                                                                                                                                             
+	}.Execute(tpm)
+	return apperr.Wrap("EvictControl failed", err)
+} 

@@ -1,7 +1,7 @@
-package linux
+package linux_windows
 /*
 
-this is only a file for visualize the old library tpm-legacy, in the file linux.go i use the modern library
+this is only a file for visualize the old library tpm-legacy, in the file linux_tpm.go i use the modern library
 
 package tpm
 

@@ -858,6 +858,8 @@ tpm2.CreatePrimary{
 }.Execute(tpm)
 ```
 
+**New2B** is a func that convert a normal declaration of the `primaryTemplate` in a TPM compatible struct
+
 ogni comando è una struct con campi espliciti — più leggibile, più type-safe, allineato con la spec TPM 2.0.
 
 un'altra differenza importante è `tpm2.NamedHandle`: nella nuova API, quando si passa un handle come parent a `Load`, bisogna passare anche il `Name` crittografico, non solo l'handle numerico. questo garantisce che il TPM verifichi l'identità del parent prima di procedere.
@@ -1122,3 +1124,25 @@ The security properties are unchanged. The NV-persisted primary key is the same 
 before the optimization the file `linux_tpm_test.go` did the test in about **15 second each time.**
 With the new optimization, the first time is still 15 seconds BUT the other times that we want to create a new secret or `Unseal` a blob the function took only **0.4 seconds** in average, the function `BenchmarkCreateTPMResponse` do this comparison ( use -v option )
 So the optimization improve the speed of the operation ( from the second time ) of **30 times faster** than the first one 
+
+The test was conducted in this hardware
+```
+goos: linux
+goarch: amd64
+pkg: P2Chat/cmd/client/internals/tpm/linux
+cpu: Intel(R) Core(TM) i5-7400 CPU @ 3.00GHz
+BenchmarkCreateTPMResponse
+```
+
+
+### implementation of windows TPM interface
+luckly windows and linux have the same interface for the managment of the TPM, except for the `openTPM` func that is defined in 2 files, infact linux use the library `linuxtpm` and windows `windowstpm` but the other **function** are the same
+
+remark: the difference between `transport.TPM` and `transport.TPMCloser` is that the first is the **interface**, so declare how send messages to the TPM but cannot close the connetion the second is the interface + the method `Close()`/
+
+### Implementation TPM ( Secure Enclave ) in MacOS
+the ecosystem Apple doesn't have a TPM chip inside but use a different type of chip, the **Secure Enclave** and we can access by the **Security Framework** create by Apple that use **CGo** an implementation of C inside GO, so we can execute C code but inside the Go compiler
+
+**Remark** the Secure Enclave don't create the secret inside the chip but derivate the secret from a seed that we have to pass 
+
+

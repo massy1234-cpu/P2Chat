@@ -14,3 +14,8 @@ func Watchdog(){
 	memguard.Purge() //cleanup all the memory
 	os.Exit(1)
 }
+
+// bisogna pensare anche ad un file che liberi tutte le risorse, tra cui anche quelle usate per il TPM
+func End() {
+
+}

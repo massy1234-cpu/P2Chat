@@ -1,19 +1,20 @@
-// must test on a linux sysyem
+//go:build linux
 
-package linux
+// must test on a linux system
+
+package linux_windows
 
 import (
 	"testing"
 	"encoding/base64"
 	"time"
-	"github.com/google/go-tpm/tpm2/transport/linuxtpm"
 )
 
 // testing the function for create a Secret inside the TPM
 func TestCreateTPMResponse(t *testing.T){
 
 	// open connection
-	tpm, err := linuxtpm.Open("/dev/tpmrm0")
+	tpm, err := openTPM()
 	if err != nil {
 		t.Fatal("apertura TPM", err)
 	}
@@ -41,7 +42,7 @@ func TestCreateTPMResponse(t *testing.T){
 func BenchmarkCreateTPMResponse(b *testing.B) {
 
 	// open connection
-	tpm, err := linuxtpm.Open("/dev/tpmrm0")
+	tpm, err := openTPM()
 	if err != nil {
 		b.Fatal("apertura TPM", err)
 	}

@@ -1,6 +1,6 @@
 //go:build darwin
 
-package tpm
+package macos
 
 /*
 #cgo LDFLAGS: -framework Security -framework CoreFoundation
@@ -45,6 +45,7 @@ import (
 	"unsafe"
 )
 
+// Function that verify is the computer where the application is running have a Secure Enclave available ( only from Apple device 2018 > )
 func AvailableSE() error {
 
 	attrs := C.buildSEKeyAttributes()
@@ -62,4 +63,3 @@ func AvailableSE() error {
 	C.CFRelease(C.CFTypeRef(secret))
 	return nil
 }
-

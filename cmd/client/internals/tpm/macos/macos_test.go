@@ -1,4 +1,4 @@
-package tpm
+package macos
 
 import (
 	"testing"

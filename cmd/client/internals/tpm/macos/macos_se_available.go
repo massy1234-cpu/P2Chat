@@ -22,7 +22,7 @@ static CFDictionaryRef buildSEKeyAttributes() {
 		kSecAttrKeyTypeECSECPrimeRandom,
 		cfBits,
 		kSecAttrTokenIDSecureEnclave,
-		kCFBooleanFalse,		// ephemeral: no Keychain storage, no entitlement needed
+		kCFBooleanFalse,					// ephemeral: no Keychain storage, no entitlement needed
 	};
 
 	CFDictionaryRef dict = CFDictionaryCreate(
@@ -62,4 +62,5 @@ func AvailableSE() error {
 	// SE available, free the memory allocated for the dictionary 
 	C.CFRelease(C.CFTypeRef(secret))
 	return nil
+
 }

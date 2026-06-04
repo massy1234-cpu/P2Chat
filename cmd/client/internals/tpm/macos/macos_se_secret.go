@@ -176,6 +176,7 @@ static OSStatus deleteSEKey() {
 }
 
 
+// Search the private key in the SE
 static SecKeyRef searchPrivateKey() {
 
 	CFDictionaryRef query = createSearchAndReturnDictionary();
@@ -197,8 +198,8 @@ import "C"
 
 import (
 	datacontrol "P2Chat/cmd/client/internals/datacontrol/mldsa"
+	"P2Chat/cmd/client/internals/encryption"
 	"P2Chat/pkg/apperr"
-	"crypto/rand"
 	"fmt"
 	"unsafe"
 	"github.com/awnumar/memguard"
@@ -234,8 +235,8 @@ func DeleteAllSEKeys() error {
 
 }
 
-// Function that search inside the SE if present some key with a reference to p2chat
-func SearchSEKey() (bool, C.SecKeyRef) {
+// Function that search inside the SE if present the private key
+func SearchPrivateSEKey() (bool, C.SecKeyRef) {
 
 	key := C.searchPrivateKey()
 
@@ -248,29 +249,31 @@ func SearchSEKey() (bool, C.SecKeyRef) {
 }
 
 
-func CreateSecretFromSE() error {
+// Function chiper bytes using the public key associated with the private key inside the SE
+func EncryptUsingSE(plaintext *memguard.LockedBuffer) (error,C.CFDataRef) {
 
 	// Create error handler
 	var errorSE C.CFErrorRef
 
+	var blob C.CFDataRef
+
 	// Search if is present a key inside the SE already 
-	result, privHandler := SearchSEKey()
+	result, privHandler := SearchPrivateSEKey()
 
 	// Private key is not present in the SE
 	if result == false {
 		var err error
 		err, privHandler = CreateSEKeys()
 		if err != nil {
-			return apperr.Wrap("error during the creation of SE keys",err)
+			return apperr.Wrap("error during the creation of SE keys",err),blob
 		}
 	}
 
 	// Get public key associated to the private key 
 	pubKey := C.SecKeyCopyPublicKey(privHandler);
 
-	// Generate 32 random bytes - not usable from Core Foundation
-	randomBytes := make([]byte,32)
-	rand.Read(randomBytes)
+	// copy the bytes from memguard to the variable - reading the lenght of the plaintext
+	randomBytes := encryption.ReturnCopy(plaintext,0)
 
 	// Converti i 32 bytes go in CFData
 	plaintextData := C.CFDataCreate(
@@ -278,11 +281,12 @@ func CreateSecretFromSE() error {
 		(*C.UInt8)(&randomBytes[0]),
 		C.CFIndex(len(randomBytes)),
 	)
+
 	defer C.CFRelease(C.CFTypeRef(plaintextData))
 
 
 	// Chiper the 32 random bytes inside the SE using ECIES and return the public blob
-	blob := C.SecKeyCreateEncryptedData(
+	blob = C.SecKeyCreateEncryptedData(
 		pubKey,
 		C.kSecKeyAlgorithmECIESEncryptionCofactorX963SHA256AESGCM,
 		plaintextData,
@@ -292,8 +296,50 @@ func CreateSecretFromSE() error {
 
 	// Check if blob is NOT empty
 	if unsafe.Pointer(blob) == nil {
-		return apperr.New("error encrypt bytes into SE with public key ")
+		return apperr.New("error encrypt bytes into SE with public key "),blob
 	}
+
+	return nil,blob
+
+}
+
+// Decrypt the public blob
+func DecryptUsingSE(blob C.CFDataRef) (error,*memguard.LockedBuffer) {
+
+	// Create error handler
+	var errorSE C.CFErrorRef
+
+	// get private handler from SE
+	result, privKey := SearchPrivateSEKey()
+	if result != true {
+		return apperr.New("Private key not present in the SE"),nil
+	}
+
+    dataRef := C.SecKeyCreateDecryptedData(
+        privKey,
+        C.kSecKeyAlgorithmECIESEncryptionCofactorX963SHA256AESGCM,
+        blob,
+        &errorSE,
+    );
+
+	// Convert bytes from CFDataRef to []byte to put into a memguard.Lockedbuffer space
+	plaintext := C.GoBytes(
+		unsafe.Pointer(C.CFDataGetBytePtr(dataRef)),			// CFDataGetBytePtr -> get the pointer
+		C.int(C.CFDataGetLength(dataRef)),						// get the lenght of the area in memory
+	)
+
+	// protect the plaintext and delete from memory bytes 
+	bufferLocked := memguard.NewBufferFromBytes(plaintext)
+	defer memguard.WipeBytes(plaintext)
+
+	return nil, bufferLocked
+
+
+}
+
+
+// Save on 'data' folder the public blob
+func SaveBlobSE(blob C.CFDataRef) error {
 
 	// Convert blob from CFDataRef to []byte type in GO for store phase - blobBytes is only a reference 
 	blobBytes := C.GoBytes(
@@ -307,9 +353,8 @@ func CreateSecretFromSE() error {
 		return apperr.Wrap("error during storage of public blob generated from the SE",err)
 	}
 
-	// Cleanup 
+	// Cleanup bytes in memory
 	memguard.WipeBytes(blobBytes)
 
 	return nil
-
 }

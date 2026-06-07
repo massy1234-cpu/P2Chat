@@ -5,7 +5,7 @@ import (
 	"P2Chat/cmd/client/internals/argon"
 	datacontrol "P2Chat/cmd/client/internals/datacontrol/mldsa"
 	"P2Chat/cmd/client/internals/encryption"
-	pb "P2Chat/cmd/client/internals/gen/mldsa/mldsapb"
+	struct_mldsa "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa"
 	"P2Chat/cmd/client/internals/p2version"
 	"google.golang.org/protobuf/proto"
 	"reflect"
@@ -97,7 +97,7 @@ func TestSignature(t *testing.T) {
 		t.Fatal("error during private key unmarshal from protected buffer", err)
 	}
 	err = mldsa87.SignTo(&rawKey, msg, ctx, true, signature) //randomized add entropy to the sign
-	
+
 	// if signature succeeded, then i try to do the opposite operation
 	if err != nil {
 		t.Fatal("error during Signature of the message", err)
@@ -202,7 +202,7 @@ func TestCreateKeysFields(t *testing.T) {
 }
 
 func TestDecodePublicKeyMLDSAErrors(t *testing.T) {
-	publicKey := &pb.PublicKeyMLDSA{
+	publicKey := &struct_mldsa.PublicKeyMLDSA{
 		Key: []byte("short"),
 	}
 
@@ -235,7 +235,7 @@ func TestDecodePrivateKeyMLDSAInvalidKeyField(t *testing.T) {
 		t.Fatal("error during key creation", err)
 	}
 
-	corruptedPrivateKey := &pb.PrivateKeyMLDSA{
+	corruptedPrivateKey := &struct_mldsa.PrivateKeyMLDSA{
 		Algorithm:     privateKeyStruct.Algorithm,
 		P2ChatVersion: privateKeyStruct.P2ChatVersion,
 		Key:           []byte("broken"),

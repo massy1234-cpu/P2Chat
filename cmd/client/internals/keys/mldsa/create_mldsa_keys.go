@@ -5,7 +5,7 @@ import (
 	"P2Chat/cmd/client/internals/argon"
 	datacontrol "P2Chat/cmd/client/internals/datacontrol/mldsa"
 	mldsaencryption "P2Chat/cmd/client/internals/encryption/mldsa"
-	pb "P2Chat/cmd/client/internals/gen/mldsa/mldsapb"
+	struct_mldsa "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa"
 	"P2Chat/cmd/client/internals/p2version"
 	"P2Chat/pkg/apperr"
 	"github.com/awnumar/memguard"
@@ -14,7 +14,7 @@ import (
 
 // CreateMLDSAKeys generates an ML-DSA-87 keypair, encrypts the private key,
 // builds the protobuf payloads, and optionally stores them on disk.
-func CreateMLDSAKeys(level int, password *memguard.LockedBuffer, store bool) (*pb.PrivateKeyMLDSA, *pb.PublicKeyMLDSA, error) {
+func CreateMLDSAKeys(level int, password *memguard.LockedBuffer, store bool) (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, error) {
 
 	//Generation of the keys
 	publicKey, privateKeyExposed, err := mldsa87.GenerateKey(nil)
@@ -55,7 +55,7 @@ func CreateMLDSAKeys(level int, password *memguard.LockedBuffer, store bool) (*p
 }
 
 // fillKeyPairMLDSA builds both protobuf payloads from already prepared raw key data.
-func fillKeyPairMLDSA(level int, algorithm string, rawKeyEncrypted []byte, rawKeyPublic []byte, nonce []byte, salt []byte) (*pb.PrivateKeyMLDSA, *pb.PublicKeyMLDSA, error) {
+func fillKeyPairMLDSA(level int, algorithm string, rawKeyEncrypted []byte, rawKeyPublic []byte, nonce []byte, salt []byte) (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, error) {
 
 	privateKeyMLDSA, err := fillPrivateKeyMLDSA(level, algorithm, rawKeyEncrypted, nonce, salt)
 	if err != nil {
@@ -71,7 +71,7 @@ func fillKeyPairMLDSA(level int, algorithm string, rawKeyEncrypted []byte, rawKe
 }
 
 // StoreKeysMLDSA persists the generated ML-DSA key payloads in the data directory.
-func StoreKeysMLDSA(privateKey *pb.PrivateKeyMLDSA, publicKey *pb.PublicKeyMLDSA) error {
+func StoreKeysMLDSA(privateKey *struct_mldsa.PrivateKeyMLDSA, publicKey *struct_mldsa.PublicKeyMLDSA) error {
 
 	//save keys on file
 	err := datacontrol.SavePairKeyMLDSA(privateKey, publicKey)
@@ -83,9 +83,9 @@ func StoreKeysMLDSA(privateKey *pb.PrivateKeyMLDSA, publicKey *pb.PublicKeyMLDSA
 }
 
 // fillPrivateKeyMLDSA fills the protobuf payload for the encrypted ML-DSA private key.
-func fillPrivateKeyMLDSA(level int, algorithm string, rawKeyEncrypted []byte, nonce []byte, salt []byte) (*pb.PrivateKeyMLDSA, error) {
+func fillPrivateKeyMLDSA(level int, algorithm string, rawKeyEncrypted []byte, nonce []byte, salt []byte) (*struct_mldsa.PrivateKeyMLDSA, error) {
 
-	privateKeyStruct := &pb.PrivateKeyMLDSA{}
+	privateKeyStruct := &struct_mldsa.PrivateKeyMLDSA{}
 
 	privateKeyStruct.Algorithm = algorithm
 	privateKeyStruct.ArgonParams = argon.CreateArgonParams(level)
@@ -99,9 +99,9 @@ func fillPrivateKeyMLDSA(level int, algorithm string, rawKeyEncrypted []byte, no
 }
 
 // fillPublicKeyMLDSA fills the protobuf payload for the packed ML-DSA public key.
-func fillPublicKeyMLDSA(algoritm string, rawPublicKey []byte) (*pb.PublicKeyMLDSA, error) {
+func fillPublicKeyMLDSA(algoritm string, rawPublicKey []byte) (*struct_mldsa.PublicKeyMLDSA, error) {
 
-	publicKeyStruct := &pb.PublicKeyMLDSA{}
+	publicKeyStruct := &struct_mldsa.PublicKeyMLDSA{}
 	publicKeyStruct.Algorithm = algoritm
 	publicKeyStruct.P2ChatVersion = string(p2version.MagicByte())
 	publicKeyStruct.Timestamp = uint32(time.Now().Unix())

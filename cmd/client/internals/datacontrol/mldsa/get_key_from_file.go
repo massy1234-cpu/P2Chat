@@ -1,14 +1,14 @@
 package datacontrol
 
 import (
-	pb "P2Chat/cmd/client/internals/gen/mldsa/mldsapb"
+	struct_mldsa "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa"
 	"P2Chat/pkg/apperr"
 	"google.golang.org/protobuf/proto"
 	"os"
 	"path/filepath"
 )
 
-// Read and return the bytes readed in the path specified
+// Read and return the bytes
 func LoadByteFromFile(pathDir string, nameFile string) ([]byte, error) {
 
 	fullPath := filepath.Join(pathDir, nameFile)
@@ -25,8 +25,8 @@ func LoadByteFromFile(pathDir string, nameFile string) ([]byte, error) {
 	return streamByte, nil
 }
 
-// Return a *pb.PrivateKeyMLDSA type after reading the file SK.bin
-func LoadPrivateKeyMLDSAFromFile(pathDir string, nameFile string) (*pb.PrivateKeyMLDSA, error) {
+// Return a *struct_mldsa.PrivateKeyMLDSA type after reading the file SK.bin (secret key)
+func LoadPrivateKeyMLDSAFromFile(pathDir string, nameFile string) (*struct_mldsa.PrivateKeyMLDSA, error) {
 
 	//read byte from file
 	streamByte, err := LoadByteFromFile(pathDir, nameFile)
@@ -35,7 +35,7 @@ func LoadPrivateKeyMLDSAFromFile(pathDir string, nameFile string) (*pb.PrivateKe
 	}
 
 	//converting into a proto struct
-	privateKeyStruct := &pb.PrivateKeyMLDSA{}
+	privateKeyStruct := &struct_mldsa.PrivateKeyMLDSA{}
 
 	err = proto.Unmarshal(streamByte, privateKeyStruct)
 	if err != nil {
@@ -45,7 +45,7 @@ func LoadPrivateKeyMLDSAFromFile(pathDir string, nameFile string) (*pb.PrivateKe
 	// check integrity
 	integrity, err := privateKeyStruct.VerifyChecksum()
 	if err != nil {
-		return nil, apperr.Wrap("checking integrity private key mldsa",err)
+		return nil, apperr.Wrap("checking integrity private key mldsa", err)
 	}
 
 	if !integrity {
@@ -55,8 +55,8 @@ func LoadPrivateKeyMLDSAFromFile(pathDir string, nameFile string) (*pb.PrivateKe
 	return privateKeyStruct, nil
 }
 
-// Return a *pb.PublicKeyMLDSA type after reading the file PK.bin
-func LoadPublicKeyMLDSAFromFile(pathDir string, nameFile string) (*pb.PublicKeyMLDSA, error) {
+// Return a *struct_mldsa.PublicKeyMLDSA type after reading the file PK.bin (public key)
+func LoadPublicKeyMLDSAFromFile(pathDir string, nameFile string) (*struct_mldsa.PublicKeyMLDSA, error) {
 
 	//read byte from file
 	streamByte, err := LoadByteFromFile(pathDir, nameFile)
@@ -65,8 +65,8 @@ func LoadPublicKeyMLDSAFromFile(pathDir string, nameFile string) (*pb.PublicKeyM
 	}
 
 	//converting into a proto struct
-	publicKeyStruct := &pb.PublicKeyMLDSA{}
-	
+	publicKeyStruct := &struct_mldsa.PublicKeyMLDSA{}
+
 	err = proto.Unmarshal(streamByte, publicKeyStruct)
 	if err != nil {
 		return nil, apperr.Wrap("converting byte in struct", err)
@@ -75,19 +75,18 @@ func LoadPublicKeyMLDSAFromFile(pathDir string, nameFile string) (*pb.PublicKeyM
 	// check integrity
 	integrity, err := publicKeyStruct.VerifyChecksum()
 	if err != nil {
-		return nil, apperr.Wrap("checking integrity public key mldsa",err)
+		return nil, apperr.Wrap("checking integrity public key mldsa", err)
 	}
 
 	if !integrity {
 		return nil, apperr.New("integrity of private key mldsa is compromised")
 	}
 
-
 	return publicKeyStruct, nil
 }
 
 // Load the keys ml-dsa87
-func LoadKeysMLDSA() (*pb.PrivateKeyMLDSA, *pb.PublicKeyMLDSA, error) {
+func LoadKeysMLDSA() (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, error) {
 
 	privateKey, err := LoadPrivateKeyMLDSAFromFile("data/", "SK.bin")
 	if err != nil {

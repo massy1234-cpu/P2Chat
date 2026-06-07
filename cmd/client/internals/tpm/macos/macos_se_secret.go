@@ -201,15 +201,15 @@ import (
 	"P2Chat/cmd/client/internals/encryption"
 	"P2Chat/pkg/apperr"
 	"fmt"
-	"unsafe"
 	"github.com/awnumar/memguard"
+	"unsafe"
 )
 
 // Function that create a real secret that persist on the SE
 func CreateSEKeys() (error, C.SecKeyRef) {
 
 	var cfErr C.CFErrorRef
-	var privKey C.SecKeyRef		// default value: nil
+	var privKey C.SecKeyRef // default value: nil
 
 	privKey = C.createSEKeys(&cfErr)
 	if unsafe.Pointer(privKey) == nil {
@@ -248,16 +248,15 @@ func SearchPrivateSEKey() (bool, C.SecKeyRef) {
 
 }
 
-
 // Function chiper bytes using the public key associated with the private key inside the SE
-func EncryptUsingSE(plaintext *memguard.LockedBuffer) (error,C.CFDataRef) {
+func EncryptUsingSE(plaintext *memguard.LockedBuffer) (error, C.CFDataRef) {
 
 	// Create error handler
 	var errorSE C.CFErrorRef
 
 	var blob C.CFDataRef
 
-	// Search if is present a key inside the SE already 
+	// Search if is present a key inside the SE already
 	result, privHandler := SearchPrivateSEKey()
 
 	// Private key is not present in the SE
@@ -265,15 +264,15 @@ func EncryptUsingSE(plaintext *memguard.LockedBuffer) (error,C.CFDataRef) {
 		var err error
 		err, privHandler = CreateSEKeys()
 		if err != nil {
-			return apperr.Wrap("error during the creation of SE keys",err),blob
+			return apperr.Wrap("error during the creation of SE keys", err), blob
 		}
 	}
 
-	// Get public key associated to the private key 
-	pubKey := C.SecKeyCopyPublicKey(privHandler);
+	// Get public key associated to the private key
+	pubKey := C.SecKeyCopyPublicKey(privHandler)
 
 	// copy the bytes from memguard to the variable - reading the lenght of the plaintext
-	randomBytes := encryption.ReturnCopy(plaintext,0)
+	randomBytes := encryption.ReturnCopy(plaintext, 0)
 
 	// Converti i 32 bytes go in CFData
 	plaintextData := C.CFDataCreate(
@@ -281,9 +280,7 @@ func EncryptUsingSE(plaintext *memguard.LockedBuffer) (error,C.CFDataRef) {
 		(*C.UInt8)(&randomBytes[0]),
 		C.CFIndex(len(randomBytes)),
 	)
-
 	defer C.CFRelease(C.CFTypeRef(plaintextData))
-
 
 	// Chiper the 32 random bytes inside the SE using ECIES and return the public blob
 	blob = C.SecKeyCreateEncryptedData(
@@ -296,15 +293,15 @@ func EncryptUsingSE(plaintext *memguard.LockedBuffer) (error,C.CFDataRef) {
 
 	// Check if blob is NOT empty
 	if unsafe.Pointer(blob) == nil {
-		return apperr.New("error encrypt bytes into SE with public key "),blob
+		return apperr.New("error encrypt bytes into SE with public key "), blob
 	}
 
-	return nil,blob
+	return nil, blob
 
 }
 
 // Decrypt the public blob
-func DecryptUsingSE(blob C.CFDataRef) (error,*memguard.LockedBuffer) {
+func DecryptUsingSE(blob C.CFDataRef) (error, *memguard.LockedBuffer) {
 
 	// Create error handler
 	var errorSE C.CFErrorRef
@@ -312,49 +309,88 @@ func DecryptUsingSE(blob C.CFDataRef) (error,*memguard.LockedBuffer) {
 	// get private handler from SE
 	result, privKey := SearchPrivateSEKey()
 	if result != true {
-		return apperr.New("Private key not present in the SE"),nil
+		return apperr.New("Private key not present in the SE"), nil
 	}
 
-    dataRef := C.SecKeyCreateDecryptedData(
-        privKey,
-        C.kSecKeyAlgorithmECIESEncryptionCofactorX963SHA256AESGCM,
-        blob,
-        &errorSE,
-    );
+	dataRef := C.SecKeyCreateDecryptedData(
+		privKey,
+		C.kSecKeyAlgorithmECIESEncryptionCofactorX963SHA256AESGCM,
+		blob,
+		&errorSE,
+	)
 
 	// Convert bytes from CFDataRef to []byte to put into a memguard.Lockedbuffer space
 	plaintext := C.GoBytes(
-		unsafe.Pointer(C.CFDataGetBytePtr(dataRef)),			// CFDataGetBytePtr -> get the pointer
-		C.int(C.CFDataGetLength(dataRef)),						// get the lenght of the area in memory
+		unsafe.Pointer(C.CFDataGetBytePtr(dataRef)), // CFDataGetBytePtr -> get the pointer
+		C.int(C.CFDataGetLength(dataRef)),           // get the lenght of the area in memory
 	)
 
-	// protect the plaintext and delete from memory bytes 
+	// protect the plaintext and delete from memory bytes
 	bufferLocked := memguard.NewBufferFromBytes(plaintext)
 	defer memguard.WipeBytes(plaintext)
 
 	return nil, bufferLocked
 
-
 }
-
 
 // Save on 'data' folder the public blob
 func SaveBlobSE(blob C.CFDataRef) error {
 
-	// Convert blob from CFDataRef to []byte type in GO for store phase - blobBytes is only a reference 
+	// Convert blob from CFDataRef to []byte type in GO for store phase - blobBytes is only a reference
 	blobBytes := C.GoBytes(
-		unsafe.Pointer(C.CFDataGetBytePtr(blob)),			// CFDataGetBytePtr -> get the pointer
-		C.int(C.CFDataGetLength(blob)),						// get the lenght of the area in memory
+		unsafe.Pointer(C.CFDataGetBytePtr(blob)), // CFDataGetBytePtr -> get the pointer
+		C.int(C.CFDataGetLength(blob)),           // get the lenght of the area in memory
 	)
 
 	// Save Bytes in memory
-	err := datacontrol.SaveBytesOnFile(blobBytes,"data/","SE_BLOB.bin")
+	err := datacontrol.SaveBytesOnFile(blobBytes, "data/", "SE_BLOB.bin")
 	if err != nil {
-		return apperr.Wrap("error during storage of public blob generated from the SE",err)
+		return apperr.Wrap("error during storage of public blob generated from the SE", err)
 	}
 
 	// Cleanup bytes in memory
 	memguard.WipeBytes(blobBytes)
 
 	return nil
+}
+
+
+// Wrap the function CFDataCreate
+func NewCFData(bytes []byte) (error,C.CFDataRef) {
+
+	var CFData C.CFDataRef
+
+	// CFDataCreate does not return an error, if there is an error, CFData == NULL
+	CFData = C.CFDataCreate(
+		C.kCFAllocatorDefault,
+		(*C.UInt8)(&bytes[0]),
+		C.CFIndex(len(bytes)),
+	)
+	if unsafe.Pointer(CFData) == nil {
+		return apperr.New("Error during conversion from []byte to CFDataRef"),CFData
+	}
+	
+	return nil, CFData
+
+}
+
+
+// Wrap the function CFRelease - get in input  
+func GoCFRelease(data unsafe.Pointer) {
+	C.CFRelease(C.CFTypeRef(data))
+}
+
+// Wrap the function GoBytes
+func CFbytes(dataRef C.CFDataRef) (error,[]byte) {
+
+	plaintext := C.GoBytes(
+		unsafe.Pointer(C.CFDataGetBytePtr(dataRef)), // CFDataGetBytePtr -> get the pointer
+		C.int(C.CFDataGetLength(dataRef)),           // get the lenght of the area in memory
+	)
+
+	if plaintext == nil {
+		return apperr.New("Error during conversion from CFDataRef to []byte"),nil
+	}
+
+	return nil,plaintext
 }

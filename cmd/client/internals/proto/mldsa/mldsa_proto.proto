@@ -1,12 +1,12 @@
-// protoc --go_out=. --go_opt=module=P2Chat cmd/client/internals/proto/mldsa/mldsa.proto
+// protoc --go_out=. --go_opt=module=P2Chat cmd/client/internals/proto/mldsa/mldsa_proto.proto
 
 syntax = "proto3";
 
-package mldsapb;
+package proto_struct_mldsa;
 
-option go_package = "P2Chat/cmd/client/internals/gen/mldsa/mldsapb";
+option go_package = "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa";		// specify where put the generated file
 
-// struct for the private key
+// struct for the private key MLDSA
 message PrivateKeyMLDSA {
     bytes p2chat_version = 1;
     string algorithm = 2;
@@ -18,7 +18,7 @@ message PrivateKeyMLDSA {
 	bytes hash_salt = 8;
 }
 
-// struct for the argonparams
+// struct for argon parameters
 message ArgonParams {
     uint32 time = 1;
 	uint32 memory = 2;
@@ -29,7 +29,7 @@ message ArgonParams {
     bytes salt = 7; 
 }
 
-// struct for the public key
+// struct for the public key MLDSA
 message PublicKeyMLDSA {
 	string Algorithm = 1;
 	string P2ChatVersion = 2;

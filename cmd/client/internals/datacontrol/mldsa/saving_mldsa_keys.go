@@ -1,7 +1,7 @@
 package datacontrol
 
 import (
-	pb "P2Chat/cmd/client/internals/gen/mldsa/mldsapb"
+	struct_mldsa "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa"
 	"P2Chat/pkg/apperr"
 	"google.golang.org/protobuf/proto"
 	"os"
@@ -35,13 +35,13 @@ func SaveBytesOnFile(dataFile []byte, pathDir string, nameFile string) error {
 
 }
 
-// Save the private key ml-dsa87 on the file
-func SavePrivateKeyMLDSA(privateKey *pb.PrivateKeyMLDSA) error {
+// Save the private key ml-dsa87 on file
+func SavePrivateKeyMLDSA(privateKey *struct_mldsa.PrivateKeyMLDSA) error {
 
 	// set checksum
 	err := privateKey.SetChecksum()
 	if err != nil {
-		return apperr.Wrap("set checksum private key mldsa",err)
+		return apperr.Wrap("set checksum private key mldsa", err)
 	}
 
 	// convert key in bytes
@@ -61,12 +61,12 @@ func SavePrivateKeyMLDSA(privateKey *pb.PrivateKeyMLDSA) error {
 }
 
 // Save the public key ml-dsa87 on the file
-func SavePublicKeyMLDSA(publicKey *pb.PublicKeyMLDSA) error {
+func SavePublicKeyMLDSA(publicKey *struct_mldsa.PublicKeyMLDSA) error {
 
 	// set checksum
 	err := publicKey.SetChecksum()
 	if err != nil {
-		return apperr.Wrap("set checksum public key mldsa",err)
+		return apperr.Wrap("set checksum public key mldsa", err)
 	}
 
 	// convert key in bytes
@@ -86,8 +86,8 @@ func SavePublicKeyMLDSA(publicKey *pb.PublicKeyMLDSA) error {
 }
 
 // Save the pair ok ml-dsa87 keys on file
-func SavePairKeyMLDSA(privateKey *pb.PrivateKeyMLDSA, publicKey *pb.PublicKeyMLDSA) error {
-	
+func SavePairKeyMLDSA(privateKey *struct_mldsa.PrivateKeyMLDSA, publicKey *struct_mldsa.PublicKeyMLDSA) error {
+
 	err := SavePrivateKeyMLDSA(privateKey)
 	if err != nil {
 		return apperr.Wrap("Saving private key ml-dsa87", err)

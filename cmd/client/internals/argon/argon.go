@@ -1,33 +1,34 @@
 package argon
 
 import (
-	pb "P2Chat/cmd/client/internals/gen/mldsa/mldsapb"
+	struct_mldsa "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa"
 	"P2Chat/pkg/apperr"
 	"github.com/awnumar/memguard"
 	"golang.org/x/crypto/argon2"
 	"runtime"
 )
 
-// Create the struct that contain the correct params for argon derivation func
-func CreateArgonParams(level int) *pb.ArgonParams {
+// Create the struct that contain the correct parameters for argon
+func CreateArgonParams(level int) *struct_mldsa.ArgonParams {
 
-	params := &pb.ArgonParams{}
+	params := &struct_mldsa.ArgonParams{}
 
 	switch level {
-	case 3: // Alta sicurezz
-		params.Time    = 6
-		params.Memory  = 1024 * 1024  // 1 GB
-	case 2: // Uso generale
-		params.Time    = 4
-		params.Memory  = 256 * 1024  // 256 MB
-	case 1: // Dispositivi limitati
-		params.Time    = 3
-		params.Memory  = 128 * 1024   // 128 MB
+	case 3: 										// High security, high computation but use a lot of resources  
+		params.Time = 6
+		params.Memory = 1024 * 1024
+	case 2: 										// General use 
+		params.Time = 4
+		params.Memory = 256 * 1024
+	case 1: 										// For device with computational power
+		params.Time = 3
+		params.Memory = 128 * 1024
 	default:
-		params.Time    = 3
-		params.Memory  = 128 * 1024 
+		params.Time = 3
+		params.Memory = 128 * 1024
 	}
 
+	// setting universal parameters 
 	params.Threads = uint32(runtime.NumCPU())
 	params.Len = 32
 	params.Version = uint32(argon2.Version)
@@ -36,10 +37,10 @@ func CreateArgonParams(level int) *pb.ArgonParams {
 	return params
 }
 
-// create the KDF with argon and store in a secure memory buffer
+// create the KDF with argon and store the outout in a mlock() memory buffer using memguard
 func HashWithArgon(level int, password *memguard.LockedBuffer, salt []byte) (*memguard.LockedBuffer, error) {
 
-	//params controls
+	// control cases 
 	if password == nil {
 		return nil, apperr.New("password null")
 	}
@@ -60,17 +61,16 @@ func HashWithArgon(level int, password *memguard.LockedBuffer, salt []byte) (*me
 		return nil, apperr.New("level not valid")
 	}
 
-	//create params for use Argon2Id
+	// create params for use Argon2Id
 	argonParams := CreateArgonParams(level)
 
-	//create secure buffer, 32 byte AES-256 friendly
-	passwordHashed := memguard.NewBuffer(32)
-
+	// create the KDF 
 	kdf := argon2.IDKey(password.Bytes(), salt, argonParams.Time, argonParams.Memory, uint8(argonParams.Threads), argonParams.Len)
-	copy(passwordHashed.Bytes(), kdf)
+	passwordHashed := memguard.NewBufferFromBytes(kdf)
 
-	//cleanup clear hash in memory
+	// cleanup kdf
 	memguard.WipeBytes(kdf)
 
+	// return the locked buffer 
 	return passwordHashed, nil
 }

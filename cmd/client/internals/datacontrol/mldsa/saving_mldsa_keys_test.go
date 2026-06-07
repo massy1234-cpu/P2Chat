@@ -5,7 +5,7 @@ import (
 	"P2Chat/cmd/client/internals/argon"
 	"P2Chat/cmd/client/internals/encryption"
 	encryptmldsa "P2Chat/cmd/client/internals/encryption/mldsa"
-	pb "P2Chat/cmd/client/internals/gen/mldsa/mldsapb"
+	struct_mldsa "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa"
 	"P2Chat/cmd/client/internals/p2version"
 	"google.golang.org/protobuf/proto"
 	"os"
@@ -101,7 +101,7 @@ func TestLoadPublicKeyMLDSAFromCorruptedFile(t *testing.T) {
 	}
 }
 
-func createRealKeyPairForTest() (*pb.PrivateKeyMLDSA, *pb.PublicKeyMLDSA, error) {
+func createRealKeyPairForTest() (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, error) {
 	password := encryption.Encaps("password1")
 	defer password.Destroy()
 
@@ -125,7 +125,7 @@ func createRealKeyPairForTest() (*pb.PrivateKeyMLDSA, *pb.PublicKeyMLDSA, error)
 	argonParams := argon.CreateArgonParams(3)
 	argonParams.Salt = salt
 
-	privateKeyStruct := &pb.PrivateKeyMLDSA{
+	privateKeyStruct := &struct_mldsa.PrivateKeyMLDSA{
 		Algorithm:     "ML-DSA-87",
 		P2ChatVersion: p2version.MagicByte(),
 		Timestamp:     time.Now().Unix(),
@@ -141,7 +141,7 @@ func createRealKeyPairForTest() (*pb.PrivateKeyMLDSA, *pb.PublicKeyMLDSA, error)
 	var packedPublic [mldsa87.PublicKeySize]byte
 	publicKey.Pack(&packedPublic)
 
-	publicKeyStruct := &pb.PublicKeyMLDSA{
+	publicKeyStruct := &struct_mldsa.PublicKeyMLDSA{
 		Algorithm:     "ML-DSA-87",
 		P2ChatVersion: string(p2version.MagicByte()),
 		Timestamp:     uint32(time.Now().Unix()),

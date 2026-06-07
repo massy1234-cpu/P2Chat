@@ -2,19 +2,11 @@
 
 package macos
 
-/*
-#cgo LDFLAGS: -framework Security -framework CoreFoundation
-#include <Security/Security.h>
-#include <CoreFoundation/CoreFoundation.h>
-*/
-import "C"
-
 import (
 	datacontrol "P2Chat/cmd/client/internals/datacontrol/mldsa"
 	"os"
 	"testing"
 	"unsafe"
-
 	"github.com/awnumar/memguard"
 )
 
@@ -188,12 +180,8 @@ func TestDecryptUsingSE(t *testing.T) {
 		t.Fatal("loaded blob is empty")
 	}
 
-	ciphertext := C.CFDataCreate(
-		C.kCFAllocatorDefault,
-		(*C.UInt8)(&savedBlob[0]),
-		C.CFIndex(len(savedBlob)),
-	)
-	defer C.CFRelease(C.CFTypeRef(ciphertext))
+	err, ciphertext := NewCFData(savedBlob)
+	defer GoCFRelease(ciphertext)
 
 	err, decrypted := DecryptUsingSE(ciphertext)
 	if err != nil {

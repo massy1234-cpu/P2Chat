@@ -181,7 +181,7 @@ func TestDecryptUsingSE(t *testing.T) {
 	}
 
 	err, ciphertext := NewCFData(savedBlob)
-	defer GoCFRelease(ciphertext)
+	defer GoCFRelease(unsafe.Pointer(ciphertext))
 
 	err, decrypted := DecryptUsingSE(ciphertext)
 	if err != nil {

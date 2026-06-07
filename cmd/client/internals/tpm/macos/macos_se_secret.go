@@ -198,11 +198,10 @@ import "C"
 
 import (
 	datacontrol "P2Chat/cmd/client/internals/datacontrol/mldsa"
-	"P2Chat/cmd/client/internals/encryption"
 	"P2Chat/pkg/apperr"
 	"fmt"
-	"github.com/awnumar/memguard"
 	"unsafe"
+	"github.com/awnumar/memguard"
 )
 
 // Function that create a real secret that persist on the SE
@@ -270,9 +269,10 @@ func EncryptUsingSE(plaintext *memguard.LockedBuffer) (error, C.CFDataRef) {
 
 	// Get public key associated to the private key
 	pubKey := C.SecKeyCopyPublicKey(privHandler)
+	defer GoCFRelease(unsafe.Pointer(pubKey))
 
 	// copy the bytes from memguard to the variable - reading the lenght of the plaintext
-	randomBytes := encryption.ReturnCopy(plaintext, 0)
+	randomBytes := plaintext.Bytes()
 
 	// Converti i 32 bytes go in CFData
 	plaintextData := C.CFDataCreate(
@@ -289,7 +289,6 @@ func EncryptUsingSE(plaintext *memguard.LockedBuffer) (error, C.CFDataRef) {
 		plaintextData,
 		&errorSE,
 	)
-	defer C.CFRelease(C.CFTypeRef(blob))
 
 	// Check if blob is NOT empty
 	if unsafe.Pointer(blob) == nil {
@@ -303,6 +302,10 @@ func EncryptUsingSE(plaintext *memguard.LockedBuffer) (error, C.CFDataRef) {
 // Decrypt the public blob
 func DecryptUsingSE(blob C.CFDataRef) (error, *memguard.LockedBuffer) {
 
+	if unsafe.Pointer(blob) == nil {
+		return apperr.New("blob is null"), nil
+	}
+
 	// Create error handler
 	var errorSE C.CFErrorRef
 
@@ -311,19 +314,33 @@ func DecryptUsingSE(blob C.CFDataRef) (error, *memguard.LockedBuffer) {
 	if result != true {
 		return apperr.New("Private key not present in the SE"), nil
 	}
+	defer GoCFRelease(unsafe.Pointer(privKey))
 
+	// Decrypt the data using SE
 	dataRef := C.SecKeyCreateDecryptedData(
 		privKey,
 		C.kSecKeyAlgorithmECIESEncryptionCofactorX963SHA256AESGCM,
 		blob,
 		&errorSE,
 	)
+	if unsafe.Pointer(dataRef) == nil {
+		return apperr.New("error decrypt in the SE"),nil
+	}
+
+	// if dataRef is null something go wrong
+	if unsafe.Pointer(dataRef) == nil {
+		return apperr.New("error during decrypt of file with SE"),nil
+	}
+	defer GoCFRelease(unsafe.Pointer(dataRef))
 
 	// Convert bytes from CFDataRef to []byte to put into a memguard.Lockedbuffer space
 	plaintext := C.GoBytes(
 		unsafe.Pointer(C.CFDataGetBytePtr(dataRef)), // CFDataGetBytePtr -> get the pointer
 		C.int(C.CFDataGetLength(dataRef)),           // get the lenght of the area in memory
 	)
+	if plaintext == nil {
+		return apperr.New("error during decrypt of file with SE"),nil
+	}
 
 	// protect the plaintext and delete from memory bytes
 	bufferLocked := memguard.NewBufferFromBytes(plaintext)
@@ -359,6 +376,10 @@ func SaveBlobSE(blob C.CFDataRef) error {
 func NewCFData(bytes []byte) (error,C.CFDataRef) {
 
 	var CFData C.CFDataRef
+
+	if ( bytes == nil || len(bytes) == 0 ) {
+		return apperr.New("bytes are not valid"),CFData
+	}
 
 	// CFDataCreate does not return an error, if there is an error, CFData == NULL
 	CFData = C.CFDataCreate(

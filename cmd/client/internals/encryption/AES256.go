@@ -12,6 +12,7 @@ import (
 
 // EncryptAes256 encrypts protected plaintext with AES-256-GCM and returns ciphertext and nonce.
 func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuffer) ([]byte, []byte, error) {
+	
 	//check key
 	if key == nil {
 		return nil, nil, apperr.New("key is null")
@@ -22,15 +23,12 @@ func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuf
 		return nil, nil, apperr.New("byte to encrpyt are null")
 	}
 
-	plainKey := key.Bytes()
-	plainBytes := byteToEncrypt.Bytes()
-
 	//check lenght key
-	if len(plainKey) != 32 {
+	if len(key.Bytes()) != 32 {
 		return nil, nil, apperr.New("key lenght is not correct")
 	}
 
-	block, err := aes.NewCipher(plainKey)
+	block, err := aes.NewCipher(key.Bytes())
 	if err != nil {
 		return nil, nil, apperr.Wrap("create AES cipher", err)
 	}
@@ -40,7 +38,7 @@ func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuf
 		return nil, nil, apperr.Wrap("create AES-GCM", err)
 	}
 
-	//creating nonce
+	// creating nonce
 	nonce := make([]byte, gcm.NonceSize())
 	_, err = rand.Read(nonce)
 
@@ -48,8 +46,8 @@ func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuf
 		return nil, nil, apperr.Wrap("generate nonce", err)
 	}
 
-	//Seal encrpyt the byte, include the nonce and append a tag that garanteee integrity
-	ciphertext := gcm.Seal(nil, nonce, plainBytes, nil)
+	// Seal encrypt the byte, include the nonce and append a tag that shows integrity
+	ciphertext := gcm.Seal(nil, nonce, byteToEncrypt.Bytes(), nil)
 
 	return ciphertext, nonce, nil
 }
@@ -61,10 +59,8 @@ func DecryptAes256(key *memguard.LockedBuffer, nonce []byte, byteToDecypt []byte
 		return nil, apperr.New("wrong key as param")
 	}
 
-	plainKey := key.Bytes()
-
 	//check lenght of key
-	if len(plainKey) != 32 {
+	if len(key.Bytes()) != 32 {
 		return nil, apperr.New("wrong key as param")
 	}
 
@@ -78,7 +74,7 @@ func DecryptAes256(key *memguard.LockedBuffer, nonce []byte, byteToDecypt []byte
 		return nil, apperr.New("byte to decrypt are null")
 	}
 
-	block, err := aes.NewCipher(plainKey)
+	block, err := aes.NewCipher(key.Bytes())
 	if err != nil {
 		return nil, apperr.Wrap("create AES cipher", err)
 	}

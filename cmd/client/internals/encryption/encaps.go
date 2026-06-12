@@ -10,18 +10,3 @@ func Encaps(password string) *memguard.LockedBuffer {
 
 	return passwordLocked
 }
-
-// ReturnCopy returns an ordinary byte-slice copy of a protected buffer.
-func ReturnCopy(message *memguard.LockedBuffer, lenght int) []byte {
-	var plain []byte
-
-	if lenght != 0 {
-		plain = make([]byte, lenght)
-	} else {
-		plain = make([]byte, len(message.Bytes()))
-	}
-
-	copy(plain, message.Bytes())
-
-	return plain
-}

@@ -1,35 +1,17 @@
-package datacontrol
+package mldsa_data
 
 import (
+	data "P2Chat/cmd/client/internals/datacontrol"
 	struct_mldsa "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa"
 	"P2Chat/pkg/apperr"
 	"google.golang.org/protobuf/proto"
-	"os"
-	"path/filepath"
 )
 
-// Read and return the bytes
-func LoadByteFromFile(pathDir string, nameFile string) ([]byte, error) {
-
-	fullPath := filepath.Join(pathDir, nameFile)
-
-	//check if file exist and eventually read it
-	streamByte, err := os.ReadFile(fullPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, apperr.Wrap("file not exist", err)
-		}
-		return nil, apperr.Wrap("checking file", err)
-	}
-
-	return streamByte, nil
-}
-
 // Return a *struct_mldsa.PrivateKeyMLDSA type after reading the file SK.bin (secret key)
-func LoadPrivateKeyMLDSAFromFile(pathDir string, nameFile string) (*struct_mldsa.PrivateKeyMLDSA, error) {
+func LoadPrivateKeyFromFile(pathDir string, nameFile string) (*struct_mldsa.PrivateKeyMLDSA, error) {
 
 	//read byte from file
-	streamByte, err := LoadByteFromFile(pathDir, nameFile)
+	streamByte, err := data.LoadByteFromFile(pathDir, nameFile)
 	if err != nil {
 		return nil, apperr.Wrap("reading file", err)
 	}
@@ -56,10 +38,10 @@ func LoadPrivateKeyMLDSAFromFile(pathDir string, nameFile string) (*struct_mldsa
 }
 
 // Return a *struct_mldsa.PublicKeyMLDSA type after reading the file PK.bin (public key)
-func LoadPublicKeyMLDSAFromFile(pathDir string, nameFile string) (*struct_mldsa.PublicKeyMLDSA, error) {
+func LoadPublicKeyFromFile(pathDir string, nameFile string) (*struct_mldsa.PublicKeyMLDSA, error) {
 
 	//read byte from file
-	streamByte, err := LoadByteFromFile(pathDir, nameFile)
+	streamByte, err := data.LoadByteFromFile(pathDir, nameFile)
 	if err != nil {
 		return nil, apperr.Wrap("reading file", err)
 	}
@@ -86,14 +68,14 @@ func LoadPublicKeyMLDSAFromFile(pathDir string, nameFile string) (*struct_mldsa.
 }
 
 // Load the keys ml-dsa87
-func LoadKeysMLDSA() (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, error) {
+func LoadKeys() (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, error) {
 
-	privateKey, err := LoadPrivateKeyMLDSAFromFile("data/", "SK.bin")
+	privateKey, err := LoadPrivateKeyFromFile("data/", "SK.bin")
 	if err != nil {
 		return nil, nil, apperr.Wrap("Load private key ml-dsa87 from file", err)
 	}
 
-	publicKey, err := LoadPublicKeyMLDSAFromFile("data/", "PK.bin")
+	publicKey, err := LoadPublicKeyFromFile("data/", "PK.bin")
 	if err != nil {
 		return nil, nil, apperr.Wrap("Load public key ml-dsa87 from file", err)
 	}

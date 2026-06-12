@@ -8,31 +8,27 @@ import (
 	"golang.org/x/crypto/blake2b"
 )
 
-//Create an hash with the key and the secret ( for better security secret must to be hashed with argon )
-func Commitment(key []byte, salt []byte, secret *memguard.LockedBuffer ) ( []byte, error  ) {
+// Return a 32 bytes array, the cryptographic fingerprint of the data combine with a random salt 
+func Commitment(publicKey []byte, salt []byte, secret *memguard.LockedBuffer ) ( []byte, error  ) {
+	
 	//Create object
 	hash,err := blake2b.New(32,nil)
 	if err != nil {
 		return nil,apperr.Wrap("commitment creation blake2b object failed",err)
 	}
 
-	//Write Salt
+	// Write Salt
 	binary.Write(hash, binary.BigEndian, uint32(len(salt)))
 	hash.Write(salt)
 
-	//Write pk
-	binary.Write(hash, binary.BigEndian, uint32(len(key)))
-	hash.Write(key)
+	// Write public key
+	binary.Write(hash, binary.BigEndian, uint32(len(publicKey)))
+	hash.Write(publicKey)
 
-
-	plainSecret := ReturnCopy(secret, 0)
-
-	//Write secret 
+	// Write secret 
+	plainSecret := secret.Bytes()
 	binary.Write(hash, binary.BigEndian, uint32(len(plainSecret)))
 	hash.Write(plainSecret)
-	
-	//destroy plainsecret
-	defer memguard.WipeBytes(plainSecret)
 
 
 	return hash.Sum(nil), nil
@@ -40,7 +36,7 @@ func Commitment(key []byte, salt []byte, secret *memguard.LockedBuffer ) ( []byt
 }
 
 
-//Verify the commitment hash 
+// Verify the commitment if match with the secret, require also the same salt 
 func VerifyCommitment(hash []byte, key []byte, salt []byte, secret *memguard.LockedBuffer) ( bool,error ) {
 	hashCreated, err := Commitment(key,salt,secret)
 	if err != nil {

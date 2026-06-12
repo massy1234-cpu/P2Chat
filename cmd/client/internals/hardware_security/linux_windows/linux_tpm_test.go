@@ -23,7 +23,7 @@ func TestCreateTPMResponse(t *testing.T){
 	DeletePrimaryNV(tpm)
 	tpm.Close()
 
-	resp, err := CreateTPMResponse()
+	resp, err := CreateResponse()
 	if err != nil {
 		t.Fatal("error during the creation of resp ",err)
 	}
@@ -39,7 +39,7 @@ func TestCreateTPMResponse(t *testing.T){
 
 
 // Benchmark first and second time with Unseal and primary template store 
-func BenchmarkCreateTPMResponse(b *testing.B) {
+func BenchmarkCreateResponse(b *testing.B) {
 
 	// open connection
 	tpm, err := openTPM()
@@ -54,7 +54,7 @@ func BenchmarkCreateTPMResponse(b *testing.B) {
 	start1 := time.Now()
 
 	// i create the first time only one time because this needs about 15 seconds and do a for cycle is not convenient 
-	resp, err := CreateTPMResponse()
+	resp, err := CreateResponse()
 	if err != nil {
 		b.Fatal("error during the creation of resp ",err)
 	}
@@ -78,7 +78,7 @@ func BenchmarkCreateTPMResponse(b *testing.B) {
 
 		// Start
 		iterStart := time.Now()
-		resp, err := CreateTPMResponse()
+		resp, err := CreateResponse()
 		if err != nil {
 			b.Fatal("error during the creation of resp ",err)
 		}

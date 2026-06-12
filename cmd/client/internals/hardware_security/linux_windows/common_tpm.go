@@ -4,7 +4,7 @@
 package linux_windows
 
 import (
-	datacontrol "P2Chat/cmd/client/internals/datacontrol/mldsa"
+	data "P2Chat/cmd/client/internals/datacontrol"
 	"P2Chat/pkg/apperr"
 	"github.com/awnumar/memguard"
 	"github.com/google/go-tpm/tpm2"
@@ -14,7 +14,7 @@ import (
 // persistend handler ( optimization )
 const persistentHandle = tpm2.TPMHandle(0x81000001) 
 
-// primaryTemplate is package-level so CreateTPMResponse and UnsealSecret always use the
+// primaryTemplate is package-level so CreateResponse and UnsealSecret always use the
 // identical primary template — CreatePrimary is deterministic: same template + same TPM = same key.
 var primaryTemplate = tpm2.TPMTPublic{
 	Type:    tpm2.TPMAlgRSA,
@@ -38,7 +38,7 @@ var primaryTemplate = tpm2.TPMTPublic{
 	}),
 }
 
-func AvailableTPM() (bool, error) {                                                                                                                                                                  
+func Available() (bool, error) {                                                                                                                                                                  
 	tpm, err := openTPM()                                                                                                                                                                          
 	if err != nil {                                                                                                                                                                                  
 		return false, apperr.Wrap("TPM not usable or not available", err)
@@ -61,10 +61,10 @@ func EnsurePrimaryNV(tpm transport.TPM) ( *tpm2.ReadPublicResponse, bool, error 
 
 // CreateTPMResponse generates a TPM-bound sealed secret and returns the blob pair
 // (OutPrivate + OutPublic) that must be persisted to disk to be recreated later 
-func CreateTPMResponse() (*tpm2.CreateResponse, error) {
+func CreateResponse() (*tpm2.CreateResponse, error) {
 
 	// check if tpm is available
-	if res,err := AvailableTPM();res == false {
+	if res,err := Available();res == false {
 		return nil, apperr.Wrap("Cannot use tpm secret ",err)
 	}
 
@@ -172,12 +172,12 @@ func StoreBlobs(private tpm2.TPM2BPrivate, public tpm2.TPM2BPublic) error {
 	publicStreamBlob := tpm2.Marshal(public)
 
 	// write the stream bytes into the files
-	err := datacontrol.SaveBytesOnFile(privateStremBlob,"/data/blobs","privateBlob.bin")
+	err := data.SaveBytesOnFile(privateStremBlob,"/data/blobs","privateBlob.bin")
 	if err != nil {
 		return apperr.Wrap("Error writing private blob on file",err)
 	}
 
-	err = datacontrol.SaveBytesOnFile(publicStreamBlob,"/data/blobs","publicBlob.bin")
+	err = data.SaveBytesOnFile(publicStreamBlob,"/data/blobs","publicBlob.bin")
 	if err != nil {
 		return apperr.Wrap("Error writing public blob on file",err)
 	}

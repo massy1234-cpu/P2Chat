@@ -3,8 +3,8 @@ package keys
 import (
 	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/argon"
-	datacontrol "P2Chat/cmd/client/internals/datacontrol/mldsa"
-	mldsaencryption "P2Chat/cmd/client/internals/encryption/mldsa"
+	mldsadata "P2Chat/cmd/client/internals/datacontrol/mldsa_data"
+	mldsaencryption "P2Chat/cmd/client/internals/encryption/mldsa_encryption"
 	struct_mldsa "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa"
 	"P2Chat/cmd/client/internals/p2version"
 	"P2Chat/pkg/apperr"
@@ -12,9 +12,9 @@ import (
 	"time"
 )
 
-// CreateMLDSAKeys generates an ML-DSA-87 keypair, encrypts the private key,
+// CreateKeys generates an ML-DSA-87 keypair, encrypts the private key,
 // builds the protobuf payloads, and optionally stores them on disk.
-func CreateMLDSAKeys(level int, password *memguard.LockedBuffer, store bool) (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, error) {
+func CreateKeys(level int, password *memguard.LockedBuffer, store bool) (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, error) {
 
 	//Generation of the keys
 	publicKey, privateKeyExposed, err := mldsa87.GenerateKey(nil)
@@ -38,13 +38,13 @@ func CreateMLDSAKeys(level int, password *memguard.LockedBuffer, store bool) (*s
 	var packedPublic [mldsa87.PublicKeySize]byte
 	publicKey.Pack(&packedPublic)
 
-	privateKeyStruct, publicKeyStruct, err := fillKeyPairMLDSA(level, "ML-DSA-87", rawKeyEncrypted, packedPublic[:], nonce, salt)
+	privateKeyStruct, publicKeyStruct, err := fillKeyPair(level, "ML-DSA-87", rawKeyEncrypted, packedPublic[:], nonce, salt)
 	if err != nil {
 		return nil, nil, apperr.Wrap("build generated key payloads", err)
 	}
 
 	if store {
-		err = StoreKeysMLDSA(privateKeyStruct, publicKeyStruct)
+		err = StoreKeys(privateKeyStruct, publicKeyStruct)
 		if err != nil {
 			return nil, nil, apperr.Wrap("store generated keys", err)
 		}
@@ -54,15 +54,15 @@ func CreateMLDSAKeys(level int, password *memguard.LockedBuffer, store bool) (*s
 
 }
 
-// fillKeyPairMLDSA builds both protobuf payloads from already prepared raw key data.
-func fillKeyPairMLDSA(level int, algorithm string, rawKeyEncrypted []byte, rawKeyPublic []byte, nonce []byte, salt []byte) (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, error) {
+// fillKeyPair builds both protobuf payloads from already prepared raw key data.
+func fillKeyPair(level int, algorithm string, rawKeyEncrypted []byte, rawKeyPublic []byte, nonce []byte, salt []byte) (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, error) {
 
-	privateKeyMLDSA, err := fillPrivateKeyMLDSA(level, algorithm, rawKeyEncrypted, nonce, salt)
+	privateKeyMLDSA, err := fillPrivateKey(level, algorithm, rawKeyEncrypted, nonce, salt)
 	if err != nil {
 		return nil, nil, apperr.Wrap("build private key payload", err)
 	}
 
-	publicKeyMLDSA, err := fillPublicKeyMLDSA(algorithm, rawKeyPublic)
+	publicKeyMLDSA, err := fillPublicKey(algorithm, rawKeyPublic)
 	if err != nil {
 		return nil, nil, apperr.Wrap("build public key payload", err)
 	}
@@ -70,11 +70,22 @@ func fillKeyPairMLDSA(level int, algorithm string, rawKeyEncrypted []byte, rawKe
 	return privateKeyMLDSA, publicKeyMLDSA, nil
 }
 
-// StoreKeysMLDSA persists the generated ML-DSA key payloads in the data directory.
-func StoreKeysMLDSA(privateKey *struct_mldsa.PrivateKeyMLDSA, publicKey *struct_mldsa.PublicKeyMLDSA) error {
+// StoreKeys persists the generated ML-DSA key payloads in the data directory.
+func StoreKeys(privateKey *struct_mldsa.PrivateKeyMLDSA, publicKey *struct_mldsa.PublicKeyMLDSA) error {
 
+	// set the checksum of both keys
+	err := privateKey.SetChecksum()
+	if err != nil {
+		return apperr.Wrap("error doing the checksum of private key",err)
+	}
+
+	publicKey.SetChecksum()
+	if err != nil {
+		return apperr.Wrap("error doing the checksum of public key",err)
+	}
+	
 	//save keys on file
-	err := datacontrol.SavePairKeyMLDSA(privateKey, publicKey)
+	err = mldsadata.SavePairKey(privateKey, publicKey)
 	if err != nil {
 		return apperr.Wrap("save keys ", err)
 	}
@@ -82,8 +93,8 @@ func StoreKeysMLDSA(privateKey *struct_mldsa.PrivateKeyMLDSA, publicKey *struct_
 	return nil
 }
 
-// fillPrivateKeyMLDSA fills the protobuf payload for the encrypted ML-DSA private key.
-func fillPrivateKeyMLDSA(level int, algorithm string, rawKeyEncrypted []byte, nonce []byte, salt []byte) (*struct_mldsa.PrivateKeyMLDSA, error) {
+// fillPrivateKey fills the protobuf payload for the encrypted ML-DSA private key.
+func fillPrivateKey(level int, algorithm string, rawKeyEncrypted []byte, nonce []byte, salt []byte) (*struct_mldsa.PrivateKeyMLDSA, error) {
 
 	privateKeyStruct := &struct_mldsa.PrivateKeyMLDSA{}
 
@@ -98,8 +109,8 @@ func fillPrivateKeyMLDSA(level int, algorithm string, rawKeyEncrypted []byte, no
 	return privateKeyStruct, nil
 }
 
-// fillPublicKeyMLDSA fills the protobuf payload for the packed ML-DSA public key.
-func fillPublicKeyMLDSA(algoritm string, rawPublicKey []byte) (*struct_mldsa.PublicKeyMLDSA, error) {
+// fillPublicKey fills the protobuf payload for the packed ML-DSA public key.
+func fillPublicKey(algoritm string, rawPublicKey []byte) (*struct_mldsa.PublicKeyMLDSA, error) {
 
 	publicKeyStruct := &struct_mldsa.PublicKeyMLDSA{}
 	publicKeyStruct.Algorithm = algoritm

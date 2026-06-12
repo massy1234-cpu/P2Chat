@@ -1,27 +1,29 @@
-package datacontrol
+package mldsa_data
 
 import (
 	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/argon"
+	data "P2Chat/cmd/client/internals/datacontrol"
 	"P2Chat/cmd/client/internals/encryption"
-	encryptmldsa "P2Chat/cmd/client/internals/encryption/mldsa"
+	encryptmldsa "P2Chat/cmd/client/internals/encryption/mldsa_encryption"
 	struct_mldsa "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa"
 	"P2Chat/cmd/client/internals/p2version"
-	"google.golang.org/protobuf/proto"
 	"os"
 	"testing"
 	"time"
+
+	"google.golang.org/protobuf/proto"
 )
 
 func TestLoadKeysFromFileErrors(t *testing.T) {
 	tempDir := t.TempDir()
 
-	_, err := LoadPrivateKeyMLDSAFromFile(tempDir, "missing.bin")
+	_, err := LoadPrivateKeyFromFile(tempDir, "missing.bin")
 	if err == nil {
 		t.Fatal("missing private key file should return error")
 	}
 
-	_, err = LoadPublicKeyMLDSAFromFile(tempDir, "missing.bin")
+	_, err = LoadPublicKeyFromFile(tempDir, "missing.bin")
 	if err == nil {
 		t.Fatal("missing public key file should return error")
 	}
@@ -40,7 +42,7 @@ func TestLoadPrivateKeyMLDSAFromCorruptedFile(t *testing.T) {
 		t.Fatal("error during private key marshaling", err)
 	}
 
-	err = SaveBytesOnFile(privateKeyBytes, tempDir, "SK.bin")
+	err = data.SaveBytesOnFile(privateKeyBytes, tempDir, "SK.bin")
 	if err != nil {
 		t.Fatal("error during private key save", err)
 	}
@@ -58,7 +60,7 @@ func TestLoadPrivateKeyMLDSAFromCorruptedFile(t *testing.T) {
 		t.Fatal("error during corrupted private key save", err)
 	}
 
-	_, err = LoadPrivateKeyMLDSAFromFile(tempDir, "SK.bin")
+	_, err = LoadPrivateKeyFromFile(tempDir, "SK.bin")
 	if err == nil {
 		t.Fatal("corrupted private key file should return error")
 	}
@@ -77,7 +79,7 @@ func TestLoadPublicKeyMLDSAFromCorruptedFile(t *testing.T) {
 		t.Fatal("error during public key marshaling", err)
 	}
 
-	err = SaveBytesOnFile(publicKeyBytes, tempDir, "PK.bin")
+	err = data.SaveBytesOnFile(publicKeyBytes, tempDir, "PK.bin")
 	if err != nil {
 		t.Fatal("error during public key save", err)
 	}
@@ -95,7 +97,7 @@ func TestLoadPublicKeyMLDSAFromCorruptedFile(t *testing.T) {
 		t.Fatal("error during corrupted public key save", err)
 	}
 
-	_, err = LoadPublicKeyMLDSAFromFile(tempDir, "PK.bin")
+	_, err = LoadPublicKeyFromFile(tempDir, "PK.bin")
 	if err == nil {
 		t.Fatal("corrupted public key file should return error")
 	}

@@ -41,12 +41,11 @@ static CFDictionaryRef buildSEKeyAttributes() {
 import "C"
 
 import (
-	"fmt"
 	"unsafe"
 )
 
 // Function that verify is the computer where the application is running have a Secure Enclave available ( only from Apple device 2018 > )
-func AvailableSE() error {
+func Available() bool {
 
 	attrs := C.buildSEKeyAttributes()
 	defer C.CFRelease(C.CFTypeRef(attrs))
@@ -54,13 +53,13 @@ func AvailableSE() error {
 	var cfErr C.CFErrorRef
 	secret := C.SecKeyCreateRandomKey(attrs, &cfErr)
 
-	if unsafe.Pointer (secret) == nil {
+	if unsafe.Pointer(secret) == nil {
 		defer C.CFRelease(C.CFTypeRef(cfErr))
-		return fmt.Errorf("Secure Enclave not available, code: %d", int(C.CFErrorGetCode(cfErr)))
+		return false
 	}
 
 	// SE available, free the memory allocated for the dictionary 
 	C.CFRelease(C.CFTypeRef(secret))
-	return nil
+	return true
 
 }

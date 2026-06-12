@@ -3,17 +3,18 @@
 package macos
 
 import (
-	datacontrol "P2Chat/cmd/client/internals/datacontrol/mldsa"
+	data "P2Chat/cmd/client/internals/datacontrol"
 	"os"
 	"testing"
 	"unsafe"
+
 	"github.com/awnumar/memguard"
 )
 
 func TestAvailableSE(t *testing.T) {
 
-	available := AvailableSE()
-	if available == nil {
+	available := Available()
+	if available == true {
 		t.Log("Secure Enclave is available")
 	} else {
 		t.Fatal("SE not available: ", available)
@@ -22,17 +23,17 @@ func TestAvailableSE(t *testing.T) {
 
 func TestCreateSecret(t *testing.T) {
 
-	err, _ := CreateSEKeys()
+	_, err := createKeys()
 	if err != nil {
-		t.Fatal("CreateSEKeys failed: ", err)
+		t.Fatal("createKeys failed: ", err)
 	}
 
-	err = DeleteAllSEKeys()
+	err = DeleteAllKeys()
 	if err != nil {
-		t.Fatal("DeleteAllSEKeys failed: ", err)
+		t.Fatal("DeleteAllKeys failed: ", err)
 	}
 
-	found, _ := SearchPrivateSEKey()
+	found, _ := SearchPrivateKey()
 	if found {
 		t.Fatal("keys still present after deletion")
 	}
@@ -40,12 +41,12 @@ func TestCreateSecret(t *testing.T) {
 
 func TestSearchPrivateSEKey(t *testing.T) {
 
-	err, _ := CreateSEKeys()
+	_, err := createKeys()
 	if err != nil {
-		t.Fatal("CreateSEKeys failed: ", err)
+		t.Fatal("createKeys failed: ", err)
 	}
 
-	found, ref := SearchPrivateSEKey()
+	found, ref := SearchPrivateKey()
 	if !found {
 		t.Fatal("private key not found after creation")
 	}
@@ -54,7 +55,7 @@ func TestSearchPrivateSEKey(t *testing.T) {
 	}
 	t.Log("private key found and reference is valid")
 
-	DeleteAllSEKeys()
+	DeleteAllKeys()
 }
 
 func TestEncryptDecryptRoundTrip(t *testing.T) {
@@ -64,20 +65,20 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 		plaintext.Bytes()[i] = byte(i)
 	}
 
-	err, blob := EncryptUsingSE(plaintext)
+	blob, err := Encrypt(plaintext.Bytes())
 	if err != nil {
-		t.Fatal("EncryptUsingSE failed: ", err)
+		t.Fatal("Encrypt failed: ", err)
 	}
-	if unsafe.Pointer(blob) == nil {
-		t.Fatal("EncryptUsingSE returned nil blob")
+	if blob == nil {
+		t.Fatal("Encrypt returned nil blob")
 	}
 
-	err, decrypted := DecryptUsingSE(blob)
+	decrypted, err := Decrypt(blob)
 	if err != nil {
-		t.Fatal("DecryptUsingSE failed: ", err)
+		t.Fatal("Decrypt failed: ", err)
 	}
 	if decrypted == nil {
-		t.Fatal("DecryptUsingSE returned nil buffer")
+		t.Fatal("Decrypt returned nil buffer")
 	}
 
 	if len(plaintext.Bytes()) != len(decrypted.Bytes()) {
@@ -90,7 +91,7 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 	}
 	t.Log("round-trip encrypt → decrypt: OK")
 
-	DeleteAllSEKeys()
+	DeleteAllKeys()
 }
 
 func TestEncryptDecryptLargeData(t *testing.T) {
@@ -101,14 +102,14 @@ func TestEncryptDecryptLargeData(t *testing.T) {
 		plaintext.Bytes()[i] = byte(i % 256)
 	}
 
-	err, blob := EncryptUsingSE(plaintext)
+	blob, err := Encrypt(plaintext.Bytes())
 	if err != nil {
-		t.Fatal("EncryptUsingSE failed for large data: ", err)
+		t.Fatal("Encrypt failed for large data: ", err)
 	}
 
-	err, decrypted := DecryptUsingSE(blob)
+	decrypted, err := Decrypt(blob)
 	if err != nil {
-		t.Fatal("DecryptUsingSE failed for large data: ", err)
+		t.Fatal("Decrypt failed for large data: ", err)
 	}
 
 	if len(plaintext.Bytes()) != len(decrypted.Bytes()) {
@@ -121,7 +122,7 @@ func TestEncryptDecryptLargeData(t *testing.T) {
 	}
 	t.Logf("large data round-trip (%d bytes): OK", size)
 
-	DeleteAllSEKeys()
+	DeleteAllKeys()
 }
 
 func TestSaveBlobSE(t *testing.T) {
@@ -131,14 +132,14 @@ func TestSaveBlobSE(t *testing.T) {
 		plaintext.Bytes()[i] = byte(i)
 	}
 
-	err, blob := EncryptUsingSE(plaintext)
+	blob, err := Encrypt(plaintext.Bytes())
 	if err != nil {
-		t.Fatal("EncryptUsingSE failed: ", err)
+		t.Fatal("Encrypt failed: ", err)
 	}
 
-	err = SaveBlobSE(blob)
+	err = SaveBlob(blob)
 	if err != nil {
-		t.Fatal("SaveBlobSE failed: ", err)
+		t.Fatal("SaveBlob failed: ", err)
 	}
 
 	if _, err := os.Stat("data/SE_BLOB.bin"); os.IsNotExist(err) {
@@ -151,7 +152,7 @@ func TestSaveBlobSE(t *testing.T) {
 	t.Logf("blob saved to data/SE_BLOB.bin (%d bytes)", info.Size())
 
 	os.Remove("data/SE_BLOB.bin")
-	DeleteAllSEKeys()
+	DeleteAllKeys()
 }
 
 func TestDecryptUsingSE(t *testing.T) {
@@ -161,18 +162,18 @@ func TestDecryptUsingSE(t *testing.T) {
 		plaintext.Bytes()[i] = byte(i)
 	}
 
-	err, blob := EncryptUsingSE(plaintext)
+	blob, err := Encrypt(plaintext.Bytes())
 	if err != nil {
-		t.Fatal("EncryptUsingSE failed: ", err)
+		t.Fatal("Encrypt failed: ", err)
 	}
 
-	err = SaveBlobSE(blob)
+	err = SaveBlob(blob)
 	if err != nil {
-		t.Fatal("SaveBlobSE failed: ", err)
+		t.Fatal("SaveBlob failed: ", err)
 	}
 	defer os.Remove("data/SE_BLOB.bin")
 
-	savedBlob, err := datacontrol.LoadByteFromFile("data/", "SE_BLOB.bin")
+	savedBlob, err := data.LoadByteFromFile("data/", "SE_BLOB.bin")
 	if err != nil {
 		t.Fatal("LoadByteFromFile failed: ", err)
 	}
@@ -180,19 +181,16 @@ func TestDecryptUsingSE(t *testing.T) {
 		t.Fatal("loaded blob is empty")
 	}
 
-	err, ciphertext := NewCFData(savedBlob)
-	defer GoCFRelease(unsafe.Pointer(ciphertext))
-
-	err, decrypted := DecryptUsingSE(ciphertext)
+	decrypted, err := Decrypt(savedBlob)
 	if err != nil {
-		t.Fatal("DecryptUsingSE from saved file blob failed: ", err)
+		t.Fatal("Decrypt from saved file blob failed: ", err)
 	}
 	if decrypted == nil {
-		t.Fatal("DecryptUsingSE returned nil buffer")
+		t.Fatal("Decrypt returned nil buffer")
 	}
 
 	if len(plaintext.Bytes()) != len(decrypted.Bytes()) {
-		t.Fatalf("length mismatch after file round-trip: %d vs %d", len(plaintext.Bytes()), len(decrypted.Bytes()))
+		t.Fatalf("length mismatch: %d vs %d", len(plaintext.Bytes()), len(decrypted.Bytes()))
 	}
 	for i := range plaintext.Bytes() {
 		if plaintext.Bytes()[i] != decrypted.Bytes()[i] {
@@ -201,19 +199,19 @@ func TestDecryptUsingSE(t *testing.T) {
 	}
 	t.Log("decrypt from saved file blob: OK")
 
-	DeleteAllSEKeys()
+	DeleteAllKeys()
 }
 
 func TestDeleteAllSEKeys(t *testing.T) {
 
-	CreateSEKeys()
+	createKeys()
 
-	err := DeleteAllSEKeys()
+	err := DeleteAllKeys()
 	if err != nil {
-		t.Fatal("DeleteAllSEKeys failed: ", err)
+		t.Fatal("DeleteAllKeys failed: ", err)
 	}
 
-	found, _ := SearchPrivateSEKey()
+	found, _ := SearchPrivateKey()
 	if found {
 		t.Fatal("keys still present after deletion")
 	}

@@ -1833,6 +1833,7 @@ after every `go test -c`, the binary changes. this means the previous bundle sig
 2. copy into `Contents/MacOS`
 3. codesign the bundle again
 4. run from `Contents/MacOS`
+5. 
 
 ### What to do when the provisioning profile will expire 
 the profile inside `macos_test.app/Contents/embedded.provisionprofile` expires after 7 days (free account). after expiry, signing or Keychain access can fail. fix: open Xcode, build the `com.p2chat` project with `⌘B`, then copy the new profile into the bundle using one exact path from `DerivedData`.
@@ -1845,4 +1846,16 @@ find ~/Library/Developer/Xcode/DerivedData \
 cp /exact/path/from/the/find/output/embedded.provisionprofile \
   macos_test.app/Contents/embedded.provisionprofile
 ```
+
+
+# small change during a code review
+
+i tought that do the copy of a `mlock()` variable, use it and then call `wipebytes` for clean the variable is a good move but is not, i modified all the reference in the code
+
+is not a good move for 2 reasons:
+- i copy the data on a safe memory area in a NOT safe area
+- i encrease the time exposure of the data in the memory
+  
+use directly `.Bytes()` is better that copy the data on another varible and then wipe it because `.Bytes()` return the direct reference to a data in a safe memory zone, so it cannot be dumped from the RAM 
+
 

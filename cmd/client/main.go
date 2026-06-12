@@ -15,7 +15,7 @@ func main() {
 
 	password := memguard.NewBuffer(len("prova"))
 	copy(password.Bytes(), []byte("prova"))
-	_, _, err := keys.CreateMLDSAKeys(3, password, true)
+	_, _, err := keys.CreateKeys(3, password, true)
 
 	fmt.Println(err)
 

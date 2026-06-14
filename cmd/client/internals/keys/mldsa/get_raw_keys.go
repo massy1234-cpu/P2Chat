@@ -26,7 +26,6 @@ func DecodePrivateKey(privateKey *struct_mldsa.PrivateKeyMLDSA, aesKey *memguard
 	bytes := privateKey.Key
 
 	plaintext, err := encryption.DecryptAes256(aesKey, privateKey.Nonce, bytes)
-	defer aesKey.Destroy()
 
 	if err != nil {
 		return nil, apperr.Wrap("Decrypt private key", err)

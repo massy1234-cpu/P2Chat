@@ -366,9 +366,6 @@ func SaveBlob(blob []byte, dir string) error {
 		return apperr.Wrap("error during storage of public blob generated from the SE", err)
 	}
 
-	// Cleanup bytes in memory - this does not delete the blob
-	memguard.WipeBytes(blob)
-
 	return nil
 }
 

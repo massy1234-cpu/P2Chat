@@ -32,8 +32,7 @@ type PrivateKeyMLDSA struct {
 	Nonce         []byte                 `protobuf:"bytes,4,opt,name=nonce,proto3" json:"nonce,omitempty"`
 	Key           []byte                 `protobuf:"bytes,5,opt,name=key,proto3" json:"key,omitempty"`
 	ArgonParams   *ArgonParams           `protobuf:"bytes,6,opt,name=argon_params,json=argonParams,proto3" json:"argon_params,omitempty"`
-	Hash          []byte                 `protobuf:"bytes,7,opt,name=hash,proto3" json:"hash,omitempty"`
-	HashSalt      []byte                 `protobuf:"bytes,8,opt,name=hash_salt,json=hashSalt,proto3" json:"hash_salt,omitempty"`
+	Checksum      []byte                 `protobuf:"bytes,7,opt,name=checksum,proto3" json:"checksum,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -110,16 +109,9 @@ func (x *PrivateKeyMLDSA) GetArgonParams() *ArgonParams {
 	return nil
 }
 
-func (x *PrivateKeyMLDSA) GetHash() []byte {
+func (x *PrivateKeyMLDSA) GetChecksum() []byte {
 	if x != nil {
-		return x.Hash
-	}
-	return nil
-}
-
-func (x *PrivateKeyMLDSA) GetHashSalt() []byte {
-	if x != nil {
-		return x.HashSalt
+		return x.Checksum
 	}
 	return nil
 }
@@ -224,8 +216,7 @@ type PublicKeyMLDSA struct {
 	P2ChatVersion string                 `protobuf:"bytes,2,opt,name=p2chat_version,json=p2chatVersion,proto3" json:"p2chat_version,omitempty"`
 	Timestamp     uint32                 `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	Key           []byte                 `protobuf:"bytes,4,opt,name=key,proto3" json:"key,omitempty"`
-	Hash          []byte                 `protobuf:"bytes,7,opt,name=hash,proto3" json:"hash,omitempty"`
-	HashSalt      []byte                 `protobuf:"bytes,8,opt,name=hash_salt,json=hashSalt,proto3" json:"hash_salt,omitempty"`
+	Checksum      []byte                 `protobuf:"bytes,5,opt,name=checksum,proto3" json:"checksum,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -288,16 +279,9 @@ func (x *PublicKeyMLDSA) GetKey() []byte {
 	return nil
 }
 
-func (x *PublicKeyMLDSA) GetHash() []byte {
+func (x *PublicKeyMLDSA) GetChecksum() []byte {
 	if x != nil {
-		return x.Hash
-	}
-	return nil
-}
-
-func (x *PublicKeyMLDSA) GetHashSalt() []byte {
-	if x != nil {
-		return x.HashSalt
+		return x.Checksum
 	}
 	return nil
 }
@@ -306,16 +290,15 @@ var File_cmd_client_internals_proto_mldsa_mldsa_proto_proto protoreflect.FileDes
 
 const file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDesc = "" +
 	"\n" +
-	"2cmd/client/internals/proto/mldsa/mldsa_proto.proto\x12\x12proto_struct_mldsa\"\x91\x02\n" +
+	"2cmd/client/internals/proto/mldsa/mldsa_proto.proto\x12\x12proto_struct_mldsa\"\xfc\x01\n" +
 	"\x0fPrivateKeyMLDSA\x12%\n" +
 	"\x0ep2chat_version\x18\x01 \x01(\fR\rp2chatVersion\x12\x1c\n" +
 	"\talgorithm\x18\x02 \x01(\tR\talgorithm\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x14\n" +
 	"\x05nonce\x18\x04 \x01(\fR\x05nonce\x12\x10\n" +
 	"\x03key\x18\x05 \x01(\fR\x03key\x12B\n" +
-	"\fargon_params\x18\x06 \x01(\v2\x1f.proto_struct_mldsa.ArgonParamsR\vargonParams\x12\x12\n" +
-	"\x04hash\x18\a \x01(\fR\x04hash\x12\x1b\n" +
-	"\thash_salt\x18\b \x01(\fR\bhashSalt\"\xa9\x01\n" +
+	"\fargon_params\x18\x06 \x01(\v2\x1f.proto_struct_mldsa.ArgonParamsR\vargonParams\x12\x1a\n" +
+	"\bchecksum\x18\a \x01(\fR\bchecksum\"\xa9\x01\n" +
 	"\vArgonParams\x12\x12\n" +
 	"\x04time\x18\x01 \x01(\rR\x04time\x12\x16\n" +
 	"\x06memory\x18\x02 \x01(\rR\x06memory\x12\x18\n" +
@@ -323,14 +306,13 @@ const file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDesc = "" +
 	"\x03len\x18\x04 \x01(\rR\x03len\x12\x18\n" +
 	"\aversion\x18\x05 \x01(\rR\aversion\x12\x14\n" +
 	"\x05level\x18\x06 \x01(\x05R\x05level\x12\x12\n" +
-	"\x04salt\x18\a \x01(\fR\x04salt\"\xb6\x01\n" +
+	"\x04salt\x18\a \x01(\fR\x04salt\"\xa1\x01\n" +
 	"\x0ePublicKeyMLDSA\x12\x1c\n" +
 	"\talgorithm\x18\x01 \x01(\tR\talgorithm\x12%\n" +
 	"\x0ep2chat_version\x18\x02 \x01(\tR\rp2chatVersion\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\rR\ttimestamp\x12\x10\n" +
-	"\x03key\x18\x04 \x01(\fR\x03key\x12\x12\n" +
-	"\x04hash\x18\a \x01(\fR\x04hash\x12\x1b\n" +
-	"\thash_salt\x18\b \x01(\fR\bhashSaltBFZDP2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsab\x06proto3"
+	"\x03key\x18\x04 \x01(\fR\x03key\x12\x1a\n" +
+	"\bchecksum\x18\x05 \x01(\fR\bchecksumBFZDP2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsab\x06proto3"
 
 var (
 	file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDescOnce sync.Once

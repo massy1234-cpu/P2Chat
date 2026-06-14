@@ -79,7 +79,7 @@ func StoreKeys(privateKey *struct_mldsa.PrivateKeyMLDSA, publicKey *struct_mldsa
 		return apperr.Wrap("error doing the checksum of private key",err)
 	}
 
-	publicKey.SetChecksum()
+	err = publicKey.SetChecksum()
 	if err != nil {
 		return apperr.Wrap("error doing the checksum of public key",err)
 	}
@@ -104,6 +104,7 @@ func fillPrivateKey(level int, algorithm string, rawKeyEncrypted []byte, nonce [
 	privateKeyStruct.Nonce = nonce
 	privateKeyStruct.P2ChatVersion = p2version.MagicByte()
 	privateKeyStruct.Timestamp = time.Now().Unix()
+	
 	privateKeyStruct.ArgonParams.Salt = salt
 
 	return privateKeyStruct, nil

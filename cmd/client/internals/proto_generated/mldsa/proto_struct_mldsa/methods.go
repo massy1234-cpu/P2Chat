@@ -20,9 +20,9 @@ func Hashing(data proto.Message) ([]byte,error) {
 	// cast to generic message to specific protobuf struct
 	switch m := clone.(type) {
 		case *PrivateKeyMLDSA:
-			m.Hash = nil
+			m.Checksum = nil
 		case *PublicKeyMLDSA:
-			m.Hash = nil
+			m.Checksum = nil
 		default:
 			return nil, apperr.New("unsupported proto message")
 	}
@@ -77,9 +77,9 @@ func SetChecksum(data proto.Message) error {
 
 	switch m := data.(type) {
 		case *PrivateKeyMLDSA :
-			m.Hash = hash
+			m.Checksum = hash
 		case *PublicKeyMLDSA :
-			m.Hash = hash
+			m.Checksum = hash
 		default :
 			return apperr.New("protobuf struct not defined")
 	}
@@ -133,7 +133,7 @@ func (privateKey *PrivateKeyMLDSA) VerifyChecksum() ( bool, error ){
 		return false, apperr.New("nil private key mldsa")
 	}
 
-	boolean, err := VerifyChecksum(privateKey,privateKey.Hash)
+	boolean, err := VerifyChecksum(privateKey,privateKey.Checksum)
 	return boolean,err
 
 }
@@ -144,7 +144,7 @@ func (publicKey *PublicKeyMLDSA) VerifyChecksum() ( bool, error ){
 		return false, apperr.New("nil public key mldsa")
 	}
 		
-	boolean, err := VerifyChecksum(publicKey,publicKey.Hash)
+	boolean, err := VerifyChecksum(publicKey,publicKey.Checksum)
 	return boolean,err
 
 }

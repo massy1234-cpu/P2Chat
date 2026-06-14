@@ -22,7 +22,10 @@ func Commitment(publicKey []byte, salt []byte, secret *memguard.LockedBuffer ) (
 	hash.Write(salt)
 
 	// Write public key
-	binary.Write(hash, binary.BigEndian, uint32(len(publicKey)))
+	err = binary.Write(hash, binary.BigEndian, uint32(len(publicKey)))
+	if err != nil {
+		return nil, apperr.Wrap("errore nella scrittura della public key nel commitment scheme",err)
+	}
 	hash.Write(publicKey)
 
 	// Write secret 

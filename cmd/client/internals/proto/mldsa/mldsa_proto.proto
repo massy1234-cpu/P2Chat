@@ -14,8 +14,7 @@ message PrivateKeyMLDSA {
     bytes nonce = 4;
     bytes key = 5;
     ArgonParams argon_params = 6; 
-    bytes hash = 7;
-	bytes hash_salt = 8;
+	bytes checksum = 7;
 }
 
 // struct for argon parameters
@@ -35,6 +34,5 @@ message PublicKeyMLDSA {
 	string p2chat_version = 2;
 	uint32 timestamp = 3;
 	bytes key = 4;
-	bytes hash = 7;
-	bytes hash_salt = 8;
+	bytes checksum = 5;
 }

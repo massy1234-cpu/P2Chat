@@ -56,11 +56,12 @@ func Combine(secrets ...*memguard.Enclave) (*memguard.Enclave,error) {
 
 	// create the hmac(secret1,secret2...)
 	for i := range secrets{
-		LockedBuffer,err := secrets[i].Open()
+		lockedBuffer,err := secrets[i].Open()
 		if err != nil {
 			return nil,apperr.Wrap("error during the combination of the secrets: ",err)
 		}
-		secretsCombined.Write(LockedBuffer.Bytes())
+		secretsCombined.Write(lockedBuffer.Bytes())
+		lockedBuffer.Destroy()
 	}
 
 	// create the sha256

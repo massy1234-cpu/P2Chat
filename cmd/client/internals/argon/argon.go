@@ -1,7 +1,7 @@
 package argon
 
 import (
-	struct_mldsa "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa"
+	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	"P2Chat/pkg/apperr"
 	"github.com/awnumar/memguard"
 	"golang.org/x/crypto/argon2"

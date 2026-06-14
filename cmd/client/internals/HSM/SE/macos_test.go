@@ -1,10 +1,9 @@
 //go:build darwin
 
-package macos
+package SE
 
 import (
-	data "P2Chat/cmd/client/internals/datacontrol"
-	"os"
+	data "P2Chat/cmd/client/internals/storage"
 	"testing"
 	"unsafe"
 
@@ -126,6 +125,7 @@ func TestEncryptDecryptLargeData(t *testing.T) {
 }
 
 func TestSaveBlobSE(t *testing.T) {
+	dir := t.TempDir()
 
 	plaintext := memguard.NewBuffer(32)
 	for i := range plaintext.Bytes() {
@@ -137,25 +137,22 @@ func TestSaveBlobSE(t *testing.T) {
 		t.Fatal("Encrypt failed: ", err)
 	}
 
-	err = SaveBlob(blob)
+	err = SaveBlob(blob, dir)
 	if err != nil {
 		t.Fatal("SaveBlob failed: ", err)
 	}
 
-	if _, err := os.Stat("data/SE_BLOB.bin"); os.IsNotExist(err) {
-		t.Fatal("SE_BLOB.bin was not created on disk")
+	_, err = data.LoadByteFromFile(dir, "SE_BLOB.bin")
+	if err != nil {
+		t.Fatal("SE_BLOB.bin was not created on disk:", err)
 	}
-	info, _ := os.Stat("data/SE_BLOB.bin")
-	if info.Size() == 0 {
-		t.Fatal("SE_BLOB.bin is empty")
-	}
-	t.Logf("blob saved to data/SE_BLOB.bin (%d bytes)", info.Size())
+	t.Logf("blob saved to %s/SE_BLOB.bin", dir)
 
-	os.Remove("data/SE_BLOB.bin")
 	DeleteAllKeys()
 }
 
 func TestDecryptUsingSE(t *testing.T) {
+	dir := t.TempDir()
 
 	plaintext := memguard.NewBuffer(32)
 	for i := range plaintext.Bytes() {
@@ -167,13 +164,12 @@ func TestDecryptUsingSE(t *testing.T) {
 		t.Fatal("Encrypt failed: ", err)
 	}
 
-	err = SaveBlob(blob)
+	err = SaveBlob(blob, dir)
 	if err != nil {
 		t.Fatal("SaveBlob failed: ", err)
 	}
-	defer os.Remove("data/SE_BLOB.bin")
 
-	savedBlob, err := data.LoadByteFromFile("data/", "SE_BLOB.bin")
+	savedBlob, err := data.LoadByteFromFile(dir, "SE_BLOB.bin")
 	if err != nil {
 		t.Fatal("LoadByteFromFile failed: ", err)
 	}

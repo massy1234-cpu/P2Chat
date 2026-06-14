@@ -2,11 +2,11 @@
 
 // must test on a linux system
 
-package linux_windows
+package TPM
 
 import (
-	"testing"
 	"encoding/base64"
+	"testing"
 	"time"
 )
 
@@ -28,13 +28,21 @@ func TestCreateTPMResponse(t *testing.T){
 		t.Fatal("error during the creation of resp ",err)
 	}
 
-	buf, err := UnsealSecret(resp.OutPrivate,resp.OutPublic)
+	enclave, err := UnsealSecret(resp.OutPrivate,resp.OutPublic)
 	if err != nil {
 		t.Fatal("error during unseal the secret",err)
 	}
 
+	buf, err := enclave.Open()
+	if err != nil {
+		t.Fatal("error opening enclave", err)
+	}
+	defer buf.Destroy()
+
 	// expose the secret ( only in this use case, EXTREMELY dangerous, memory leak )
 	t.Log(base64.StdEncoding.EncodeToString(buf.Bytes()))
+
+	enclave = nil
 }
 
 
@@ -58,9 +66,13 @@ func BenchmarkCreateResponse(b *testing.B) {
 	if err != nil {
 		b.Fatal("error during the creation of resp ",err)
 	}
-	buf, err := UnsealSecret(resp.OutPrivate,resp.OutPublic)
+	enclave, err := UnsealSecret(resp.OutPrivate,resp.OutPublic)
 	if err != nil {
 		b.Fatal("error during unseal the secret",err)
+	}
+	buf, err := enclave.Open()
+	if err != nil {
+		b.Fatal("error opening enclave", err)
 	}
 
 	t1 := time.Since(start1)
@@ -70,6 +82,7 @@ func BenchmarkCreateResponse(b *testing.B) {
 	b.Log("First Creation needed ", t1, "\n")
 
 	buf.Destroy()
+	enclave = nil
 
 	// testing average time nexts time
 	var total time.Duration
@@ -82,15 +95,20 @@ func BenchmarkCreateResponse(b *testing.B) {
 		if err != nil {
 			b.Fatal("error during the creation of resp ",err)
 		}
-		buf, err := UnsealSecret(resp.OutPrivate,resp.OutPublic)
+		enclave, err := UnsealSecret(resp.OutPrivate,resp.OutPublic)
 		if err != nil {
 			b.Fatal("error during unseal the secret",err)
+		}
+		buf, err := enclave.Open()
+		if err != nil {
+			b.Fatal("error opening enclave", err)
 		}
 		// End - Add time to total
 		total += time.Since(iterStart)
 
 		b.Log(base64.StdEncoding.EncodeToString(buf.Bytes()))
 		buf.Destroy()
+		enclave = nil
 	}
 	
 	b.Logf("Other average subsequent %v", total/10)

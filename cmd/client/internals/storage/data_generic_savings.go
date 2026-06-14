@@ -1,4 +1,4 @@
-package datacontrol
+package storage
 
 import (
 	"P2Chat/pkg/apperr"

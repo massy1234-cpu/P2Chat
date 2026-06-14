@@ -1,11 +1,11 @@
-package keys
+package mldsa_keys
 
 import (
 	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/argon"
-	mldsadata "P2Chat/cmd/client/internals/datacontrol/mldsa_data"
+	mldsadata "P2Chat/cmd/client/internals/storage/mldsa_data"
 	mldsaencryption "P2Chat/cmd/client/internals/encryption/mldsa_encryption"
-	struct_mldsa "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa"
+	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	"P2Chat/cmd/client/internals/p2version"
 	"P2Chat/pkg/apperr"
 	"github.com/awnumar/memguard"

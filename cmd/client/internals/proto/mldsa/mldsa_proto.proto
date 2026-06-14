@@ -4,7 +4,7 @@ syntax = "proto3";
 
 package proto_struct_mldsa;
 
-option go_package = "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa";		// specify where put the generated file
+option go_package = "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa";		// specify where put the generated file
 
 // struct for the private key MLDSA
 message PrivateKeyMLDSA {
@@ -31,9 +31,9 @@ message ArgonParams {
 
 // struct for the public key MLDSA
 message PublicKeyMLDSA {
-	string Algorithm = 1;
-	string P2ChatVersion = 2;
-	uint32 Timestamp = 3;
+	string algorithm = 1;
+	string p2chat_version = 2;
+	uint32 timestamp = 3;
 	bytes key = 4;
 	bytes hash = 7;
 	bytes hash_salt = 8;

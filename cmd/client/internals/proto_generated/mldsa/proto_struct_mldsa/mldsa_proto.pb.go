@@ -23,7 +23,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// struct for the private key
+// struct for the private key MLDSA
 type PrivateKeyMLDSA struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	P2ChatVersion []byte                 `protobuf:"bytes,1,opt,name=p2chat_version,json=p2chatVersion,proto3" json:"p2chat_version,omitempty"`
@@ -124,7 +124,7 @@ func (x *PrivateKeyMLDSA) GetHashSalt() []byte {
 	return nil
 }
 
-// struct for the argonparams
+// struct for argon parameters
 type ArgonParams struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Time          uint32                 `protobuf:"varint,1,opt,name=time,proto3" json:"time,omitempty"`
@@ -217,12 +217,12 @@ func (x *ArgonParams) GetSalt() []byte {
 	return nil
 }
 
-// struct for the public key
+// struct for the public key MLDSA
 type PublicKeyMLDSA struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Algorithm     string                 `protobuf:"bytes,1,opt,name=Algorithm,proto3" json:"Algorithm,omitempty"`
-	P2ChatVersion string                 `protobuf:"bytes,2,opt,name=P2ChatVersion,proto3" json:"P2ChatVersion,omitempty"`
-	Timestamp     uint32                 `protobuf:"varint,3,opt,name=Timestamp,proto3" json:"Timestamp,omitempty"`
+	Algorithm     string                 `protobuf:"bytes,1,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
+	P2ChatVersion string                 `protobuf:"bytes,2,opt,name=p2chat_version,json=p2chatVersion,proto3" json:"p2chat_version,omitempty"`
+	Timestamp     uint32                 `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	Key           []byte                 `protobuf:"bytes,4,opt,name=key,proto3" json:"key,omitempty"`
 	Hash          []byte                 `protobuf:"bytes,7,opt,name=hash,proto3" json:"hash,omitempty"`
 	HashSalt      []byte                 `protobuf:"bytes,8,opt,name=hash_salt,json=hashSalt,proto3" json:"hash_salt,omitempty"`
@@ -323,14 +323,14 @@ const file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDesc = "" +
 	"\x03len\x18\x04 \x01(\rR\x03len\x12\x18\n" +
 	"\aversion\x18\x05 \x01(\rR\aversion\x12\x14\n" +
 	"\x05level\x18\x06 \x01(\x05R\x05level\x12\x12\n" +
-	"\x04salt\x18\a \x01(\fR\x04salt\"\xb5\x01\n" +
+	"\x04salt\x18\a \x01(\fR\x04salt\"\xb6\x01\n" +
 	"\x0ePublicKeyMLDSA\x12\x1c\n" +
-	"\tAlgorithm\x18\x01 \x01(\tR\tAlgorithm\x12$\n" +
-	"\rP2ChatVersion\x18\x02 \x01(\tR\rP2ChatVersion\x12\x1c\n" +
-	"\tTimestamp\x18\x03 \x01(\rR\tTimestamp\x12\x10\n" +
+	"\talgorithm\x18\x01 \x01(\tR\talgorithm\x12%\n" +
+	"\x0ep2chat_version\x18\x02 \x01(\tR\rp2chatVersion\x12\x1c\n" +
+	"\ttimestamp\x18\x03 \x01(\rR\ttimestamp\x12\x10\n" +
 	"\x03key\x18\x04 \x01(\fR\x03key\x12\x12\n" +
 	"\x04hash\x18\a \x01(\fR\x04hash\x12\x1b\n" +
-	"\thash_salt\x18\b \x01(\fR\bhashSaltBLZJP2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsab\x06proto3"
+	"\thash_salt\x18\b \x01(\fR\bhashSaltBFZDP2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsab\x06proto3"
 
 var (
 	file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDescOnce sync.Once

@@ -1,6 +1,6 @@
 //go:build darwin
 
-package macos
+package SE
 
 /*
 #cgo LDFLAGS: -framework Security -framework CoreFoundation

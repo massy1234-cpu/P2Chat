@@ -1,6 +1,6 @@
 //go:build linux
 
-package linux_windows
+package TPM
 
 import (
 	"github.com/google/go-tpm/tpm2/transport"

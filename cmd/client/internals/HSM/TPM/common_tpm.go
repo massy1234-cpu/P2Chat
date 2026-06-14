@@ -1,11 +1,13 @@
 //go:build linux || windows
 
 // tpm usage for linux and windows systems
-package linux_windows
+package TPM
 
 import (
-	data "P2Chat/cmd/client/internals/datacontrol"
+	"P2Chat/cmd/client/internals/storage"
+	data "P2Chat/cmd/client/internals/storage"
 	"P2Chat/pkg/apperr"
+
 	"github.com/awnumar/memguard"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
@@ -59,7 +61,7 @@ func EnsurePrimaryNV(tpm transport.TPM) ( *tpm2.ReadPublicResponse, bool, error 
 	}
 }
 
-// CreateTPMResponse generates a TPM-bound sealed secret and returns the blob pair
+// CreateResponse generates a TPM-bound sealed secret and returns the blob pair
 // (OutPrivate + OutPublic) that must be persisted to disk to be recreated later 
 func CreateResponse() (*tpm2.CreateResponse, error) {
 
@@ -114,7 +116,7 @@ func CreateResponse() (*tpm2.CreateResponse, error) {
 // loads the child blob, unseals the secret, and immediately wraps it in a memguard
 // LockedBuffer (mlock — no swap to disk). The raw bytes are zeroed before returning.
 // NOTE : the function assume that the primaryTemplate is always the same as like previously defined
-func UnsealSecret(private tpm2.TPM2BPrivate, public tpm2.TPM2BPublic ) (*memguard.LockedBuffer, error) {
+func UnsealSecret(private tpm2.TPM2BPrivate, public tpm2.TPM2BPublic ) (*memguard.Enclave, error) {
 
 	// open the connection
 	tpm, err := openTPM()
@@ -156,8 +158,7 @@ func UnsealSecret(private tpm2.TPM2BPrivate, public tpm2.TPM2BPublic ) (*memguar
 	}
 
 	// immediately move into memguard (mlock) then wipe the bytes
-	buf := memguard.NewBuffer(len(unsealResp.OutData.Buffer))
-	copy(buf.Bytes(), unsealResp.OutData.Buffer)
+	buf := memguard.NewEnclave(unsealResp.OutData.Buffer)
 	memguard.WipeBytes(unsealResp.OutData.Buffer)
 
 	return buf, nil
@@ -201,6 +202,16 @@ func PersistPrimaryNV(tpm transport.TPM, primary *tpm2.CreatePrimaryResponse) er
 }
 
 
+// CleanupNV opens the TPM, deletes any persistent NV handle, and closes the connection.
+func CleanupNV() error {
+	tpm, err := openTPM()
+	if err != nil {
+		return apperr.Wrap("open TPM for NV cleanup", err)
+	}
+	defer tpm.Close()
+	return DeletePrimaryNV(tpm)
+}
+
 // Function that delete the public key and parameters stored in the NV at the persistentHandle address
 func DeletePrimaryNV(tpm transport.TPM) error {                                                                                                                                                                           
 	
@@ -212,7 +223,7 @@ func DeletePrimaryNV(tpm transport.TPM) error {
 		return nil
 	}                                                                                                                                                                                                                     
 
-	// delete the 
+	// delete the persistent primary template in memory
 	_, err := tpm2.EvictControl{                                                                                                                                                                                          
 		Auth: tpm2.TPMRHOwner,                                                                                                                                                                                          
 		ObjectHandle: tpm2.NamedHandle{
@@ -263,4 +274,32 @@ func GetOrCreatePrimary(tpm transport.TPM) (*tpm2.NamedHandle,error) {
 			}
 			return &parentHandle,nil
 	}
+}
+
+
+func LoadBlobs() (*tpm2.TPM2BPrivate,*tpm2.TPM2BPublic,error){
+	
+	// read the blobs from the memory
+	rawPrivateBlob,err := storage.LoadByteFromFile("/data/blobs","privateBlob.bin")
+	if err != nil {
+		return nil,nil, apperr.Wrap("error during load the private blob from disk: ",err)
+	}
+
+	rawPublicBlob,err := storage.LoadByteFromFile("/data/blobs","publicBlob.bin")
+	if err != nil {
+		return nil,nil, apperr.Wrap("error during load the public blob from disk: ",err)
+	}
+
+	// casting the raw bytes
+	privateBlob, err := tpm2.Unmarshal[tpm2.TPM2BPrivate](rawPrivateBlob)
+	if err != nil {
+		return nil,nil, apperr.Wrap("error during the cast of private blob: ",err)
+	}
+
+	publicBlob, err := tpm2.Unmarshal[tpm2.TPM2BPublic](rawPublicBlob)
+	if err != nil {
+		return nil,nil, apperr.Wrap("error during the cast of public blob: ",err)
+	}
+
+	return privateBlob,publicBlob,nil
 }

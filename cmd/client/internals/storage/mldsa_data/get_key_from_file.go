@@ -1,8 +1,8 @@
 package mldsa_data
 
 import (
-	data "P2Chat/cmd/client/internals/datacontrol"
-	struct_mldsa "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa"
+	data "P2Chat/cmd/client/internals/storage"
+	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	"P2Chat/pkg/apperr"
 	"google.golang.org/protobuf/proto"
 )

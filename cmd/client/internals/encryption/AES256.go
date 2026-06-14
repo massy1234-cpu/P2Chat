@@ -10,32 +10,41 @@ import (
 	"github.com/awnumar/memguard"
 )
 
-// EncryptAes256 encrypts protected plaintext with AES-256-GCM and returns ciphertext and nonce.
-func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuffer) ([]byte, []byte, error) {
+// CreateCipherAes validates the key and creates an AES-256-GCM cipher.
+func CreateCipherAes(key *memguard.LockedBuffer) (cipher.AEAD, error) {
 	
-	//check key
 	if key == nil {
-		return nil, nil, apperr.New("key is null")
+		return nil, apperr.New("key is null")
 	}
-
-	//check if bytes are not null
-	if byteToEncrypt == nil {
-		return nil, nil, apperr.New("byte to encrpyt are null")
-	}
-
-	//check lenght key
+	
 	if len(key.Bytes()) != 32 {
-		return nil, nil, apperr.New("key lenght is not correct")
+		return nil, apperr.New("key length is not correct")
 	}
 
 	block, err := aes.NewCipher(key.Bytes())
 	if err != nil {
-		return nil, nil, apperr.Wrap("create AES cipher", err)
+		return nil, apperr.Wrap("create AES cipher", err)
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, nil, apperr.Wrap("create AES-GCM", err)
+		return nil, apperr.Wrap("create AES-GCM", err)
+	}
+
+	return gcm, nil
+}
+
+// EncryptAes256 encrypts protected plaintext with AES-256-GCM and returns ciphertext and nonce.
+func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuffer) ([]byte, []byte, error) {
+	
+	//check if bytes are not null
+	if byteToEncrypt == nil {
+		return nil, nil, apperr.New("byte to encrypt are null")
+	}
+
+	gcm, err := CreateCipherAes(key)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// creating nonce
@@ -55,16 +64,7 @@ func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuf
 // DecryptAes256 decrypts AES-256-GCM ciphertext and moves the plaintext back into protected memory.
 func DecryptAes256(key *memguard.LockedBuffer, nonce []byte, byteToDecypt []byte) (*memguard.LockedBuffer, error) {
 
-	if key == nil {
-		return nil, apperr.New("wrong key as param")
-	}
-
-	//check lenght of key
-	if len(key.Bytes()) != 32 {
-		return nil, apperr.New("wrong key as param")
-	}
-
-	//check nonce's lenght or if is null
+	//check nonce's length or if is null
 	if nonce == nil || len(nonce) != 12 {
 		return nil, apperr.New("nonce wrong")
 	}
@@ -74,17 +74,12 @@ func DecryptAes256(key *memguard.LockedBuffer, nonce []byte, byteToDecypt []byte
 		return nil, apperr.New("byte to decrypt are null")
 	}
 
-	block, err := aes.NewCipher(key.Bytes())
+	gcm, err := CreateCipherAes(key)
 	if err != nil {
-		return nil, apperr.Wrap("create AES cipher", err)
+		return nil, err
 	}
 
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, apperr.Wrap("create AES-GCM", err)
-	}
-
-	//decryption *critical phase*
+	//decryption : *critical phase*
 	plaintext, err := gcm.Open(nil, nonce, byteToDecypt, nil)
 
 	//if error is 99% of time the password incorrect

@@ -6,14 +6,14 @@ import (
 	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/argon"
 	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
-	macos "P2Chat/cmd/client/internals/HSM/macos"
+	"P2Chat/cmd/client/internals/HSM/SE"
 	"P2Chat/cmd/client/internals/p2version"
 	"testing"
 	"time"
 )
 
 func TestSEEncryptKey(t *testing.T) {
-	if !macos.Available() {
+	if !SE.Available() {
 		t.Skip("SE not available on this machine")
 	}
 
@@ -43,7 +43,7 @@ func TestSEEncryptKey(t *testing.T) {
 		ArgonParams:   argonParams,
 	}
 
-	encrypted, err := SEEncryptKey(realKey)
+	encrypted, err := EncryptKey(realKey)
 	if err != nil {
 		t.Fatal("SEEncryptKey failed: ", err)
 	}

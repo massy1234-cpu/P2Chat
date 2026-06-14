@@ -1,6 +1,6 @@
 //go:build darwin
 
-package macos
+package SE
 
 // CFLAGS : compiler
 // LDFLAGS : linker
@@ -197,7 +197,7 @@ static SecKeyRef searchPrivateKey() {
 import "C"
 
 import (
-	datacontrol "P2Chat/cmd/client/internals/datacontrol"
+	datacontrol "P2Chat/cmd/client/internals/storage"
 	"P2Chat/pkg/apperr"
 	"fmt"
 	"unsafe"
@@ -358,11 +358,10 @@ func Decrypt(blob []byte) (*memguard.LockedBuffer, error) {
 
 }
 
-// Save on 'data' folder the public blob and wipe the bytes of the 
-func SaveBlob(blob []byte) error {
+// SaveBlob writes the blob to disk at the given path and wipes the in-memory copy.
+func SaveBlob(blob []byte, dir string) error {
 
-	// Save Bytes in memory
-	err := datacontrol.SaveBytesOnFile(blob, "data/", "SE_BLOB.bin")
+	err := datacontrol.SaveBytesOnFile(blob, dir, "SE_BLOB.bin")
 	if err != nil {
 		return apperr.Wrap("error during storage of public blob generated from the SE", err)
 	}

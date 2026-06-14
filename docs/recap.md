@@ -1833,7 +1833,6 @@ after every `go test -c`, the binary changes. this means the previous bundle sig
 2. copy into `Contents/MacOS`
 3. codesign the bundle again
 4. run from `Contents/MacOS`
-5. 
 
 ### What to do when the provisioning profile will expire 
 the profile inside `macos_test.app/Contents/embedded.provisionprofile` expires after 7 days (free account). after expiry, signing or Keychain access can fail. fix: open Xcode, build the `com.p2chat` project with `⌘B`, then copy the new profile into the bundle using one exact path from `DerivedData`.
@@ -1857,5 +1856,57 @@ is not a good move for 2 reasons:
 - i encrease the time exposure of the data in the memory
   
 use directly `.Bytes()` is better that copy the data on another varible and then wipe it because `.Bytes()` return the direct reference to a data in a safe memory zone, so it cannot be dumped from the RAM 
+
+
+
+
+# Proceed with the implementation of the SE and TPM in the cipher of keys
+I start to implement another layer of security (hardware security) for a principal reason: the storage of the AES key that ciphers the MLDSA keys. Now I have to think about an architecture that allows the app to store the keys efficiently and in a very secure way.
+
+For now the app has only the MLDSA-87 keys and I have decided that the SE and the TPM will cipher the MLDSA-87 keys and the ML-KEM (in future).
+In my architecture I have already implemented the creation of the MLDSA keys, the encryption and the storage of the keys, but this whole architecture is based on a too fragile and vulnerable foundation for a LOT of reasons:
+- password strength and length
+- reuse of the password
+- possible easy brute-force attack
+- if the user forgets the password there is NO way to recover it in this type of architecture because the user does not insert any type of identification data (ex. mail)
+
+So I implemented the TPM and the SE for macOS, Linux and Windows users.
+
+But because the TPM and SE have a very different architecture I thought about 2 different approaches to implement:
+
+## TPM Approach
+
+The idea is that the hardware generates a secret inside the chip, combines it with an optional secret of the user and then creates an AES-256 cipher for encrypting and decrypting the informations.
+This is the best method for:
+- best performance: I do not use the TPM hardware for ciphering the informations
+- best security: it would be better if the informations were ciphered inside the TPM but with the implementation of memguard it is a lot safer
+- best user experience: with the help of this layer of hardware security I can put (as optional) the ability to reset the authentication password in case the user forgets it
+
+
+## SE ( 2 Approaches )
+
+For the SE I intended 2 different approaches:
+
+The SE has more powerful resources and can execute a full process of encryption, so I could encrypt data in 2 different ways:
+
+1. Pass directly data to the SE and let it encrypt all the data inside the chip
+   **Pros**:
+   - maximum level of security, nothing exposed in RAM
+   **Cons**:
+   - if the private key inside the SE is destroyed or the data in the SE are not available the data are permanently lost
+2. Use the same approach of the TPM, derive a secret inside the SE and then use it to create an AES cipher
+   **Pros**:
+   - the secret is only protected by the SE, so if I lose it but I remember it I can recover the data
+   **Cons**:
+   - more insecure due to exposure of data inside the RAM
+   
+I could implement a lot of ideas for the second approach but all of those cannot respect by design the security idea of P2Chat, because this could mean implementing some kind of wrapping or cryptographic backdoor and this is NOT acceptable from a system that has as first amendment the privacy of its users. So I will keep the first approach, considering the fact that all the data could be unrecoverable if the private key in the SE is lost.
+
+
+## Functions
+I implemented all the function i needed for encrypt with the SE and TPM
+I modified the file `aes256.go` for separate the function `CreateChiperAes()` so i could create the secret inside the TPM, extract with `UnsealSecret()` and then use `Combine()` for combine more secret in a single **hash**, this will be the key for the aes cipher. 
+
+i created also some generic tests for the SE and TPM
 
 

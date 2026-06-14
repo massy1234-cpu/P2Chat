@@ -1,4 +1,4 @@
-//go: build darwin
+//go:build darwin
 
 package HSM
 
@@ -6,11 +6,11 @@ import (
 	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	"P2Chat/pkg/apperr"
 	"google.golang.org/protobuf/proto"
-	SE "P2Chat/cmd/client/internals/HSM/macos"
+	SE "P2Chat/cmd/client/internals/HSM/SE"
 )
 
 // Chiper a privateKey inside the TPM
-func SEEncryptKey(privateKey *struct_mldsa.PrivateKeyMLDSA) ([]byte, error ){
+func EncryptKey(privateKey *struct_mldsa.PrivateKeyMLDSA) ([]byte, error ){
 
 	if !SE.Available() {
 		return nil, apperr.New("SE not available in this device")

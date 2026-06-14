@@ -1,12 +1,12 @@
-package keys
+package mldsa_keys
 
 import (
 	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/argon"
-	data "P2Chat/cmd/client/internals/datacontrol"
-	mldsadata "P2Chat/cmd/client/internals/datacontrol/mldsa_data"
+	data "P2Chat/cmd/client/internals/storage"
+	mldsa_data "P2Chat/cmd/client/internals/storage/mldsa_data"
 	"P2Chat/cmd/client/internals/encryption"
-	struct_mldsa "P2Chat/cmd/client/internals/generated_proto_files/mldsa/proto_struct_mldsa"
+	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	"P2Chat/cmd/client/internals/p2version"
 	"google.golang.org/protobuf/proto"
 	"reflect"
@@ -42,12 +42,12 @@ func TestStoreKeys(t *testing.T) {
 		t.Fatal("error during public key save", err)
 	}
 
-	privateKeyStruct, err := mldsadata.LoadPrivateKeyFromFile(tempDir, "SK.bin")
+	privateKeyStruct, err := mldsa_data.LoadPrivateKeyFromFile(tempDir, "SK.bin")
 	if err != nil {
 		t.Fatal("error during loading private key", err)
 	}
 
-	publicKeyStruct, err := mldsadata.LoadPublicKeyFromFile(tempDir, "PK.bin")
+	publicKeyStruct, err := mldsa_data.LoadPublicKeyFromFile(tempDir, "PK.bin")
 	if err != nil {
 		t.Fatal("error during loading public key", err)
 	}

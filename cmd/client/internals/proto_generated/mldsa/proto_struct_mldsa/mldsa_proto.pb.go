@@ -9,6 +9,7 @@
 package proto_struct_mldsa
 
 import (
+	argon_params "P2Chat/cmd/client/internals/proto_generated/argon/argon_params"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -25,14 +26,14 @@ const (
 
 // struct for the private key MLDSA
 type PrivateKeyMLDSA struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	P2ChatVersion []byte                 `protobuf:"bytes,1,opt,name=p2chat_version,json=p2chatVersion,proto3" json:"p2chat_version,omitempty"`
-	Algorithm     string                 `protobuf:"bytes,2,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
-	Timestamp     int64                  `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	Nonce         []byte                 `protobuf:"bytes,4,opt,name=nonce,proto3" json:"nonce,omitempty"`
-	Key           []byte                 `protobuf:"bytes,5,opt,name=key,proto3" json:"key,omitempty"`
-	ArgonParams   *ArgonParams           `protobuf:"bytes,6,opt,name=argon_params,json=argonParams,proto3" json:"argon_params,omitempty"`
-	Checksum      []byte                 `protobuf:"bytes,7,opt,name=checksum,proto3" json:"checksum,omitempty"`
+	state         protoimpl.MessageState    `protogen:"open.v1"`
+	P2ChatVersion []byte                    `protobuf:"bytes,1,opt,name=p2chat_version,json=p2chatVersion,proto3" json:"p2chat_version,omitempty"`
+	Algorithm     string                    `protobuf:"bytes,2,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
+	Timestamp     int64                     `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Nonce         []byte                    `protobuf:"bytes,4,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	Key           []byte                    `protobuf:"bytes,5,opt,name=key,proto3" json:"key,omitempty"`
+	ArgonParams   *argon_params.ArgonParams `protobuf:"bytes,6,opt,name=argon_params,json=argonParams,proto3" json:"argon_params,omitempty"`
+	Checksum      []byte                    `protobuf:"bytes,7,opt,name=checksum,proto3" json:"checksum,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -102,7 +103,7 @@ func (x *PrivateKeyMLDSA) GetKey() []byte {
 	return nil
 }
 
-func (x *PrivateKeyMLDSA) GetArgonParams() *ArgonParams {
+func (x *PrivateKeyMLDSA) GetArgonParams() *argon_params.ArgonParams {
 	if x != nil {
 		return x.ArgonParams
 	}
@@ -112,99 +113,6 @@ func (x *PrivateKeyMLDSA) GetArgonParams() *ArgonParams {
 func (x *PrivateKeyMLDSA) GetChecksum() []byte {
 	if x != nil {
 		return x.Checksum
-	}
-	return nil
-}
-
-// struct for argon parameters
-type ArgonParams struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Time          uint32                 `protobuf:"varint,1,opt,name=time,proto3" json:"time,omitempty"`
-	Memory        uint32                 `protobuf:"varint,2,opt,name=memory,proto3" json:"memory,omitempty"`
-	Threads       uint32                 `protobuf:"varint,3,opt,name=threads,proto3" json:"threads,omitempty"`
-	Len           uint32                 `protobuf:"varint,4,opt,name=len,proto3" json:"len,omitempty"`
-	Version       uint32                 `protobuf:"varint,5,opt,name=version,proto3" json:"version,omitempty"`
-	Level         int32                  `protobuf:"varint,6,opt,name=level,proto3" json:"level,omitempty"`
-	Salt          []byte                 `protobuf:"bytes,7,opt,name=salt,proto3" json:"salt,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ArgonParams) Reset() {
-	*x = ArgonParams{}
-	mi := &file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ArgonParams) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ArgonParams) ProtoMessage() {}
-
-func (x *ArgonParams) ProtoReflect() protoreflect.Message {
-	mi := &file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ArgonParams.ProtoReflect.Descriptor instead.
-func (*ArgonParams) Descriptor() ([]byte, []int) {
-	return file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *ArgonParams) GetTime() uint32 {
-	if x != nil {
-		return x.Time
-	}
-	return 0
-}
-
-func (x *ArgonParams) GetMemory() uint32 {
-	if x != nil {
-		return x.Memory
-	}
-	return 0
-}
-
-func (x *ArgonParams) GetThreads() uint32 {
-	if x != nil {
-		return x.Threads
-	}
-	return 0
-}
-
-func (x *ArgonParams) GetLen() uint32 {
-	if x != nil {
-		return x.Len
-	}
-	return 0
-}
-
-func (x *ArgonParams) GetVersion() uint32 {
-	if x != nil {
-		return x.Version
-	}
-	return 0
-}
-
-func (x *ArgonParams) GetLevel() int32 {
-	if x != nil {
-		return x.Level
-	}
-	return 0
-}
-
-func (x *ArgonParams) GetSalt() []byte {
-	if x != nil {
-		return x.Salt
 	}
 	return nil
 }
@@ -223,7 +131,7 @@ type PublicKeyMLDSA struct {
 
 func (x *PublicKeyMLDSA) Reset() {
 	*x = PublicKeyMLDSA{}
-	mi := &file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_msgTypes[2]
+	mi := &file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -235,7 +143,7 @@ func (x *PublicKeyMLDSA) String() string {
 func (*PublicKeyMLDSA) ProtoMessage() {}
 
 func (x *PublicKeyMLDSA) ProtoReflect() protoreflect.Message {
-	mi := &file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_msgTypes[2]
+	mi := &file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -248,7 +156,7 @@ func (x *PublicKeyMLDSA) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublicKeyMLDSA.ProtoReflect.Descriptor instead.
 func (*PublicKeyMLDSA) Descriptor() ([]byte, []int) {
-	return file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDescGZIP(), []int{2}
+	return file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *PublicKeyMLDSA) GetAlgorithm() string {
@@ -290,23 +198,15 @@ var File_cmd_client_internals_proto_mldsa_mldsa_proto_proto protoreflect.FileDes
 
 const file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDesc = "" +
 	"\n" +
-	"2cmd/client/internals/proto/mldsa/mldsa_proto.proto\x12\x12proto_struct_mldsa\"\xfc\x01\n" +
+	"2cmd/client/internals/proto/mldsa/mldsa_proto.proto\x12\x12proto_struct_mldsa\x1a-cmd/client/internals/proto/argon_params.proto\"\xef\x01\n" +
 	"\x0fPrivateKeyMLDSA\x12%\n" +
 	"\x0ep2chat_version\x18\x01 \x01(\fR\rp2chatVersion\x12\x1c\n" +
 	"\talgorithm\x18\x02 \x01(\tR\talgorithm\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x14\n" +
 	"\x05nonce\x18\x04 \x01(\fR\x05nonce\x12\x10\n" +
-	"\x03key\x18\x05 \x01(\fR\x03key\x12B\n" +
-	"\fargon_params\x18\x06 \x01(\v2\x1f.proto_struct_mldsa.ArgonParamsR\vargonParams\x12\x1a\n" +
-	"\bchecksum\x18\a \x01(\fR\bchecksum\"\xa9\x01\n" +
-	"\vArgonParams\x12\x12\n" +
-	"\x04time\x18\x01 \x01(\rR\x04time\x12\x16\n" +
-	"\x06memory\x18\x02 \x01(\rR\x06memory\x12\x18\n" +
-	"\athreads\x18\x03 \x01(\rR\athreads\x12\x10\n" +
-	"\x03len\x18\x04 \x01(\rR\x03len\x12\x18\n" +
-	"\aversion\x18\x05 \x01(\rR\aversion\x12\x14\n" +
-	"\x05level\x18\x06 \x01(\x05R\x05level\x12\x12\n" +
-	"\x04salt\x18\a \x01(\fR\x04salt\"\xa1\x01\n" +
+	"\x03key\x18\x05 \x01(\fR\x03key\x125\n" +
+	"\fargon_params\x18\x06 \x01(\v2\x12.proto.ArgonParamsR\vargonParams\x12\x1a\n" +
+	"\bchecksum\x18\a \x01(\fR\bchecksum\"\xa1\x01\n" +
 	"\x0ePublicKeyMLDSA\x12\x1c\n" +
 	"\talgorithm\x18\x01 \x01(\tR\talgorithm\x12%\n" +
 	"\x0ep2chat_version\x18\x02 \x01(\tR\rp2chatVersion\x12\x1c\n" +
@@ -326,14 +226,14 @@ func file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDescGZIP() []byt
 	return file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDescData
 }
 
-var file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_goTypes = []any{
-	(*PrivateKeyMLDSA)(nil), // 0: proto_struct_mldsa.PrivateKeyMLDSA
-	(*ArgonParams)(nil),     // 1: proto_struct_mldsa.ArgonParams
-	(*PublicKeyMLDSA)(nil),  // 2: proto_struct_mldsa.PublicKeyMLDSA
+	(*PrivateKeyMLDSA)(nil),          // 0: proto_struct_mldsa.PrivateKeyMLDSA
+	(*PublicKeyMLDSA)(nil),           // 1: proto_struct_mldsa.PublicKeyMLDSA
+	(*argon_params.ArgonParams)(nil), // 2: proto.ArgonParams
 }
 var file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_depIdxs = []int32{
-	1, // 0: proto_struct_mldsa.PrivateKeyMLDSA.argon_params:type_name -> proto_struct_mldsa.ArgonParams
+	2, // 0: proto_struct_mldsa.PrivateKeyMLDSA.argon_params:type_name -> proto.ArgonParams
 	1, // [1:1] is the sub-list for method output_type
 	1, // [1:1] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
@@ -352,7 +252,7 @@ func file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDesc), len(file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

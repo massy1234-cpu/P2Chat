@@ -1,17 +1,17 @@
 package argon
 
 import (
-	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
+	argon_proto_struct "P2Chat/cmd/client/internals/proto_generated/argon/argon_params"
 	"P2Chat/pkg/apperr"
 	"github.com/awnumar/memguard"
 	"golang.org/x/crypto/argon2"
 	"runtime"
 )
 
-// Create the struct that contain the correct parameters for argon
-func CreateArgonParams(level int) *struct_mldsa.ArgonParams {
+// Create the protoc struct 'argon_params' that contain the correct parameters for argon
+func CreateArgonParams(level int) *argon_proto_struct.ArgonParams {
 
-	params := &struct_mldsa.ArgonParams{}
+	params := &argon_proto_struct.ArgonParams{}
 
 	switch level {
 	case 3: 										// High security, high computation but use a lot of resources  

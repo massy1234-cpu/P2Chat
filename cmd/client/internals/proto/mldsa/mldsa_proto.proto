@@ -3,6 +3,7 @@
 syntax = "proto3";
 
 package proto_struct_mldsa;
+import "cmd/client/internals/proto/argon_params.proto";
 
 option go_package = "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa";		// specify where put the generated file
 
@@ -13,19 +14,8 @@ message PrivateKeyMLDSA {
     int64 timestamp = 3;
     bytes nonce = 4;
     bytes key = 5;
-    ArgonParams argon_params = 6; 
+    proto.ArgonParams argon_params = 6;
 	bytes checksum = 7;
-}
-
-// struct for argon parameters
-message ArgonParams {
-    uint32 time = 1;
-	uint32 memory = 2;
-	uint32 threads = 3;
-	uint32 len = 4;
-	uint32 version = 5;
-	int32 level = 6;
-    bytes salt = 7; 
 }
 
 // struct for the public key MLDSA

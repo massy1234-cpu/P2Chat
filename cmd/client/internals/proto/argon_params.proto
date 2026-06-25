@@ -1,0 +1,17 @@
+// protoc --go_out=. --go_opt=module=P2Chat cmd/client/internals/proto/argon_params.proto
+
+syntax = "proto3";
+
+package proto;
+option go_package = "P2Chat/cmd/client/internals/proto_generated/argon/argon_params";
+
+
+message ArgonParams {
+    uint32 time = 1;
+	uint32 memory = 2;
+	uint32 threads = 3;
+	uint32 len = 4;
+	uint32 version = 5;
+	int32 level = 6;
+    bytes salt = 7; 
+}

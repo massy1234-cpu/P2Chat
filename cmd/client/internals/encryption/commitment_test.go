@@ -41,12 +41,12 @@ func TestCommitment(t *testing.T) {
 		input := tests[i]
 
 		t.Run("commitment test", func(t *testing.T) {
-			hash, err := encryption.Commitment(input.key, input.salt, encryption.Encaps(input.secret))
+			hash, err := encryption.Commitment(input.key, input.salt, []byte(input.secret))
 			if err != nil {
 				t.Fatal("error during creation of hash", input.test, err)
 			}
 
-			match, err := encryption.VerifyCommitment(hash, input.verifyKey, input.verifySalt, encryption.Encaps(input.verifyPass))
+			match, err := encryption.VerifyCommitment(hash, input.verifyKey, input.verifySalt, []byte(input.verifyPass))
 			if err != nil {
 				t.Fatal("error during verify the commitement", input.test, err)
 			}

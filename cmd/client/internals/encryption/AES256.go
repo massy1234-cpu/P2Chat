@@ -11,17 +11,13 @@ import (
 )
 
 // CreateCipherAes validates the key and creates an AES-256-GCM cipher.
-func CreateCipherAes(key *memguard.LockedBuffer) (cipher.AEAD, error) {
+func CreateCipherAes(key []byte) (cipher.AEAD, error) {
 	
-	if key == nil {
-		return nil, apperr.New("key is null")
-	}
-	
-	if len(key.Bytes()) != 32 {
+	if len(key) != 32 {
 		return nil, apperr.New("key length is not correct")
 	}
 
-	block, err := aes.NewCipher(key.Bytes())
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, apperr.Wrap("create AES cipher", err)
 	}
@@ -42,7 +38,7 @@ func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuf
 		return nil, nil, apperr.New("byte to encrypt are null")
 	}
 
-	gcm, err := CreateCipherAes(key)
+	gcm, err := CreateCipherAes(key.Bytes())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -74,7 +70,7 @@ func DecryptAes256(key *memguard.LockedBuffer, nonce []byte, byteToDecypt []byte
 		return nil, apperr.New("byte to decrypt are null")
 	}
 
-	gcm, err := CreateCipherAes(key)
+	gcm, err := CreateCipherAes(key.Bytes())
 	if err != nil {
 		return nil, err
 	}

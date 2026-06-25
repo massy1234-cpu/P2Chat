@@ -1910,3 +1910,316 @@ I modified the file `aes256.go` for separate the function `CreateChiperAes()` so
 i created also some generic tests for the SE and TPM
 
 
+# Next step : implementation of the ML-KEM keys
+
+before quantum computers the KEM (Key Encapsulation Mechanism) was implemented with P-256 or Curve25519, now the Shor alghoritm can easily resolve this type of computional problem in polinomial time (not exponential), in the 2016 the NIST declared that the CRYSTALS-Kyber would be the next KEM standard (FIPS 203)
+
+this type of key is used for create a share secret between 2 users that cannot comunicate yet directly in a safe way
+
+**How it works? (high level)**
+```
+Alice (key generation):
+  1. Chooses a matrix A (public, deterministic)
+  2. Chooses secret s and noise e (small)
+  3. Computes b = A*s + e
+  4. The public key is (A, b)
+  5. The private key is s
+
+Bob (encapsulation):
+  1. Takes Alice's public key (A, b)
+  2. Chooses s' and e' (small, his own)
+  3. Computes u = A*s' + e'                      (ciphertext part 1)
+  4. Computes v = b*s' + e'' + encode(secret)    (ciphertext part 2)
+  5. The shared secret is inside v, "hidden" in the noise
+  6. Sends (u, v) as ciphertext
+
+Alice (decapsulation):
+  1. Takes (u, v)
+  2. Computes v - u*s = (A*s + e)*s' + encode(secret) - (A*s' + e')*s
+  3. By algebraic properties, A*s*s' ≈ A*s'*s (they almost commute)
+  4. What remains: encode(secret) + (e*s' - e'*s)  ← very small noise
+  5. Decodes and recovers the same secret
+```
+
+there are 3 type of **ML-KEM** 512,768,1024, in this project we will use the 768 that is also the raccomendation from NIST
+this variant of ML-KEM have very large keys
+- Public : 1184 bytes
+- Private : 2400 bytes 
+- Shared secret : 32 byte
+- Chipertext : 1088 bytes
+
+the library ("crypto/mlkem") is very clean so we have not to worry about parameters or other specific things, we can reason on high level
+
+## phases
+- Alice generate the key pair `alicePrivate, err := mlkem.GenerateKey768(rand.Reader)`
+- Alice extract the public key `alicePublic := alicePrivate.EncapsulationKey()`
+- Alice send the public to BOB
+
+- Bob receive the public key and generate 2 things (chipertext and the sharedSecret) : `ciphertext, sharedSecret, err := mlkem.Encapsulate768(rand.Reader, alicePublic)`
+- Bob sent to Alice the `chipertext`
+
+- Alice get the `chipertext` from Bob and get the same sharedSecret `sharedSecret, err := bobPrivate.Decapsulate(ciphertext)`
+
+**NOTE** : the `sharedSecret` MUST NOT used like aes-key, is highly insecure for many reasons :
+- can use that secret for derivate more secret
+- add another layer of security
+- more entropy
+- is the cryptographic standard 
+- more warranties of security
+
+this is a scheme of how this type of keys works
+![testo alternativo](images/ml-kem.png)
+
+
+the lifecycle of these ML-KEM keys will be not the same as the ML-DSA key
+infact the ML-DSA is a key that MUST be persistent, is like the identity of the user and for this reason must be stored for a long time, the ML-KEM are used once only for share a secret, so i will use a database for manage these keys
+
+### Database and key mangment
+
+the database i will use is BBolt in fact for the data i have to store this is the best solution
+the data on the database will be native encrypted and decrypted only will be necessary to do
+
+i will talk about the structure of the database later, for now i will implement the ML-KEM and a way to save it on the database
+
+BBolt storage scheme is very interesting, infact use only buckets and pair key:values to store data, that is perfect for my application and also very simple and clear
+
+use also only a file, that could be interesting to eventually export for a backup or others uses
+
+i will use **messagepack** for the serialization of the files on the database, this is the fastest method for do this and avoid overhead and create a fast data storage
+
+
+## buchets
+
+in the database the data will be organized for buchet and the bucket that i will use are
+- bundle buchet (one for each server P2Chat)
+- real-time comunication
+- one for each friend (with all the informations and shared_secret)
+
+
+
+## ok, this whole thing is not very practical to use alone, we have to implement 2 other protocols 
+
+the ML-KEM have 2 problems :
+- no authentication
+- if somebody steal the secret, can decrypt all the conversations
+- the chat must work also if one of 2 is offline
+
+for fix these problems we will implement other protocols like :
+- PQXDH -> allows to an user to send messag to another in case the other user is offline, keeping an high level of security
+  - if Bob is offline, Alice can send to it messages that are stored on the server encrypted and authenticated from Alice, the server cannot by design see the content of the messages, is like a post office box but the box is a bunker 
+- Double Ratchet -> solve the problem of "what we do if somebody steal the main secret where all the conversation is encrypted?", well, this protocol change the key at every message we send to the other user, isolating all the conversation, past and future, real cool thing
+
+
+the explanation of these 2 protocols is in this paper : https://signal.org/docs/specifications/pqxdh/ and https://signal.org/docs/specifications/doubleratchet/ 
+
+
+this part talk about an implementation at an high level about the server's architecture and how the user application must be designed
+
+
+# Registration on the server
+
+this part will not request any information about the user, will be full anonymously, that expose the server to BOT and DDoS that we can mitigate using some matematical challenge very hard to solve and Captcha
+
+the user consist in get some user ID totally random and get the bundle to publish on the server
+this operation use the same logic used for request a bundle so we will use the bind signature to upload the bundle using a signature and another TOR or VPN circuit
+
+# Using TOR or other intermediate server can expose us to data replacement
+
+for use the TOR network or VPN we have to implement also TSL over TOR but we have to modify the part of the certificate, because today stil use protocols NOT quantum-safe so we have to sign the tunnel with a ML-DSA key
+
+so the server have to create a private and public key for TLS protocols with a ML-DSA protocol
+
+# Bundle request
+
+all the users will have to connect to the server with a VPN/TOR network, for obfuscate their real IP address 
+in this phase the goal is to get the bundle of the user that we want to communicate using his nickname or identification token on the server 
+
+the client have to remember a few IP addresses that used in past for not use again those IP adresses and avoid some type of traffic analysis, for example NOT use the same IP addresses from a TOR for request 10 bundle but cycle every time
+
+for garantee that the bundle on the server is from the real user and not from an attacker or the server that replaced the keys we have 2 options :
+- commitment scheme with a secret that the users shared off the wire
+- check the safety number of the other user off the wire
+the first contact is the most vulnerable, but if we check one of these we can have the warranty that the other user is the real one so in future we will keep as trusted the public Identity Key of the other user, NOT the hash because we could expose to a **Second Preimage Attack** 
+
+then for avoid a possibile network analysis of the server for understand some information about which bundle we extract or other information we have to hide the higher possible number of metadata 
+
+for avoid that the server can understand witch bundle we get we can introduce **ORAM**. Now the user that want some bundle associated with the ID of the user, read all the user ID from the databsae or a big part and do some dummy requests for get some random bundle and the one that have to use, for obfuscate the request to the server
+
+for avoid the traffic data based on the lenght's message we have to put a fixed lenght for most of the messages, for example the request to get some bundles and the bundle itself have the same lenght
+
+and for avoid analysis based on the latency we have to uniform the time of the request for do this i created a possible solution
+- Alice want to request a bundle
+- Alice get the list of usernames and tell the server the bundle thath she want and some dummy requets
+- the server released an anonimous certificate with the time of expires using the bind signature
+- Alice wait a random number of second and request the bind to the server using a new TOR or VPN connection using the bind signature
+
+Alice have now the bundle
+
+the same process can be did during the upload of the bundle on the server
+
+
+# Comunication
+
+once that a user have the bundle and want to comunicate with the other user we could have 2 scenarios :
+- the other user is offline
+- the other user is online
+
+but how we can design a system where the server have the minimum amount of metadata ?
+
+i will explain the details of my solution in the 2 cases
+
+## But first... how comunicate to the server that the user is online or offline ?
+
+we do not. we have only to check our mailbox periodically
+
+is also important to create a mailbox for some requests like
+- request to have a user like friend and trust him
+- (optional) have messages that we did not read because we were offine
+- ecc...
+
+this allows to everyone to comunicate with the user in the online mode and not in the offline mode
+
+## If the user is offline
+
+i can ask to the user which strategy implement :
+- keep the message localy and wait the user to become online then send it, like telegram
+- implement a mail box inside the server that store the messages
+
+the system of mailbox can be handled using a bind certificate and not exposing the ID of the mittent but insert the request inside the encryption of the message
+
+## if the user is online
+
+we can send the past messages or can request to start a **real-time** comunication with the chipertext already included and the requester that wait a response to a designed IP address
+
+a **real-time** comunication is a comunication that allow us to create a chat between use and the destination and have a realistic user experience like whatsapp or telegram
+
+but this **real-time** comunication can have 2 options :
+- client-server type
+- peer to peer
+
+
+### client-server
+this architecture is NOT a real client-server, this architecture could only destroy the mailbox system for the amount of data that will create the mailbox system too much inefficent
+
+and also use the server like a reply server is not convinent for metadata use, infact both users will sacrifice the security level of the entire infrastrucutre for the comunication
+
+the only way is create a Peer to Peer anonimous with onion services and not real IP
+or also create a sort of anonimous server where the 2 users connect with a VPN and then comunicate each other using encryption
+
+### peer to peer
+this is a way better way to comunicate (and the way i created this app) where the 2 users allows each other to let know the other user their IP addresses and start to comunicate in a peer-to-peer mode using alway a shared_secret (enstablished using the server) and the three-ratchet protocol
+
+i can also implement different ways for the peer to peer 
+- directly 
+- using IP obfuscation (TOR or VPN)
+
+
+## MailBox idea
+
+i have 2 options :
+- have a large public place where get all the data anonymously (server dont know for who their are)
+- have a private mailbox for every user (server know messages)
+
+the type of messages are 2 :
+- requests to friendship
+- offline messages
+- request to real-time comunication
+
+the idea is to create new mailboxes shared at every new N users 
+this allow us to manage the mailbox system with more efficency and avoid overhead cause to a big unified mailbox
+
+so when Alice and Bob are friend they share a secret, this is derivate with a PQXDH protocol and use a ratchet like protocol to spin the secret at every message for organize theyself for with mailbox to use
+
+so now the users extract and put their message in these random mailboxes derivated 
+
+another problem is the extraction of all the messages, for do this, we have to link a TAG to the message, so when Alice or Bob download the entire mailbox content, they dont have to try to decrypt all the messages but only the messages with their TAG
+the TAG must rotate every time for avoid come other type of analysis attack 
+
+**i remember** that this cost is acceptable, infact we use the server only in the initial phase, where we have to get the frienship of the person and request a real-time conversation, the rest is peer to peer conversation that have no latency, so extremely secure
+
+## change the Identity Key
+
+this process need to implement another pair of key, called **IK Pair Revoke** where if we want to change the IK we have to send a message to the server where we ask to change the IK and sign it with the private part
+
+**BUT** for be effective this method we have to save this key NOT on the device but on another device, like a USB-pen drive or another device isolated from our 
+
+
+# After the server use
+
+after the server use, the 2 users have 2 options:
+- comunicate each other their IP addresses for future comunications, using for example a rendevous point or a point where constantly comunicate their own IP
+- continue to start the peer to peer comunication using the server initially
+
+
+### comunicate to our friends that i am online
+
+i can reuse the system of shared secret to send to their mailbox a message where i tell my friends every N minutes that i am online , inlcuding the day and the hours of the day, for avoid false positive messages
+BUT in the case that we have the IP of our friend we can communicate directly to him
+
+### Security Problems
+
+for avoid IP leakage i have to encrypt the IP using the shared_secret with the friend that i get from the first contact and use for rotate in a sort of ratchet for be sure that the comunication is secure and cannot be leaked
+
+
+# MailBox zero and one
+
+these mailboxes are special infact contains the message of friendship in the first contact
+i will separate also these specials mailboxes for efficency and i can separate the users response and requests in the mailbox derivating the number of the mailbox from the nickname or user_ID 
+
+the mailbox one is for responde to the requests 
+the mailbox zero is for send the request
+
+## how to do for race condition in frienship request or real-time request
+
+for now i dont care much, but is not too much difficult to solve this kind of problem generally, so i will fix this later
+
+
+
+# Implementation of the PQXDH 
+
+this (with the three ratchet) are one of the protocols at the base of this architecture, are so much important that before do all the other things i have to implement these protocols
+
+i have read and understand all the documentation on the signal website and now i will implement in GO this protocol and later also the trhee ratchet
+
+i will implement this protocol using the criptographics primitive and assemble them, i will NOT recreate the criptographics protocol, is higly insecure and out of the scope of this project
+
+
+This is a really simple schema that illustrate how the protocol PQXDH works
+![Testo alternativo](images/PQXDH.png)
+
+
+in my implementation custom of the PQXDH i will create a hybrid architecture of this protocol, putting the diffie hellman functions and post quantum (ml-kem and ml-dsa) together
+
+the hypotetic bundle on the server  :
+- Identity Key (MLDSA)
+- Identity Key (XEdDSA)
+- MLDSA key signed with XEdDSA
+- XEdDSA key signed with MLDSA
+- SPK (X25519)
+- Last-Resort Key (ML-KEM)
+- signed SPK
+- signed Last-Resort Key
+- ID SPK
+- ID Last-Resort Key
+- set of one-time-use ML-KEM
+- set of one-time-use X25519
+- signature of the set ML-KEM
+- signature of the set X25519
+
+
+- IK -> identification 
+- signed SPK and ML-KEM -> garantee that the server or nobody have replaced the keys
+- ephimeral key -> add entropy at each session
+- all the DH (DH1,DH2...) -> bond the identity with the session 
+- initial message -> confirm that all the operations had a good result, infact the message decryped with the SK must be correct and must coincide
+
+so , i asked chatGPT to help me doing some calculus 
+- ML-DSA public key : 2592 bytes
+- sign ML-DSA : 4627
+- ML-KEM public key : 1184 bytes
+- X25519 public key : 32 bytes
+- XEdDSA signature : 64 bytes
+- XEdDSA public key : 32 bytes
+in total the bundle published on the server would be about 1 MB that is big but using compression and other tecniques can be handle 
+
+BUT for optimize perfomance i have to understand that when the other user (that want to comunicate) request the bundle, would be to request the single one-time key and NOT the entire bundle, this is a must for performance optimization

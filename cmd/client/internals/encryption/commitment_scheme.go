@@ -4,17 +4,16 @@ import (
 	"P2Chat/pkg/apperr"
 	"bytes"
 	"encoding/binary"
-	"github.com/awnumar/memguard"
 	"golang.org/x/crypto/blake2b"
 )
 
 // Return a 32 bytes array, the cryptographic fingerprint of the data combine with a random salt 
-func Commitment(publicKey []byte, salt []byte, secret *memguard.LockedBuffer ) ( []byte, error  ) {
+func Commitment(publicKey, salt, secret []byte) ([]byte, error) {
 	
 	//Create object
-	hash,err := blake2b.New(32,nil)
+	hash, err := blake2b.New(32, nil)
 	if err != nil {
-		return nil,apperr.Wrap("commitment creation blake2b object failed",err)
+		return nil, apperr.Wrap("commitment creation blake2b object failed", err)
 	}
 
 	// Write Salt
@@ -24,15 +23,13 @@ func Commitment(publicKey []byte, salt []byte, secret *memguard.LockedBuffer ) (
 	// Write public key
 	err = binary.Write(hash, binary.BigEndian, uint32(len(publicKey)))
 	if err != nil {
-		return nil, apperr.Wrap("errore nella scrittura della public key nel commitment scheme",err)
+		return nil, apperr.Wrap("errore nella scrittura della public key nel commitment scheme", err)
 	}
 	hash.Write(publicKey)
 
 	// Write secret 
-	plainSecret := secret.Bytes()
-	binary.Write(hash, binary.BigEndian, uint32(len(plainSecret)))
-	hash.Write(plainSecret)
-
+	binary.Write(hash, binary.BigEndian, uint32(len(secret)))
+	hash.Write(secret)
 
 	return hash.Sum(nil), nil
 
@@ -40,8 +37,8 @@ func Commitment(publicKey []byte, salt []byte, secret *memguard.LockedBuffer ) (
 
 
 // Verify the commitment if match with the secret, require also the same salt 
-func VerifyCommitment(hash []byte, key []byte, salt []byte, secret *memguard.LockedBuffer) ( bool,error ) {
-	hashCreated, err := Commitment(key,salt,secret)
+func VerifyCommitment(hash, key, salt, secret []byte) (bool, error) {
+	hashCreated, err := Commitment(key, salt, secret)
 	if err != nil {
 		return false, apperr.Wrap("create commitment for verify hash",err)
 	}

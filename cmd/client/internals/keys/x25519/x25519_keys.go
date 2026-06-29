@@ -4,7 +4,6 @@ import (
 	"P2Chat/pkg/apperr"
 	"crypto/ecdh"
 	"crypto/rand"
-
 	"github.com/awnumar/memguard"
 )
 
@@ -39,5 +38,17 @@ func ExtractPublicKey(privateKey *ecdh.PrivateKey) (publicKey *ecdh.PublicKey) {
 }
 
 
+// derivate the shared_secret with the public key of the other user in the comunication
+func DerivateSecret(privateKey *ecdh.PrivateKey, RemotePublicKey *ecdh.PublicKey) (shared_secret *memguard.Enclave,err error) {
 
-func Encrypt()
+	secret,err := privateKey.ECDH(RemotePublicKey)
+	if err != nil {
+		return nil, apperr.Wrap("error during the derivation of the shared secret with X25519 key",err)
+	}
+
+	shared_secret = memguard.NewEnclave(secret)
+	memguard.WipeBytes(secret)
+
+	return shared_secret,nil
+
+}

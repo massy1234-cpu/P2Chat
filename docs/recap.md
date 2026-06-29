@@ -2223,3 +2223,4 @@ so , i asked chatGPT to help me doing some calculus
 in total the bundle published on the server would be about 1 MB that is big but using compression and other tecniques can be handle 
 
 BUT for optimize perfomance i have to understand that when the other user (that want to comunicate) request the bundle, would be to request the single one-time key and NOT the entire bundle, this is a must for performance optimization
+

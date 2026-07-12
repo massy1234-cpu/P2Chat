@@ -70,12 +70,12 @@ func LoadPublicKeyFromFile(pathDir string, nameFile string) (*struct_mldsa.Publi
 // Load the keys ml-dsa87
 func LoadKeys() (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, error) {
 
-	privateKey, err := LoadPrivateKeyFromFile("data/", "SK.bin")
+	privateKey, err := LoadPrivateKeyFromFile(data.BasePath, "SK.bin")
 	if err != nil {
 		return nil, nil, apperr.Wrap("Load private key ml-dsa87 from file", err)
 	}
 
-	publicKey, err := LoadPublicKeyFromFile("data/", "PK.bin")
+	publicKey, err := LoadPublicKeyFromFile(data.BasePath, "PK.bin")
 	if err != nil {
 		return nil, nil, apperr.Wrap("Load public key ml-dsa87 from file", err)
 	}

@@ -5,18 +5,27 @@ import (
 	"crypto"
 	"crypto/rand"
 	"go.step.sm/crypto/x25519"
+	"github.com/awnumar/memguard"
 )
 
-// use a X25519 key for the signature
-func Signto(privateKey x25519.PrivateKey, message []byte) (signed_message []byte, err error) {
+// Sign signs a message with an X25519 private key stored in a memguard Enclave. 
+// The key in the memguard Enclave must be NOT encrypt
+func Sign(privateKey *memguard.Enclave, message []byte) (signed_message []byte, err error) {
 
-	// the sign function doesnt need the hash, already do internally 
-	signature,err := privateKey.Sign(rand.Reader,message,crypto.Hash(0))
+	buffer, err := privateKey.Open()
 	if err != nil {
-		return nil, apperr.Wrap("error during the signature",err)
+		return nil, apperr.Wrap("open private key enclave", err)
+	}
+	defer buffer.Destroy()
+
+	rawKey := x25519.PrivateKey(buffer.Bytes())
+
+	signature, err := rawKey.Sign(rand.Reader, message, crypto.Hash(0))
+	if err != nil {
+		return nil, apperr.Wrap("error during the signature", err)
 	}
 
-	return signature,nil
+	return signature, nil
 
 }
 

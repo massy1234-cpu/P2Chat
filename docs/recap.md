@@ -2174,7 +2174,6 @@ the mailbox zero is for send the request
 for now i dont care much, but is not too much difficult to solve this kind of problem generally, so i will fix this later
 
 
-
 # Implementation of the PQXDH 
 
 this (with the three ratchet) are one of the protocols at the base of this architecture, are so much important that before do all the other things i have to implement these protocols
@@ -2223,4 +2222,35 @@ so , i asked chatGPT to help me doing some calculus
 in total the bundle published on the server would be about 1 MB that is big but using compression and other tecniques can be handle 
 
 BUT for optimize perfomance i have to understand that when the other user (that want to comunicate) request the bundle, would be to request the single one-time key and NOT the entire bundle, this is a must for performance optimization
+
+# Bundle architecture
+
+i will divide the bundles in 2 parts
+- private -> this will be stored encrypted on the local database
+- public -> this will be published on the server in format JSON
+
+the public database will be very simple, all data will be bytes because the server doesnt need to processo this datas or do other things, the server will have the only function to forward the data
+
+the private bundle have a more complicated architecture infact all the data are sensitive, so the data will stored already encrypted on the local database (BBolt) where all the data will be individually encrpted and a function of **unwrap** will encrypt it using the method use for encrypt the data ( password/TPM/SE )
+
+the IK keys will be stored outside the database
+
+**BUT** we have to understand the 2 times where the app will use this method
+
+## initial comunication
+
+the phase where the 2 users doesnt know each other and doesnt have any type of info about each other, neither the most important secret, the **friendship secret** that is the base of this architecture
+
+so the first type of usage is this, the user have to create the initial message for create the **friendship secret** that will allow the other user to start a real comunicatio using the mailbox system
+
+## refresh of friendship secret
+
+when the 2 users have a friendship secret and have to comunicate, they can start a request sending the request into the N mailbox that the shared secret can derivate using a sort of ratchet (still dont know how to do) and that start a comunication
+
+but for avoid vulnerability the frindship secret will be refreshed at every sessione that the 2 user do, infact the secret session will be derivate usind the bundle so at this time the 2 users will have 
+- session secret
+- old friendship secret
+and now using the session secret and verifing that they have the correct frindship secret they can refresh the frindship secret and comunicate ( using a HMAC(frinship secret | session secret ))
+
+this is for now the most clean, secure and simple way to do it
 

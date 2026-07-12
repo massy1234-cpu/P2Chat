@@ -12,6 +12,8 @@ import (
 	"github.com/google/go-tpm/tpm2"
 )
 
+
+// create the secret inside the TPM and return the blob, prepare also the NV memory
 func Inizialize() (*tpm2.CreateResponse,error) {
 
 	// Create the primary template in memory and create the public and private blob
@@ -28,7 +30,7 @@ func Inizialize() (*tpm2.CreateResponse,error) {
 
 
 // Extract the secret from the blobs
-func WrapSecret(privateBlob *tpm2.TPM2BPrivate,publicBlob *tpm2.TPM2BPublic) (*memguard.Enclave,error) {
+func UnwrapSecret(privateBlob *tpm2.TPM2BPrivate,publicBlob *tpm2.TPM2BPublic) (*memguard.Enclave,error) {
 
 	if privateBlob == nil || publicBlob == nil{
 		return nil, apperr.New("response is null, cannot wrap the secret")

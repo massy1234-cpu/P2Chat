@@ -34,6 +34,7 @@ type PrivateKeyMLDSA struct {
 	Key           []byte                    `protobuf:"bytes,5,opt,name=key,proto3" json:"key,omitempty"`
 	ArgonParams   *argon_params.ArgonParams `protobuf:"bytes,6,opt,name=argon_params,json=argonParams,proto3" json:"argon_params,omitempty"`
 	Checksum      []byte                    `protobuf:"bytes,7,opt,name=checksum,proto3" json:"checksum,omitempty"`
+	HsmMethod     uint32                    `protobuf:"varint,8,opt,name=hsm_method,json=hsmMethod,proto3" json:"hsm_method,omitempty"` // 0=nessuno, 1=SE, 2=TPM
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -117,6 +118,13 @@ func (x *PrivateKeyMLDSA) GetChecksum() []byte {
 	return nil
 }
 
+func (x *PrivateKeyMLDSA) GetHsmMethod() uint32 {
+	if x != nil {
+		return x.HsmMethod
+	}
+	return 0
+}
+
 // struct for the public key MLDSA
 type PublicKeyMLDSA struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -198,7 +206,7 @@ var File_cmd_client_internals_proto_mldsa_mldsa_proto_proto protoreflect.FileDes
 
 const file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDesc = "" +
 	"\n" +
-	"2cmd/client/internals/proto/mldsa/mldsa_proto.proto\x12\x12proto_struct_mldsa\x1a-cmd/client/internals/proto/argon_params.proto\"\xef\x01\n" +
+	"2cmd/client/internals/proto/mldsa/mldsa_proto.proto\x12\x12proto_struct_mldsa\x1a-cmd/client/internals/proto/argon_params.proto\"\x8e\x02\n" +
 	"\x0fPrivateKeyMLDSA\x12%\n" +
 	"\x0ep2chat_version\x18\x01 \x01(\fR\rp2chatVersion\x12\x1c\n" +
 	"\talgorithm\x18\x02 \x01(\tR\talgorithm\x12\x1c\n" +
@@ -206,7 +214,9 @@ const file_cmd_client_internals_proto_mldsa_mldsa_proto_proto_rawDesc = "" +
 	"\x05nonce\x18\x04 \x01(\fR\x05nonce\x12\x10\n" +
 	"\x03key\x18\x05 \x01(\fR\x03key\x125\n" +
 	"\fargon_params\x18\x06 \x01(\v2\x12.proto.ArgonParamsR\vargonParams\x12\x1a\n" +
-	"\bchecksum\x18\a \x01(\fR\bchecksum\"\xa1\x01\n" +
+	"\bchecksum\x18\a \x01(\fR\bchecksum\x12\x1d\n" +
+	"\n" +
+	"hsm_method\x18\b \x01(\rR\thsmMethod\"\xa1\x01\n" +
 	"\x0ePublicKeyMLDSA\x12\x1c\n" +
 	"\talgorithm\x18\x01 \x01(\tR\talgorithm\x12%\n" +
 	"\x0ep2chat_version\x18\x02 \x01(\tR\rp2chatVersion\x12\x1c\n" +

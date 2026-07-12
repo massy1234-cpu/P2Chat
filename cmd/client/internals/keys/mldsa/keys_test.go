@@ -8,10 +8,18 @@ import (
 	"P2Chat/cmd/client/internals/encryption"
 	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	"P2Chat/cmd/client/internals/p2version"
+	"github.com/awnumar/memguard"
 	"google.golang.org/protobuf/proto"
 	"reflect"
 	"testing"
 )
+
+func lockToEnc(t *testing.T, buf *memguard.LockedBuffer) *memguard.Enclave {
+	t.Helper()
+	enc := memguard.NewEnclave(buf.Bytes())
+	buf.Destroy()
+	return enc
+}
 
 // Test if keys are stored correcly - the func try to generate and then read the keys
 func TestStoreKeys(t *testing.T) {
@@ -20,7 +28,7 @@ func TestStoreKeys(t *testing.T) {
 	//test with some pre-created key for import cycle error
 	//the test want only to verificate that the write and read of the keys is correcly set
 
-	privateKey, publicKey, err := CreateKeys(3, encryption.Encaps("password"), true)
+	privateKey, publicKey, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password")), true, false)
 
 	privateKeyBytes, err := proto.Marshal(privateKey)
 	if err != nil {
@@ -65,7 +73,7 @@ func TestStoreKeys(t *testing.T) {
 // The test call the method CreateKey()
 func TestSignature(t *testing.T) {
 
-	privateKeyStruct, publicKeyStruct, err := CreateKeys(3, encryption.Encaps("password1"), false)
+	privateKeyStruct, publicKeyStruct, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password1")), false, false)
 
 	// signature will contain the sign of the key and ctx is an another control that during the Verify() must coincide
 	msg := []byte("message to verify")
@@ -114,7 +122,7 @@ func TestSignature(t *testing.T) {
 func TestCreateKeysFields(t *testing.T) {
 	const level = 3
 
-	privateKeyStruct, publicKeyStruct, err := CreateKeys(level, encryption.Encaps("password1"), false)
+	privateKeyStruct, publicKeyStruct, _, err := CreateKeys(level, lockToEnc(t, encryption.Encaps("password1")), false, false)
 	if err != nil {
 		t.Fatal("error during key creation", err)
 	}
@@ -214,7 +222,7 @@ func TestDecodePublicKeyMLDSAErrors(t *testing.T) {
 }
 
 func TestDecodePrivateKeyMLDSAWrongPassword(t *testing.T) {
-	privateKeyStruct, _, err := CreateKeys(3, encryption.Encaps("password1"), false)
+	privateKeyStruct, _, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password1")), false, false)
 	if err != nil {
 		t.Fatal("error during key creation", err)
 	}
@@ -231,7 +239,7 @@ func TestDecodePrivateKeyMLDSAWrongPassword(t *testing.T) {
 }
 
 func TestDecodePrivateKeyMLDSAInvalidKeyField(t *testing.T) {
-	privateKeyStruct, _, err := CreateKeys(3, encryption.Encaps("password1"), false)
+	privateKeyStruct, _, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password1")), false, false)
 	if err != nil {
 		t.Fatal("error during key creation", err)
 	}

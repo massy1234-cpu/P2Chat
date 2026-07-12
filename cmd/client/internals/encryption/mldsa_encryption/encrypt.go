@@ -9,7 +9,13 @@ import (
 
 // EncryptPrivateKey derives an AES key from the password, encrypts the packed
 // ML-DSA private key, and returns ciphertext, nonce, and salt.
-func EncryptPrivateKey(password *memguard.LockedBuffer, privateKey *memguard.LockedBuffer, level int) ([]byte, []byte, []byte, error) {
+func EncryptPrivateKey(password *memguard.LockedBuffer, privateKeyEnc *memguard.Enclave, level int) ([]byte, []byte, []byte, error) {
+
+	privateKey, err := privateKeyEnc.Open()
+	if err != nil {
+		return nil, nil, nil, apperr.Wrap("open private key enclave", err)
+	}
+	defer privateKey.Destroy()
 
 	// Generate salt
 	salt, err := encryption.GenerateSalt(32)
@@ -24,7 +30,7 @@ func EncryptPrivateKey(password *memguard.LockedBuffer, privateKey *memguard.Loc
 	}
 
 	// the ciphertext contains the tag for integrity ( checksum )
-	rawKeyEncrypted, nonce, err := encryption.EncryptAes256(aesKey, privateKey)
+	rawKeyEncrypted, nonce, err := encryption.EncryptAes256(aesKey, privateKey.Bytes())
 	if err != nil {
 		return nil, nil, nil, apperr.Wrap("encrypt private key", err)
 	}

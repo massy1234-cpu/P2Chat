@@ -9,14 +9,15 @@ import (
 
 func main() {
 	go func() {
-		//OS error detection
 		errors.Watchdog()
 	}()
 
 	password := memguard.NewBuffer(len("prova"))
 	copy(password.Bytes(), []byte("prova"))
-	_, _, err := mldsa_keys.CreateKeys(3, password, true)
+	passwordEnc := memguard.NewEnclave(password.Bytes())
+	password.Destroy()
+
+	_, _, _, err := mldsa_keys.CreateKeys(3, passwordEnc, true, false)
 
 	fmt.Println(err)
-
 }

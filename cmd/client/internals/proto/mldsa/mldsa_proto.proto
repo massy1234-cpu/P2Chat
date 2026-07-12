@@ -16,6 +16,7 @@ message PrivateKeyMLDSA {
     bytes key = 5;
     proto.ArgonParams argon_params = 6;
 	bytes checksum = 7;
+	uint32 hsm_method = 8;  // 0 = nessuno, 1 = SE, 2 = TPM
 }
 
 // struct for the public key MLDSA

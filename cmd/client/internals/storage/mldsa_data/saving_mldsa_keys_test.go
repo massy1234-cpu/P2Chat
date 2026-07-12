@@ -3,14 +3,17 @@ package mldsa_data
 import (
 	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/argon"
-	data "P2Chat/cmd/client/internals/storage"
+		
 	"P2Chat/cmd/client/internals/encryption"
 	encryptmldsa "P2Chat/cmd/client/internals/encryption/mldsa_encryption"
-	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	"P2Chat/cmd/client/internals/p2version"
+	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
+	data "P2Chat/cmd/client/internals/storage"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/awnumar/memguard"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -113,13 +116,15 @@ func createRealKeyPairForTest() (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.Pu
 	}
 	defer privateKeyExposed.Destroy()
 
-	privateKey, err := privateKeyExposed.LockedBuffer()
+	privateKeyBuf, err := privateKeyExposed.LockedBuffer()
 	if err != nil {
 		return nil, nil, err
 	}
-	defer privateKey.Destroy()
+	defer privateKeyBuf.Destroy()
 
-	ciphertext, nonce, salt, err := encryptmldsa.EncryptPrivateKey(password, privateKey, 3)
+	privateKeyEnc := memguard.NewEnclave(privateKeyBuf.Bytes())
+
+	ciphertext, nonce, salt, err := encryptmldsa.EncryptPrivateKey(password, privateKeyEnc, 3)
 	if err != nil {
 		return nil, nil, err
 	}

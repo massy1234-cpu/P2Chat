@@ -2,24 +2,38 @@ package mldsa_keys
 
 import (
 	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
+	"P2Chat/cmd/client/internals/encryption"
 	"P2Chat/pkg/apperr"
+
+	"github.com/awnumar/memguard"
 )
 
-// signature function for mldsa keys, the parameter randomized add entropy with a nonce
-func Sign(privateKey *mldsa87.PrivateKey,message []byte,context []byte, randomized bool) (signature []byte,err error) {
+// Sign signs a message using an ML-DSA private key stored in a memguard Enclave.
+// The function opens the enclave, unmarshals the key from protected memory, signs,
+// and destroys the temporary buffer.
+// the context is optional but must coincide during the verification of the sign, add more entropy
+func Sign(privateKey *memguard.Enclave, message []byte, context []byte, randomized bool) (signature []byte, err error) {
+
+	buffer, err := privateKey.Open()
+	if err != nil {
+		return nil, apperr.Wrap("open private key enclave", err)
+	}
+	defer buffer.Destroy()
+
+	var rawKey mldsa87.PrivateKey
+	if err := rawKey.UnmarshalBinaryFromLockedBuffer(buffer); err != nil {
+		return nil, apperr.Wrap("unmarshal private key from locked buffer", err)
+	}
+	defer encryption.Wipe(&rawKey)	// clean rawKey from the memory
 
 	signatureBuffer := make([]byte, mldsa87.SignatureSize)
 
-
-	// context is a optional string for add a layer of security
-	err = mldsa87.SignTo(privateKey, message, context, true, signatureBuffer)
-
-	// if signature succeeded, then i try to do the opposite operation
+	err = mldsa87.SignTo(&rawKey, message, context, true, signatureBuffer)
 	if err != nil {
 		return nil, apperr.Wrap("error during Signature of the message", err)
 	}
 
-	return signatureBuffer,nil
+	return signatureBuffer, nil
 }
 
 

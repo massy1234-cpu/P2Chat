@@ -94,7 +94,7 @@ func TestEncryptionAndDecryption(t *testing.T) {
 				defer encryptKey.Destroy()
 			}
 
-			ciphertext, nonce, err := EncryptAes256(encryptKey, tt.secret)
+			ciphertext, nonce, err := EncryptAes256(encryptKey, tt.secret.Bytes())
 			if err != nil {
 				if !tt.wantError {
 					t.Fatalf("unexpected encryption error: %v", err)
@@ -174,7 +174,7 @@ func TestEncryptFailed(t *testing.T) {
 	}
 	defer aesKey.Destroy()
 
-	ciphertext, nonce, err := EncryptAes256(aesKey, secret)
+	ciphertext, nonce, err := EncryptAes256(aesKey, secret.Bytes())
 	if err != nil {
 		t.Fatalf("error during encrypting")
 	}

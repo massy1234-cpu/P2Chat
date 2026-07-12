@@ -128,7 +128,7 @@ func encryptDecryptWithTPMSecret(t *testing.T, private tpm2.TPM2BPrivate, public
 	copy(plaintext.Bytes(), original)
 	defer plaintext.Destroy()
 
-	ciphertext, nonce, err := encryption.EncryptAes256(combinedKey, plaintext)
+	ciphertext, nonce, err := encryption.EncryptAes256(combinedKey, plaintext.Bytes())
 	if err != nil {
 		t.Fatal("EncryptAes256:", err)
 	}

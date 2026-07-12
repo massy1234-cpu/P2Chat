@@ -30,10 +30,14 @@ func CreateCipherAes(key []byte) (cipher.AEAD, error) {
 	return gcm, nil
 }
 
-// EncryptAes256 encrypts protected plaintext with AES-256-GCM and returns ciphertext and nonce.
-func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuffer) ([]byte, []byte, error) {
-	
-	//check if bytes are not null
+
+// EncryptAes256 encrypts plaintext with AES-256-GCM and returns ciphertext and nonce.
+func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt []byte) ([]byte, []byte, error) {
+
+	if key == nil {
+		return nil, nil, apperr.New("aes key is nil")
+	}
+
 	if byteToEncrypt == nil {
 		return nil, nil, apperr.New("byte to encrypt are null")
 	}
@@ -43,22 +47,23 @@ func EncryptAes256(key *memguard.LockedBuffer, byteToEncrypt *memguard.LockedBuf
 		return nil, nil, err
 	}
 
-	// creating nonce
 	nonce := make([]byte, gcm.NonceSize())
 	_, err = rand.Read(nonce)
-
 	if err != nil {
 		return nil, nil, apperr.Wrap("generate nonce", err)
 	}
 
-	// Seal encrypt the byte, include the nonce and append a tag that shows integrity
-	ciphertext := gcm.Seal(nil, nonce, byteToEncrypt.Bytes(), nil)
+	ciphertext := gcm.Seal(nil, nonce, byteToEncrypt, nil)
 
 	return ciphertext, nonce, nil
 }
 
 // DecryptAes256 decrypts AES-256-GCM ciphertext and moves the plaintext back into protected memory.
 func DecryptAes256(key *memguard.LockedBuffer, nonce []byte, byteToDecypt []byte) (*memguard.LockedBuffer, error) {
+
+	if key == nil {
+		return nil, apperr.New("aes key is nil")
+	}
 
 	//check nonce's length or if is null
 	if nonce == nil || len(nonce) != 12 {

@@ -9,7 +9,7 @@ import (
 )
 
 // save the private key ml-dsa87 on file
-func SavePrivateKey(privateKey *struct_mldsa.PrivateKeyMLDSA) error {
+func SavePrivateKey(privateKey *struct_mldsa.PrivateKeyMLDSA, pathDir string) error {
 
 	// convert key in bytes
 	streamByte, err := proto.Marshal(privateKey)
@@ -18,7 +18,7 @@ func SavePrivateKey(privateKey *struct_mldsa.PrivateKeyMLDSA) error {
 	}
 
 	// write bytes
-	err = data.SaveBytesOnFile(streamByte, "data/", "SK.bin")
+	err = data.SaveBytesOnFile(streamByte, pathDir, "SK.bin")
 	if err != nil {
 		return apperr.Wrap("persist private key", err)
 	}
@@ -28,7 +28,7 @@ func SavePrivateKey(privateKey *struct_mldsa.PrivateKeyMLDSA) error {
 }
 
 // save the public key ml-dsa87 on file
-func SavePublicKey(publicKey *struct_mldsa.PublicKeyMLDSA) error {
+func SavePublicKey(publicKey *struct_mldsa.PublicKeyMLDSA, pathDir string) error {
 
 	// convert key in bytes
 	streamByte, err := proto.Marshal(publicKey)
@@ -37,7 +37,7 @@ func SavePublicKey(publicKey *struct_mldsa.PublicKeyMLDSA) error {
 	}
 
 	// write bytes
-	err = data.SaveBytesOnFile(streamByte, "data/", "PK.bin")
+	err = data.SaveBytesOnFile(streamByte, pathDir, "PK.bin")
 	if err != nil {
 		return apperr.Wrap("persist public key", err)
 	}
@@ -47,14 +47,14 @@ func SavePublicKey(publicKey *struct_mldsa.PublicKeyMLDSA) error {
 }
 
 // Save the pair ok ml-dsa87 keys on file
-func SavePairKey(privateKey *struct_mldsa.PrivateKeyMLDSA, publicKey *struct_mldsa.PublicKeyMLDSA) error {
+func SavePairKey(privateKey *struct_mldsa.PrivateKeyMLDSA, publicKey *struct_mldsa.PublicKeyMLDSA, pathDir string) error {
 
-	err := SavePrivateKey(privateKey)
+	err := SavePrivateKey(privateKey, pathDir)
 	if err != nil {
 		return apperr.Wrap("Saving private key ml-dsa87", err)
 	}
 
-	err = SavePublicKey(publicKey)
+	err = SavePublicKey(publicKey, pathDir)
 	if err != nil {
 		return apperr.Wrap("Saving public key ml-dsa87", err)
 	}

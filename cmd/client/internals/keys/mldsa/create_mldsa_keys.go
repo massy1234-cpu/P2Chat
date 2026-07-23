@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"github.com/awnumar/memguard"
 	"time"
+	"path/filepath"
 )
 
 
@@ -90,7 +91,7 @@ func fillPublicKey(algoritm string, rawPublicKey []byte) (*struct_mldsa.PublicKe
 // builds the protobuf payloads, and optionally stores them on disk.
 // HSM bool is the parameters that decide if add another layer of security using hardware security.
 // Returns the protobuf structs and the raw private key enclave for immediate use (e.g. signing).
-func CreateKeys(level int, password *memguard.Enclave, store bool, HSM bool) (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, *memguard.Enclave, error) {
+func CreateKeys(level int, password *memguard.Enclave, store bool, HSM bool, nameDir string) (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, *memguard.Enclave, error) {
 
 	// generation of the keys
 	publicKey, privateKeyExposed, err := mldsa87.GenerateKey(nil)
@@ -146,7 +147,7 @@ func CreateKeys(level int, password *memguard.Enclave, store bool, HSM bool) (*s
 	}
 
 	if store {
-		err = StoreKeys(privateKeyStruct, publicKeyStruct, data.BasePath)
+		err = StoreKeys(privateKeyStruct, publicKeyStruct, filepath.Join(data.BasePath,nameDir))
 		if err != nil {
 			return nil, nil, nil, apperr.Wrap("store generated keys", err)
 		}

@@ -18,7 +18,13 @@ P2Chat/
 │   ├── keys/mldsa/                    # ML-DSA-87 keygen, sign, decode
 │   ├── keys/mlkem/                    # ML-KEM-768 keygen, encapsulate, decapsulate
 │   ├── keys/x25519/                   # X25519 ECDH + XEdDSA signatures
-│   ├── network/                       # Placeholder for P2P networking
+│   ├── network/                       # Networking layer
+│   │   ├── TLS/
+│   │   │   └── TLS.go                 # TLS client Connect + Connection struct (readerLoop, writeLoop, Close)
+│   │   ├── transmission/
+│   │   │   └── msg.go                 # ReadMsg / WriteMsg: 4B big-endian length prefix + payload
+│   │   └── certificate/
+│   │       └── certificate.go         # Client TLS certificate generation
 │   ├── p2log/                         # Colored console+file logger (Debug/Info/Warning/Error)
 │   ├── p2version/                     # Magic bytes "P2CH1"
 │   ├── proto/                         # .proto source definitions
@@ -139,18 +145,6 @@ All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/d
 
 `sharedSecret` from ML-KEM must NOT be used directly as an AES key. It must go through a KDF first (standard practice).
 
-## Key file locations on disk
-
-All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/data/` via `init()`.
-
-| File | Relative Path | Content |
-|------|--------------|---------|
-| `SK.bin` | `SK.bin` | Encrypted ML-DSA private key (protobuf) |
-| `PK.bin` | `PK.bin` | ML-DSA public key (protobuf, plaintext) |
-| TPM blobs | `blobs/privateBlob.bin` + `publicBlob.bin` | TPM-sealed secret |
-| SE blob | `SE_BLOB.bin` | ECIES-encrypted 32-byte payload |
-| BoltDB | `database/database.db` | Future: PQXDH bundles, sessions, contacts |
-
 ## Known quirks
 
 - `client` at repo root is a compiled binary (Mach-O arm64), not a directory.
@@ -184,18 +178,32 @@ All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/d
 | `mldsa_keys.CreateKeys` refactor | ✅ Done | Ritorna anche raw enclave per signing |
 | `database.SaveSets` | ✅ Done | Prende `[][]byte`, salva su bbolt |
 | `GetBundleID` | ✅ Done | Esportata per uso da altri package |
-| `InitializePQXDH` | 🔶 WIP | Crea bundle + sets + salva su DB, manca invio al server |
-| Database salvataggio SPK + Last-resort | ❌ Da fare | Salvare parte privata del bundle (SPK, last-resort) nel DB locale |
-| Invio public bundle + public sets al server | ❌ Da fare | Pubblicare `PqxdhPublicBundle` e `[]SetPair.Public` sul server |
-| Network / server design | ❌ Da fare | Capire protocollo di comunicazione e struttura server |
-| Test | ❌ Da fare | Test su CreateCurveSets, SaveSets, database, InitializePQXDH |
+| `InitializePQXDH` | ✅ Done | Crea bundle + sets + salva su DB, ritorna public bundle + public sets |
+| Database salvataggio SPK + Last-resort | ✅ Done | `SavePrivateBundle` serializza e salva su bbolt |
+| `CreateCurveSet` / `CreatePQKEMSet` refactor | ✅ Done | Ritornano `[]byte, []byte` invece di struct (marshal interno) |
+| `CreateCurveSets` / `CreateKEMsets` refactor | ✅ Done | Ritornano `[][]byte, [][]byte` invece di `[]SetPair` |
+| `SaveSets` signature | ✅ Done | Accetta `[][]byte` invece di `[]SetPair` |
+| TLS 1.3 + PQ curves (X25519MLKEM768) | ✅ Done | `tls.Listen` / `tls.Dial` con CurvePreferences |
+| TLS certificate Ed25519 (server) | ✅ Done | Autofirmato, PEM su disco |
+| `transmission.ReadMsg` / `WriteMsg` | ❌ Da fare | 4B length prefix + payload wire format |
+| `Connection` struct (client) | ❌ Da fare | readerLoop, writeLoop, done chan, Incoming/Outgoing chan |
+| WriterManager (per-connection) | ❌ Da fare | Legge da Outgoing, serializza WriteMsg, valida messaggi |
+| Dispatch / Reader Manager | ❌ Da fare | Cicla su Incoming, smista per tipo a handler |
+| Messaggio format (tipo + payload) | ❌ Da fare | 1B tipo + payload + SHA-256 checksum |
+| Riconnessione automatica | ❌ Da fare | Riaprire TLS + Connection se cade |
+| Registrazione server (blind signature) | ❌ Da fare | Blind Schnorr su Ristretto255 |
+| Autenticazione server con IK ML-DSA | ❌ Da fare | Firma messaggi con identity key |
+| Invio public bundle + public sets al server | ❌ Da fare | Pubblicare `PublicBundle`, curve/KEM public sets |
+| Test | ❌ Da fare | Test su connection, dispatch, transmission |
 | Main di prova | ❌ Da fare | main.go che mette alla prova tutto |
 
 ## Agent rules
 
-- **Fare solo modifiche minime.** Attenersi strettamente a ciò che l'utente chiede. Non creare funzioni helper, non refactorizzare, non aggiungere infrastruttura nuova. Usare solo funzioni già esistenti nella codebase.
-- **Usare lo stesso stile di programmazione del codice esistente.** Seguire le convenzioni già presenti: naming `module.action`, error wrapping con `apperr.Wrap`/`apperr.New`, tipi `memguard` per i segreti, assenza di commenti superflui, formattazione compatta.
-- Non riscrivere file interi — fare edit mirati.
+- **Always communicate in English.** Never write responses, comments, or messages in Italian.
+- **Explain first, implement only after confirmed.** When the user asks about a design, approach, or code change, always explain the theory and options first. Never write or modify files until the user explicitly says to proceed ("si", "fallo", "implementa", "scrivi", "modifica"). Save this rule and follow it strictly.
+- **Make only minimal changes.** Stick strictly to what the user asks. Do not create helper functions, refactor, or add new infrastructure. Only use existing functions in the codebase.
+- **Use the same coding style as existing code.** Follow existing conventions: `module.action` naming, error wrapping with `apperr.Wrap`/`apperr.New`, `memguard` types for secrets, no superfluous comments, compact formatting.
+- Do not rewrite entire files — make targeted edits.
 
 ## Architecture notes
 
@@ -204,3 +212,91 @@ All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/d
 - TPM primary key is persistent in NV at handle `0x81000001`. First call is ~15s (RSA keygen), subsequent calls are ~0.4s (cached).
 - SE uses `kSecKeyAlgorithmECIESEncryptionCofactorX963SHA256AESGCM` for encryption.
 - SE key is identified by label `"p2chat-secure-enclave-keys"` (TPM equivalent: `0x81000001`).
+
+## Network architecture
+
+### Wire format
+
+```
+[4B big-endian length][payload bytes]
+```
+
+- `transmission.ReadMsg(conn)` — legge 4B header, poi N byte payload, restituisce []byte intero
+- `transmission.WriteMsg(conn, data)` — scrive 4B length + data
+- `[4]byte` header sullo stack (zero alloc), payload fa `make([]byte, size)` sull'heap
+- `io.ReadFull` per leggere ESATTAMENTE N byte (non frammentato)
+- Timeout con `SetReadDeadline(30s)` per non bloccarsi per sempre
+- `MaxMessageSize = 64 * 1024` (64KB) — rifiuta messaggi oltre con `MsgTooLargeError`
+- `sync.Pool` opzionale per riusare buffer header tra più connessioni
+
+### Connection struct
+
+```go
+type Connection struct {
+    conn     net.Conn          // TLS socket
+    Incoming chan []byte       // messaggi ricevuti ← readerLoop ci scrive
+    Outgoing chan []byte       // messaggi da inviare → writerLoop ci legge
+    done     chan struct{}     // segnale di stop broadcast
+}
+```
+
+- **readerLoop** (goroutine): `ReadMsg(conn) → Incoming <- msg`
+- **writeLoop** (goroutine): `msg := <-Outgoing → WriteMsg(conn, msg)`
+- **Close()**: `close(done) + conn.Close() + close(Incoming)` — tutte le goroutine escono pulito
+
+### WriterManager (per-connessione)
+
+```
+handler → Send(tipo, payload) → Outgoing chan → WriterManager → WriteMsg(conn)
+```
+
+- Serializza le scritture su conn (evita interleaving di byte)
+- Valida/decide se inviare
+- Un solo goroutine per connessione, messaggi ordinati garantito
+
+### Reader Manager / Dispatch
+
+```
+readerLoop → Incoming chan → Manager.Dispatch() → handlers[tipo](payload)
+```
+
+- Cicla su `Incoming` con `range`
+- `msg[0]` = tipo messaggio
+- Lancia handler in goroutine (non blocca il dispatch)
+
+### Messaggio types
+
+| Tipo | Nome | Mittente | Destinatario | Payload |
+|------|------|----------|-------------|---------|
+| `0x01` | REGISTER_REQ | Client | Server | UserID (32B) + PublicBundle |
+| `0x02` | REGISTER_RES | Server | Client | OK / ERR |
+| `0x03` | BUNDLE_REQUEST | Client | Server | TargetUserID |
+| `0x04` | BUNDLE_RESPONSE | Server | Client | TargetUserID + PublicBundle |
+| `0x05` | DUMMY_REQUEST | Client | Server | Random ID (ORAM) |
+| `0x06` | MAILBOX_PUT | Client | Server | MailboxID + Ciphertext + TAG |
+| `0x07` | MAILBOX_GET | Client | Server | MailboxID |
+| `0x08` | MAILBOX_CONTENTS | Server | Client | []{Ciphertext + TAG} |
+| `0x09` | FRIEND_REQUEST | Client→S | Mailbox | Messaggio cifrato |
+| `0x0A` | SESSION_INIT | Client | Client | PQXDH initial message |
+| `0x0B` | CHAT_MESSAGE | Client | Client (P2P) | Ratchet header + ciphertext |
+| `0x0C` | IP_SHARE | Client | Client | IP cifrato |
+
+### Next steps (ordine logico)
+
+1. `transmission/msg.go` — ReadMsg + WriteMsg
+2. `TLS/TLS.go` — Connection struct + readerLoop + writeLoop + Close
+3. `main.go` — test Connection con server esistente
+4. Dispatch / Manager — ciclo su Incoming, handler routing
+5. WriterManager — per-connessione, serializza scritture
+6. Riconnessione — riapre TLS + Connection se cade
+7. Registrazione server — blind Schnorr su Ristretto255 + publish bundle
+8. Autenticazione — firma messaggi con IK ML-DSA
+9. Ottimizzazione pacchetti — compressione, single-key request
+
+## Agent rules (Italian)
+
+- **Parla in italiano** quando l'utente parla in italiano.
+- **Prima spiega, implementa solo dopo conferma.** Quando l'utente chiede di design, approccio o modifiche, spiega prima teoria e opzioni. Non scrivere o modificare file finché l'utente non dice esplicitamente di procedere ("si", "fallo", "implementa", "scrivi", "modifica").
+- **Modifiche minime.** Attieniti strettamente a ciò che chiede l'utente. Non creare funzioni helper, refactoring o nuova infrastruttura. Usa solo funzioni esistenti.
+- **Stesso stile del codice esistente.** `module.action` naming, error wrapping con `apperr.Wrap`/`apperr.New`, `memguard` per segreti, nessun commento superfluo, formatting compatto.
+- **Non riscrivere file interi** — fai edit mirati.

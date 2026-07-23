@@ -12,9 +12,9 @@ import (
 )
 
 type PrivateX25519 struct {
-	privateKeyEncrypted []byte
-	nonce []byte
-	encryptMethod int 			// 0 = nessuno, 1 = SE, 2 = TPM
+	PrivateKeyEncrypted []byte `msgpack:"privateKeyEncrypted"`
+	Nonce []byte `msgpack:"nonce"`
+	EncryptMethod int `msgpack:"encryptMethod"`
 }
 
 
@@ -107,9 +107,9 @@ func EncryptPrivateKey(password *memguard.Enclave, privateKey *memguard.Enclave,
 	}
 
 	scheme := &PrivateX25519{
-		privateKeyEncrypted: ciphertext,
-		nonce:               nonce,
-		encryptMethod:       method,
+		PrivateKeyEncrypted: ciphertext,
+		Nonce:               nonce,
+		EncryptMethod:       method,
 	}
 
 	return scheme, nil
@@ -138,7 +138,7 @@ func DecryptPrivateKey(password *memguard.Enclave, serialized []byte) (*memguard
 
 	var plaintext *memguard.LockedBuffer
 
-	switch scheme.encryptMethod {
+	switch scheme.EncryptMethod {
 	case 0:
 		pwdBuf, err := password.Open()
 		if err != nil {
@@ -146,13 +146,13 @@ func DecryptPrivateKey(password *memguard.Enclave, serialized []byte) (*memguard
 		}
 		defer pwdBuf.Destroy()
 
-		plaintext, err = encryption.DecryptAes256(pwdBuf, scheme.nonce, scheme.privateKeyEncrypted)
+		plaintext, err = encryption.DecryptAes256(pwdBuf, scheme.Nonce, scheme.PrivateKeyEncrypted)
 		if err != nil {
 			return nil, apperr.Wrap("decrypt x25519 private key", err)
 		}
 	case 1, 2:
 		var err error
-		plaintext, err = HSM.DecryptHSM(password, scheme.privateKeyEncrypted, scheme.nonce, scheme.encryptMethod)
+		plaintext, err = HSM.DecryptHSM(password, scheme.PrivateKeyEncrypted, scheme.Nonce, scheme.EncryptMethod)
 		if err != nil {
 			return nil, apperr.Wrap("decrypt x25519 private key with HSM", err)
 		}

@@ -3,3 +3,6 @@ proto:
 
 run: proto
 	cd cmd/client && go run .
+
+run-server:
+	cd cmd/server && go run .

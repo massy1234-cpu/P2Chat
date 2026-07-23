@@ -2,22 +2,20 @@ package main
 
 import (
 	"P2Chat/cmd/client/internals/errors"
-	mldsa_keys "P2Chat/cmd/client/internals/keys/mldsa"
+	network "P2Chat/cmd/client/internals/network/TLS"
+	"P2Chat/cmd/client/internals/storage"
 	"fmt"
-	"github.com/awnumar/memguard"
+	"path/filepath"
 )
 
 func main() {
+	storage.BasePath = filepath.Join(storage.ProjectRoot, "cmd", "client", "data")
+
 	go func() {
 		errors.Watchdog()
 	}()
 
-	password := memguard.NewBuffer(len("prova"))
-	copy(password.Bytes(), []byte("prova"))
-	passwordEnc := memguard.NewEnclave(password.Bytes())
-	password.Destroy()
-
-	_, _, _, err := mldsa_keys.CreateKeys(3, passwordEnc, true, false)
-
-	fmt.Println(err)
+	if err := network.TLSConnection("localhost:8080"); err != nil {
+		fmt.Println("TLS error:", err)
+	}
 }

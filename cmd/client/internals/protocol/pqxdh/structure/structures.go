@@ -3,7 +3,7 @@ package structures
 // bundle that the user publish on the server, are all bytes because
 // the server doesn't need to process this data, it have only to understand
 // what send and send it
-type PqxdhPublicBundle struct {
+type PublicBundle struct {
 	ID 						int
 	IK_mldsa 				[]byte		// public key
 	IK_mldsa_signed			[]byte
@@ -18,7 +18,7 @@ type PqxdhPublicBundle struct {
 // private bundle stored in the database. IK_MLDSA is NOT here:
 // it lives on filesystem as SK.bin with its own encryption layer
 // (Argon2id + AES-256-GCM) and is referenced by ID when needed
-type PqxdhPrivateBundle struct {
+type PrivateBundle struct {
 	ID 						int
 	SPK 					[]byte
 	Last_resort_PQKEM		[]byte
@@ -49,10 +49,4 @@ type PqkemSet struct {
 	Pqkem_key 			[]byte
 	Signature_mldsa 	[]byte
 	Signature_x25519 	[]byte
-}
-
-// buffer struct for the creation of the sets, before put all in the database 
-type SetPair struct {
-	Private []byte
-	Public  []byte
 }

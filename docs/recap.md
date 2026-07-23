@@ -2243,7 +2243,7 @@ the phase where the 2 users doesnt know each other and doesnt have any type of i
 
 so the first type of usage is this, the user have to create the initial message for create the **friendship secret** that will allow the other user to start a real comunicatio using the mailbox system
 
-## refresh of friendship secret
+## Refresh of friendship secret
 
 when the 2 users have a friendship secret and have to comunicate, they can start a request sending the request into the N mailbox that the shared secret can derivate using a sort of ratchet (still dont know how to do) and that start a comunication
 
@@ -2254,3 +2254,116 @@ and now using the session secret and verifing that they have the correct frindsh
 
 this is for now the most clean, secure and simple way to do it
 
+
+## PQXDH and now server
+
+i have implemented the protocol PQXDH into the code, the client side and now i have to implement the functions for the server, specifically the connections, the registration and other things but now we will go in order 
+
+
+# Server Side ( initial part )
+
+## Goroutines, TOR, VPN and client connection
+
+for this phase i have to implement these functionalities 
+i will use 'net' and 'tsl' native libraries in Go for maximise understanding
+
+the goals for this phase are :
+- connection between client and server
+- TSL certificate
+- registration into the server 
+- publish of the bundle inside the server
+
+
+### creation of the connection
+
+the server have to do :
+- create a ML-DSA key for garantee the identity of the server himself
+- create and sign the certificate 
+- keep safe the private key ML-DSA 
+
+but for every connection :
+- client and server generate a pair ML-KEM + X25519 
+- they comunicate their keys using the certificate 
+- they derivate a shared secret for comunicate in a secure way ( the server must prove that is he signing with the private key ml-dsa )
+
+
+the steps are :
+- TCP handshake 
+  - A send x to B (SYN)
+  - B receive x, send to A x+1 and y (SYN/ACK)
+  - X send to B y+1
+  - **now the 2 user have a enstablished connection TCP**
+- clientHello + serverHello -> **encrypted connection enstablished**
+
+the clientHello request the server some data like the keys and the protocol to use + send to the server his session public key (X25519 + ML-KEM ) than the server respond with a serverHello and send to the client his ephimeral key ( X25519 + ML-KEM ), the certificate and the **transcript hash** a particular hash that contains :
+
+```go
+Transcript =
+    ClientHello ||
+    ServerHello ||
+    EncryptedExtensions ||
+    Certificate ||
+    CertificateVerify ||
+    Finished
+```
+
+where the `EncryptedExtensions` contains some information about the comunication like the protocol used, the `CertificateVerify` is the sign of the server with his private certificate key and finished is the `HMAC(FinishedKey,TransriptHash)` where the finishedkey is a key derivated during the handshake with the X25519 key exchange 
+
+for the TSL documentation i readed **https://tls13.xargs.org/#client-hello**
+
+### Recap of TSL 1.3
+
+i did a recap of the protocol using https://excalidraw.com which i find really useful
+
+![immagine](images/P2Chat.svg)
+
+but i will not use this protocol without edits but i will introduce a small edit for garantee the post quantum security in this protocol because is not already post quantum
+
+i will introduce a EKM secret derived from the master secret where
+- the server will calculate it and sign with the private MLDSA key that only he have
+- the user will do the same, calulcating the EKM secret and verifing the EKM signed received from the server and match with his EKM, if this match the conversation is fully secured and we can fully trust of the server
+
+now i will implement this in the project
+
+the function `Initialize` in the server folder initialize the MLDSA key and store if NOT present, this will add the EKM layer in the final part of TLS 1.3 protocol custom
+
+### Log console ( small regression )
+
+until NOW the function that i have created had to terminate if some error pop-out but now with the network is different, errors are different and NOT all the type of errors required to terminate the function, so... i have to create a console log more detailed and un future this console will implement all the errors in the application and will give to the owner of the server a general status of the service P2Chat on it, full respecting the privacy of the users
+
+i will use a JSON format log, is more clean, more detailed and i can do research in a easies way match to the current method 
+
+
+### Registration phase
+
+so... the client will connect to the server and send a registration request, this phase is particulary sensitive cause of some bad user or DDoS network that could be attack easily the server cause of the NO KYC policy of this project
+
+i will implement in future some blocker for block the suspicious requests at a network level but will be hard cause the TOR network, i could use some tecniques but this will be threat in future
+
+the main idea of registration is to avoid all kind of metadatas that the client could give to the server, so the client will connect to the server via TOR or VPN and then request a token foor registration with a bind signature ( for save space )
+the client after receive this token will have to opne anoother connection with the server and then use this token for request a ID token that will be his identificator on the server and upload his PQXDH bundle, that will allow the other users to start a comunication with the user 
+
+for this phase i choose the following architectural choises
+- server database : badgerDB ( easy data to manage, very fast, internal data managment very interesting )
+- blind signature protocol : Schnorr Ristretto255 ( not PQ safe but in this case is not worth it use a really big certificate in fact this will last for maximum 10-30 minutes )
+- for get the token the client will have to pass a PoW ( is not the solution for DDoS attacks but i could implement this PoW and replace it with for example crypto mining for get a small rewards for the free service )
+
+### Network package managment 
+
+
+![image](Images/network_architecture.png)
+
+Okay, so I have redesigned the entire infrastructure of my application.
+Now, the client can connect to the server using a multiplexing system. I plan to implement dynamic features in the future, but for now, this system consists of creating multiple logical connections over a single physical connection secured by the TLS protocol.
+
+The library that provides these logical connections is called Yamux. This approach allows me to achieve high performance because each logical connection is responsible for a specific task, while all of them operate independently at the network level without causing issues at the application level.
+
+In fact, every task that requires modifications to the global state of the application is managed by a single component called the Manager. This system allows the application to separate its layers clearly. The network layer is managed by the Session and Connection abstractions, wrapped into clean and well-defined Go structs.
+
+This separation of layers allows me to maximize performance at the network level while keeping the application logic clean and well-coordinated. All operations that modify the global state of the application—such as disk writes or state updates—will be handled via the Manager. The Manager acts as a router/orchestrator: it receives events or tasks from the network sessions and redirects them to the correct function or component responsible for processing them.
+
+Although BadgerDB natively supports safe concurrent operations and thread-safe transactions, centralizing data writes through the Manager (or dedicated DB queues) prevents unnecessary write conflicts and simplifies state tracking.
+
+All advanced optimizations will be implemented in the future, only after the core architecture has been fully implemented and tested. An interesting future optimization could be running worker pools or goroutines inside the Manager for independent CPU-bound tasks (like key generation), while relying on BadgerDB’s native batching features for optimal I/O throughput.
+
+For now, my main focus remains on building a solid, clean, and well-tested initial implementation.

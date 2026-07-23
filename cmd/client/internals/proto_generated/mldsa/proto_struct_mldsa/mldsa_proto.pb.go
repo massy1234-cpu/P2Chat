@@ -34,7 +34,7 @@ type PrivateKeyMLDSA struct {
 	Key           []byte                    `protobuf:"bytes,5,opt,name=key,proto3" json:"key,omitempty"`
 	ArgonParams   *argon_params.ArgonParams `protobuf:"bytes,6,opt,name=argon_params,json=argonParams,proto3" json:"argon_params,omitempty"`
 	Checksum      []byte                    `protobuf:"bytes,7,opt,name=checksum,proto3" json:"checksum,omitempty"`
-	HsmMethod     uint32                    `protobuf:"varint,8,opt,name=hsm_method,json=hsmMethod,proto3" json:"hsm_method,omitempty"` // 0=nessuno, 1=SE, 2=TPM
+	HsmMethod     uint32                    `protobuf:"varint,8,opt,name=hsm_method,json=hsmMethod,proto3" json:"hsm_method,omitempty"` // 0 = nessuno, 1 = SE, 2 = TPM
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

@@ -13,6 +13,8 @@ func init() {
 	BasePath = filepath.Join(ProjectRoot, "data")
 }
 
+
+// get the current directory and go up until there is the file 'go.mod' so the root directory of the project
 func projectRoot() string {
 	dir, err := os.Getwd()
 	if err != nil {

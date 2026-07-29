@@ -20,9 +20,19 @@ P2Chat/
 │   ├── keys/x25519/                   # X25519 ECDH + XEdDSA signatures
 │   ├── network/                       # Networking layer
 │   │   ├── TLS/
-│   │   │   └── TLS.go                 # TLS client Connect + Connection struct (readerLoop, writeLoop, Close)
+│   │   │   └── TLS.go                 # Server TLS + certificate (da integrare con Tor dialer)
 │   │   ├── transmission/
-│   │   │   └── msg.go                 # ReadMsg / WriteMsg: 4B big-endian length prefix + payload
+│   │   │   ├── read.go                # ReadMessage: 4B size + 32B SHA-256 checksum header
+│   │   │   └── write.go               # WriteMessage + CreateHeader
+│   │   ├── structs/
+│   │   │   ├── structs.go             # SingleSession, Connection (with Done), ConnectionManager
+│   │   │   ├── session_methods.go     # NewSession, Listener (sentinel), Writer, Close
+│   │   │   └── connection_methods.go  # NextID, ReleaseID, ListenOnWire, ReleaseSession, Close
+│   │   ├── wrapper/
+│   │   │   └── wrap_connection.go     # Wrapper: yamux.Client + ConnectionManager
+│   │   ├── tor/
+│   │   │   ├── tor.go                 # CreateConnectionTor (da fixare: return type, leak, panics)
+│   │   │   └── tor_test.go            # Test di bootstrap Tor
 │   │   └── certificate/
 │   │       └── certificate.go         # Client TLS certificate generation
 │   ├── p2log/                         # Colored console+file logger (Debug/Info/Warning/Error)
@@ -157,6 +167,7 @@ All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/d
 - SE uses P-256 ECIES directly on raw key bytes (no Argon2). TPM uses HMAC-combine + AES-256. Non-HSM uses Argon2id + AES-256-GCM.
 - `PrivateKeyMLDSA` protobuf stores the encrypted key blob; `IK_mldsa` is excluded from `pqxdhPrivateBundle` (lives on filesystem).
 - `EncryptPrivateKey` + `SerializePrivateKey` pattern used across X25519, ML-KEM, and ML-DSA.
+- ML-DSA key store usa un parametro `bool` per decidere se salvare su disco — da sostituire con un tipo dedicato (es. `StorePolicy` enum) quando si sistema la funzione.
 
 ## Progress recap
 
@@ -185,8 +196,10 @@ All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/d
 | `SaveSets` signature | ✅ Done | Accetta `[][]byte` invece di `[]SetPair` |
 | TLS 1.3 + PQ curves (X25519MLKEM768) | ✅ Done | `tls.Listen` / `tls.Dial` con CurvePreferences |
 | TLS certificate Ed25519 (server) | ✅ Done | Autofirmato, PEM su disco |
-| `transmission.ReadMsg` / `WriteMsg` | ❌ Da fare | 4B length prefix + payload wire format |
-| `Connection` struct (client) | ❌ Da fare | readerLoop, writeLoop, done chan, Incoming/Outgoing chan |
+| `transmission.ReadMsg` / `WriteMsg` | ✅ Done | 4B size + 32B SHA-256 checksum, 36B header, yamux-safe |
+| `Connection` struct (client) | ✅ Done | yamux-based, SingleSession + Connection con Done pattern |
+| `Wrapper` (yamux) | ✅ Done | yamux.Client + ConnectionManager |
+| `Tor bootstrap` + dialer | ✅ Done | `InitializeTor` con cleanup, `CloseTor` |
 | WriterManager (per-connection) | ❌ Da fare | Legge da Outgoing, serializza WriteMsg, valida messaggi |
 | Dispatch / Reader Manager | ❌ Da fare | Cicla su Incoming, smista per tipo a handler |
 | Messaggio format (tipo + payload) | ❌ Da fare | 1B tipo + payload + SHA-256 checksum |
@@ -215,54 +228,142 @@ All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/d
 
 ## Network architecture
 
+### Client network stack
+
+```
+Application
+  │
+  ▼
+WriterManager / Dispatch  ← ❌ da fare
+  │
+  ▼
+SingleSession (yamux.Stream) — Listener + Writer goroutines
+  ├─ Listener: ReadMessage → estrae Tag (1B) → Incoming chan
+  └─ Writer:   Outgoing chan → WriteMessage
+  │
+  ▼
+Connection (yamux.Session) — AcceptStream → NewSession
+  ├─ pool ID circolare (NextID / ReleaseID)
+  └─ CloseAllSessions / Close
+  │
+  ▼
+Wrapper(yamux.Client) → ConnectionManager{Conn, Tor, GlobalOut}
+  │
+  ▼
+TLS 1.3 (X25519MLKEM768 + X25519) — tls.Client(torConn, config)
+  │
+  ▼
+Tor (SOCKS5 dialer) — InitializeTor → DialTor → EstablishTor
+  │
+  ▼
+Server :8443
+```
+
+### Server network stack
+
+```
+Client TLS conn
+  │
+  ▼
+handleConn → NewClient(conn)
+  │
+  ▼
+yamux.Server → Connection{MasterSession, ActiveSessions, SessionHandler}
+  │
+  ▼
+Connection.Listener — AcceptStream → NewSession(ID, stream)
+  │
+  ▼
+Session{Listener, Writer, Dispatcher}
+  ├─ Listener:  ReadMessage → Incoming
+  ├─ Writer:    Outgoing → WriteMessage
+  └─ Dispatcher: Incoming → Handler func(Session, []byte)
+  │
+  ▼
+clientDispatch(msg[0]) — switch 0x01 → Registration (TODO)
+```
+
+### Key differences Client vs Server
+
+| Aspect | Client | Server |
+|--------|--------|--------|
+| yamux role | `yamux.Client` | `yamux.Server` |
+| Wrapper package | `wrapper.Wrapper()` — wraps yamux + Tor | `structs.NewClient()` — direct yamux.Server |
+| ConnectionManager | ✅ Yes (conn, Tor, GlobalOut, Done) | ❌ No (Client.Conn is *Connection) |
+| GlobalOut chan | ✅ Yes (per-connection) | ❌ No |
+| Tor integration | ✅ TLS.go calls Tor, Wrapper stores Tor | ❌ Not needed |
+| Session.Handler | ❌ No (managed by upper layer) | ✅ Yes (func pointer per dispatch) |
+| Session.Tag | ✅ Extracts 1B tag from first message | ❌ Not implemented |
+| Certificate gen | ✅ Duplicate of server code | ✅ Same function |
+| TLS config | `InsecureSkipVerify: true` | Proper cert |
+
 ### Wire format
 
 ```
-[4B big-endian length][payload bytes]
+[4B big-endian length][32B SHA-256 checksum][payload bytes]
 ```
 
-- `transmission.ReadMsg(conn)` — legge 4B header, poi N byte payload, restituisce []byte intero
-- `transmission.WriteMsg(conn, data)` — scrive 4B length + data
-- `[4]byte` header sullo stack (zero alloc), payload fa `make([]byte, size)` sull'heap
-- `io.ReadFull` per leggere ESATTAMENTE N byte (non frammentato)
-- Timeout con `SetReadDeadline(30s)` per non bloccarsi per sempre
-- `MaxMessageSize = 64 * 1024` (64KB) — rifiuta messaggi oltre con `MsgTooLargeError`
-- `sync.Pool` opzionale per riusare buffer header tra più connessioni
+- `transmission.ReadMsg(conn)` — legge 4B header, poi 32B checksum, poi N byte payload, verifica checksum
+- `transmission.WriteMsg(conn, data)` — calcola checksum SHA-256, crea header 36B ([4B size][32B hash]), scrive tutto
+- `[36]byte` header sullo stack (zero alloc), payload fa `make([]byte, size)` sull'heap
+- `io.ReadFull` per ogni lettura (non frammentato)
+- `MaxMessageSize = 64 * 1024` (64KB)
+- Supporto nativo per `yamux.Stream` (no deadlines interne, le gestisce yamux)
 
-### Connection struct
-
-```go
-type Connection struct {
-    conn     net.Conn          // TLS socket
-    Incoming chan []byte       // messaggi ricevuti ← readerLoop ci scrive
-    Outgoing chan []byte       // messaggi da inviare → writerLoop ci legge
-    done     chan struct{}     // segnale di stop broadcast
-}
-```
-
-- **readerLoop** (goroutine): `ReadMsg(conn) → Incoming <- msg`
-- **writeLoop** (goroutine): `msg := <-Outgoing → WriteMsg(conn, msg)`
-- **Close()**: `close(done) + conn.Close() + close(Incoming)` — tutte le goroutine escono pulito
-
-### WriterManager (per-connessione)
+### Structs client
 
 ```
-handler → Send(tipo, payload) → Outgoing chan → WriterManager → WriteMsg(conn)
+SingleSession:
+  - ID uint32 (unico per connessione)
+  - Tag string (letta dal primo byte payload)
+  - Stream *yamux.Stream
+  - Incoming/Outgoing/GlobalOut chan []byte
+  - Done chan struct{}
+  - goroutine Listener: ReadMessage → estrae Tag (1B) → Incoming
+  - goroutine Writer: select { Outgoing → WriteMessage; Done → return }
+  - Close() → close(Done)
+
+Connection:
+  - MasterSession *yamux.Session
+  - ActiveSessions sync.Map (ID → *SingleSession)
+  - GlobalOut chan<- []byte
+  - Done chan struct{}
+  - NextID() / ReleaseID() — pool circolare ID
+  - Listener(): loop AcceptStream → NewSession
+  - ReleaseSession(session): LoadAndDelete + ReleaseID + Close
+  - CloseAllSessions()
+  - Close() → close(Done) + MasterSession.Close() + CloseAllSessions()
+
+ConnectionManager:
+  - Conn *Connection
+  - Tor *tor.Tor
+  - GlobalOut chan<- []byte
+  - Done chan struct{}
 ```
 
-- Serializza le scritture su conn (evita interleaving di byte)
-- Valida/decide se inviare
-- Un solo goroutine per connessione, messaggi ordinati garantito
-
-### Reader Manager / Dispatch
+### Structs server
 
 ```
-readerLoop → Incoming chan → Manager.Dispatch() → handlers[tipo](payload)
-```
+Client:
+  - ID []byte
+  - Authed bool
+  - Conn *Connection
 
-- Cicla su `Incoming` con `range`
-- `msg[0]` = tipo messaggio
-- Lancia handler in goroutine (non blocca il dispatch)
+Session:
+  - ID uint32
+  - Stream *yamux.Stream
+  - Incoming/Outgoing chan []byte
+  - Once sync.Once
+  - Done chan struct{}
+  - Handler func(*Session, []byte)
+
+Connection:
+  - MasterSession *yamux.Session
+  - ActiveSessions sync.Map
+  - nextID / freeIDs / mu
+  - Once / Done
+  - SessionHandler func(*Session, []byte)
+```
 
 ### Messaggio types
 
@@ -292,6 +393,53 @@ readerLoop → Incoming chan → Manager.Dispatch() → handlers[tipo](payload)
 7. Registrazione server — blind Schnorr su Ristretto255 + publish bundle
 8. Autenticazione — firma messaggi con IK ML-DSA
 9. Ottimizzazione pacchetti — compressione, single-key request
+
+## Server progress (cmd/server)
+
+| Area | Status | Details |
+|------|--------|---------|
+| TLS 1.3 listener + PQ curves | ✅ Done | `connection.go`: `tls.Listen` su `:8443`, `X25519MLKEM768` |
+| Certificato Ed25519 autofirmato | ✅ Done | `certificate.go`: generazione + salvataggio PEM con memguard |
+| Yamux multiplexing | ✅ Done | `structs.go`: Client, Session, Connection con sync.Map pool ID |
+| `Session.Listener` / `Session.Writer` | ✅ Done | `session_methods.go`: ReadMessage/WriteMessage loop |
+| `Connection.Listener` (accept stream) | ✅ Done | `connection_methods.go`: accetta stream yamux → NewSession |
+| `NewClient` + `clientDispatch` | ✅ Done | `client_methods.go`: yamux.Server, switch 0x01 |
+| `dispatcher/registration.go` | 🔶 Scheletro | Funzione vuota, nessuna logica |
+| `pinned_keys/initialization.go` | ✅ Done | ML-DSA-87 keys per EKM layer |
+| `network/tls/tls.go` | 🗑️ Obsoleto | Duplicato non integrato (package name conflitto) |
+| Database server (BadgerDB) | ❌ Da fare | Menzionato in recap.md |
+| Blind signature (Ristretto255) | ❌ Da fare | Nessuna implementazione |
+| Mailbox system | ❌ Da fare | Cifratura + deposito offline |
+| Bundle store + distribution | ❌ Da fare | Ricevere, memorizzare bundle pubblici |
+| EKM layer integration | ❌ Da fare | Firma ML-DSA transcript hash |
+| Autenticazione client IK ML-DSA | ❌ Da fare | Verifica firma messaggi |
+| Rate limiting / PoW | ❌ Da fare | Protezione DDoS |
+
+## TODO prossima sessione
+
+### WriterManager / Dispatch / Messaggio format
+- WriterManager (per-connessione): serializza WriteMsg, valida messaggi
+- Dispatch/ReaderManager: ciclo su Incoming, smista per tipo
+- Formato messaggio: 1B tipo + payload
+
+### Client logic
+- iniziare logica inizializzazione client (connessione, autenticazione)
+- simulare connessione post-implementazione
+- registration flow + blind signature Ristretto255
+
+### Server
+- Implementare `Registration` handler (dispatcher/registration.go)
+- Implementare BadgerDB per storage utenti/bundle
+- Integrare EKM layer con ML-DSA pinned keys
+- Buildare Dockerfile server (docker-compose.yml punta a `./server` non esistente)
+- Eliminare o integrare `network/tls/tls.go` duplicato
+
+### Riconnessione automatica
+- Riaprire TLS + Connection se cade
+
+### Test
+- Test su connection, dispatch, transmission, tor
+- Main di prova (main.go)
 
 ## Agent rules (Italian)
 

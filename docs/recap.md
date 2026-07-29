@@ -2348,6 +2348,13 @@ for this phase i choose the following architectural choises
 - blind signature protocol : Schnorr Ristretto255 ( not PQ safe but in this case is not worth it use a really big certificate in fact this will last for maximum 10-30 minutes )
 - for get the token the client will have to pass a PoW ( is not the solution for DDoS attacks but i could implement this PoW and replace it with for example crypto mining for get a small rewards for the free service )
 
+
+let's go deep inside the architecture
+
+the client in this phase have to 
+- open a new session with the server
+- 
+
 ### Network package managment 
 
 
@@ -2367,3 +2374,23 @@ Although BadgerDB natively supports safe concurrent operations and thread-safe t
 All advanced optimizations will be implemented in the future, only after the core architecture has been fully implemented and tested. An interesting future optimization could be running worker pools or goroutines inside the Manager for independent CPU-bound tasks (like key generation), while relying on BadgerDB’s native batching features for optimal I/O throughput.
 
 For now, my main focus remains on building a solid, clean, and well-tested initial implementation.
+
+### a small regression about the architecture
+
+i want to specify that i am fully aware about the QUIC protocol and that in this case could offer a lot of interesting features like changing connection handling or internal multiplexing and other that are also more efficent than my approach but this project is mainly created for learning and also i want the full control about the protocol, my choise is derivated from these motivations
+
+### manage the closing 
+i use **sync.Once** for avoid goroutiness concurrency and avoid panic signals, in this way is impossible to do a close() in the same time of another goroutiness
+
+
+### Tor network 
+i'm creating the tor layer for garantee the user full anonymously on the server
+the process is divided into 3 parts :
+- Deamon start ( tor.Start() ) -> start the deamon in background and set DisableNetork=1, so prepare only the system
+- Dial() -> connect the client with the 3 nodes on the network and create a connection user -> tor nodes -> server using a TCP connection, the network between nodes is safe, garantee the anonymously but is not safe for data transfer and the server is not trusted yet
+- use tls.Client() for wrap the TCP connection into the TLS layer and start to comunicate with the server
+
+
+### Server side
+
+what information need the server for start the comunication ?

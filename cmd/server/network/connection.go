@@ -1,21 +1,16 @@
 package network
 
-
 import (
 	"P2Chat/cmd/client/internals/p2log"
+	"P2Chat/cmd/server/network/structs"
 	"P2Chat/pkg/apperr"
 	"crypto/tls"
-	"fmt"
 	"net"
 )
 
-
-// initialize the listener for TLS connections
-func InitializeTLS(certificate tls.Certificate) ( error ) {
-
-	// specify to use ML-KEM + X25519 curve
+func InitializeTLS(cert tls.Certificate) error {
 	config := &tls.Config{
-		Certificates: []tls.Certificate{certificate},
+		Certificates: []tls.Certificate{cert},
 		CurvePreferences: []tls.CurveID{
 			tls.X25519MLKEM768,
 			tls.X25519,
@@ -23,28 +18,26 @@ func InitializeTLS(certificate tls.Certificate) ( error ) {
 		MinVersion: tls.VersionTLS13,
 	}
 
-	// create the TLS connection with the client with TCP ( SYN/ACK )
-	// this accept only NEW connections
-	listener,err := tls.Listen("tcp",":8080",config)
+	listener, err := tls.Listen("tcp", ":8443", config)
 	if err != nil {
-		listener.Close()
-		return apperr.Wrap("error with the listener ",err)
+		return apperr.Wrap("error in server TLS initialization", err)
 	}
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			p2log.Error(fmt.Sprint("error in the connection number ",conn.RemoteAddr()),err)
+			p2log.Error("accept error", err)
+			continue
 		}
-		p2log.Info("new connection accepted",conn.RemoteAddr(),err)
-		go handleNewConnection(conn.(*tls.Conn))
+		go handleConn(conn)
 	}
-
 }
 
-
-// handle new connections
-func handleNewConnection(connection net.Conn) error {
-	connection.Write([]byte("ciao"))
-	return nil
+func handleConn(tlsConn net.Conn) {
+	client := structs.NewClient(tlsConn)
+	if client == nil {
+		return
+	}
+	defer client.Conn.Close()
+	<-client.Conn.Done
 }

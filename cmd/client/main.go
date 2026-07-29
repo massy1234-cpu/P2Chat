@@ -15,7 +15,7 @@ func main() {
 		errors.Watchdog()
 	}()
 
-	if err := network.TLSConnection("localhost:8080"); err != nil {
+	if _, err := network.ServerInitialize("localhost:8080"); err != nil {
 		fmt.Println("TLS error:", err)
 	}
 }

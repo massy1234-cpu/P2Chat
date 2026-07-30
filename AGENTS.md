@@ -196,15 +196,18 @@ All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/d
 | `SaveSets` signature | ✅ Done | Accetta `[][]byte` invece di `[]SetPair` |
 | TLS 1.3 + PQ curves (X25519MLKEM768) | ✅ Done | `tls.Listen` / `tls.Dial` con CurvePreferences |
 | TLS certificate Ed25519 (server) | ✅ Done | Autofirmato, PEM su disco |
-| `transmission.ReadMsg` / `WriteMsg` | ✅ Done | 4B size + 32B SHA-256 checksum, 36B header, yamux-safe |
+| `transmission.ReadMsg` / `WriteMsg` | ✅ Done | Header 38B (4B size + 2B padLen + 32B SHA-256), padding casuale 250-750B |
+| `Init()` pattern | ✅ Done | `SingleSession.Init()`, `Connection.Init()` avviano goroutine in unica chiamata |
 | `Connection` struct (client) | ✅ Done | yamux-based, SingleSession + Connection con Done pattern |
 | `Wrapper` (yamux) | ✅ Done | yamux.Client + ConnectionManager |
 | `Tor bootstrap` + dialer | ✅ Done | `InitializeTor` con cleanup, `CloseTor` |
-| WriterManager (per-connection) | ❌ Da fare | Legge da Outgoing, serializza WriteMsg, valida messaggi |
-| Dispatch / Reader Manager | ❌ Da fare | Cicla su Incoming, smista per tipo a handler |
-| Messaggio format (tipo + payload) | ❌ Da fare | 1B tipo + payload + SHA-256 checksum |
+| Dummy requests | ✅ Done | Timer random 0.4-1.4s, tag `0x00`, size `DummyBase ± 250`, rand.Read, `crypto/rand` |
+| Padding messaggi | ✅ Done | `CreatePadding()` in WriteMessage, `crypto/rand`, checksum solo su dati veri |
+| Debug logging | ✅ Done | p2log su session lifecycle + send/receive + connection events |
+| Dispatch / Reader Manager | ❌ Da fare | Cicla su Incoming, smista per tipo a handler via clientDispatch |
+| Messaggio format | ✅ Done | 1B tag + msgpack payload + padding trasparente |
 | Riconnessione automatica | ❌ Da fare | Riaprire TLS + Connection se cade |
-| Registrazione server (blind signature) | ❌ Da fare | Blind Schnorr su Ristretto255 |
+| Registrazione (challenge-response ML-DSA) | ❌ Da fare | Challenge 32B + UserID + PublicBundle + ML-DSA signature |
 | Autenticazione server con IK ML-DSA | ❌ Da fare | Firma messaggi con identity key |
 | Invio public bundle + public sets al server | ❌ Da fare | Pubblicare `PublicBundle`, curve/KEM public sets |
 | Test | ❌ Da fare | Test su connection, dispatch, transmission |
@@ -300,12 +303,15 @@ clientDispatch(msg[0]) — switch 0x01 → Registration (TODO)
 ### Wire format
 
 ```
-[4B big-endian length][32B SHA-256 checksum][payload bytes]
+[4B big-endian totalSize][2B big-endian padLen][32B SHA-256 checksum][payload bytes][padding bytes]
 ```
 
-- `transmission.ReadMsg(conn)` — legge 4B header, poi 32B checksum, poi N byte payload, verifica checksum
-- `transmission.WriteMsg(conn, data)` — calcola checksum SHA-256, crea header 36B ([4B size][32B hash]), scrive tutto
-- `[36]byte` header sullo stack (zero alloc), payload fa `make([]byte, size)` sull'heap
+- `totalSize` = `len(payload) + padLen`
+- Checksum calcolato SOLO sul payload (esclude padding)
+- `CreatePadding(data, maxPad)` → aggiunge `cryptoInt(maxPad)+250` byte di rand.Read
+- `transmission.ReadMsg(conn)` — legge 38B header, poi `totalSize` byte, estrae dati = `buf[:totalSize-padLen]`, verifica checksum
+- `transmission.WriteMsg(conn, data)` — chiama `CreatePadding`, calcola checksum, scrive header 38B + data + padding
+- `[38]byte` header sullo stack (zero alloc), payload fa `make([]byte, totalSize)` sull'heap
 - `io.ReadFull` per ogni lettura (non frammentato)
 - `MaxMessageSize = 64 * 1024` (64KB)
 - Supporto nativo per `yamux.Stream` (no deadlines interne, le gestisce yamux)
@@ -417,22 +423,25 @@ Connection:
 
 ## TODO prossima sessione
 
-### WriterManager / Dispatch / Messaggio format
-- WriterManager (per-connessione): serializza WriteMsg, valida messaggi
-- Dispatch/ReaderManager: ciclo su Incoming, smista per tipo
-- Formato messaggio: 1B tipo + payload
+### Registrazione (challenge-response ML-DSA)
+- Implementare flusso registrazione lato client (registration.go)
+- Implementare `Registration` handler lato server (dispatcher/registration.go)
+- Challenge 32B, UserID + PublicBundle + ML-DSA sign
+- Integrare con dispatch e writer esistenti
+
+### Dispatch / Reader Manager
+- Cicla su Incoming, smista per tipo a handler via clientDispatch (case 0x00→scarta, 0x01→Registration, ...)
+- Integrare con la sessione esistente
 
 ### Client logic
-- iniziare logica inizializzazione client (connessione, autenticazione)
-- simulare connessione post-implementazione
-- registration flow + blind signature Ristretto255
+- Iniziare logica inizializzazione client (connessione → registrazione → publish bundle)
+- Simulare connessione post-implementazione
 
 ### Server
-- Implementare `Registration` handler (dispatcher/registration.go)
 - Implementare BadgerDB per storage utenti/bundle
 - Integrare EKM layer con ML-DSA pinned keys
-- Buildare Dockerfile server (docker-compose.yml punta a `./server` non esistente)
-- Eliminare o integrare `network/tls/tls.go` duplicato
+- Buildare Dockerfile server
+- Eliminare `network/tls/tls.go` duplicato
 
 ### Riconnessione automatica
 - Riaprire TLS + Connection se cade

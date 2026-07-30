@@ -1,7 +1,8 @@
 package wrapper
 
 import (
-	"P2Chat/cmd/client/internals/network/structs"
+	connpkg "P2Chat/cmd/client/internals/network/connection"
+	"P2Chat/cmd/client/internals/p2log"
 	"net"
 	"os"
 	"sync"
@@ -11,7 +12,7 @@ import (
 )
 
 // wrap the connection in a struct that can handle sessions
-func Wrapper(connection net.Conn,tor *tor.Tor) ( connectionManager *structs.ConnectionManager ) {
+func Wrapper(connection net.Conn,tor *tor.Tor) ( connectionManager *connpkg.ConnectionManager ) {
 
 	if connection == nil {
 		return nil
@@ -34,16 +35,17 @@ func Wrapper(connection net.Conn,tor *tor.Tor) ( connectionManager *structs.Conn
 	var globalOut chan<- []byte
 	globalOut = make(chan []byte)
 
-	connectionScheme := &structs.Connection{
+	connectionScheme := &connpkg.Connection{
 		MasterSession:		session,
 		ActiveSessions: 	sync.Map{},
 		Done:				make(chan struct{}),
 		GlobalOut:			globalOut,
 	}
 
-	go connectionScheme.Listener()
+	connectionScheme.Init()
+	p2log.Debug("wrapper created")
 
-	connectionManager = &structs.ConnectionManager{
+	connectionManager = &connpkg.ConnectionManager{
 		Conn: 		connectionScheme,
 		GlobalOut:	globalOut,
 		Done:		make(chan struct{}),

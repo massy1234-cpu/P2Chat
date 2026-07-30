@@ -1,13 +1,12 @@
 package tls
 
 import (
-	"P2Chat/cmd/server/network/structs"
+	connpkg "P2Chat/cmd/server/network/connection"
 	"crypto/tls"
 	"net"
 )
 
-func ServerListener() (connection net.Conn,err error) {
-	// same configuration of client
+func ServerListener() (connection net.Conn, err error) {
 	config := &tls.Config{
 		CurvePreferences: []tls.CurveID{
 			tls.X25519MLKEM768,
@@ -17,16 +16,13 @@ func ServerListener() (connection net.Conn,err error) {
 		InsecureSkipVerify: true,
 	}
 
-	// open the port and wait for clients
-	tlsConn, err := tls.Listen("tcp",":8443",config)
+	tlsConn, err := tls.Listen("tcp", ":8443", config)
 
 	for {
-		// accept all the clients and pass the net.Conn to the func helper
-		connection,err := tlsConn.Accept()
+		connection, err := tlsConn.Accept()
 		if err != nil {
 			continue
-    	}
-		go structs.NewClient(connection)
+		}
+		go connpkg.NewClient(connection, nil)
 	}
-
 }

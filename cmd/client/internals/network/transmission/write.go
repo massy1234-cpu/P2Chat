@@ -1,29 +1,53 @@
 package transmission
 
 import (
+	"P2Chat/cmd/client/internals/network"
 	"P2Chat/cmd/client/internals/p2log"
 	"P2Chat/pkg/apperr"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"net"
 	"time"
 )
 
-// the data put in this function doesnt need any header, the header is put in this function
+// insert the padding in the message 
+func CreatePadding(data []byte, maxPad int) (padded []byte, padLen int) {
+	padLen = network.CryptoInt(maxPad)+250
+	if padLen == 0 {
+		return data, 0
+	}
+	padded = make([]byte, len(data)+padLen)
+	copy(padded, data)
+	rand.Read(padded[len(data):])
+	return padded, padLen
+}
+
+
+// create the header of the packet 
+func CreateHeader(totalSize int, padLen int, checksum [32]byte) []byte {
+	header := make([]byte, 38)
+	binary.BigEndian.PutUint32(header[:4], uint32(totalSize))
+	binary.BigEndian.PutUint16(header[4:6], uint16(padLen))
+	copy(header[6:], checksum[:])
+	return header
+}
+
+
+// write the message into the connection ( this function also create the header and the padding )
 func WriteMessage(conn net.Conn, data []byte) error {
 
-	// create the header
-	header := CreateHeader(data)
+	totalelenght, padLen := CreatePadding(data, 500)
+	checksum := sha256.Sum256(data)
+	header := CreateHeader(len(totalelenght), padLen, checksum)
 
-	// put header and data together 
-	newData := make([]byte,len(data) + len(header))
-	copy(newData[:36], header)
-	copy(newData[36:],data)
+	newData := make([]byte, len(header)+len(totalelenght))
+	copy(newData[:38], header)
+	copy(newData[38:], totalelenght)
 
-	// time limit for transmission
 	conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
 
-	n,err := conn.Write(newData)
+	n, err := conn.Write(newData)
 	if n < len(newData) || err != nil {
 		p2log.Error("data transmission error")
 		return apperr.New("data transmission error")
@@ -31,18 +55,4 @@ func WriteMessage(conn net.Conn, data []byte) error {
 
 	return nil
 
-}
-
-
-// create a header composed from 4 byte of lenght + 32 byte of checksum
-// the rest like byte code must be put in payload
-func CreateHeader(data []byte) (header []byte) {
-	lenght := len(data)
-	checksum := sha256.Sum256(data)
-
-	header = make([]byte, 36)
-	binary.BigEndian.PutUint32(header[:4],uint32(lenght))
-	copy(header[4:],checksum[:])
-
-	return header
 }

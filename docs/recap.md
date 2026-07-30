@@ -2375,6 +2375,11 @@ All advanced optimizations will be implemented in the future, only after the cor
 
 For now, my main focus remains on building a solid, clean, and well-tested initial implementation.
 
+
+during the implementation i thought about network risks analysis and so even the connection with the server will be on a TOR network ( that implement native the 512 byte padding ) the TOR doesnt not protect in case a user listen and analyze the network from the client and from the server or also the server if is compromised could analyze the network traffic and extract some sensible metadatas
+
+
+
 ### a small regression about the architecture
 
 i want to specify that i am fully aware about the QUIC protocol and that in this case could offer a lot of interesting features like changing connection handling or internal multiplexing and other that are also more efficent than my approach but this project is mainly created for learning and also i want the full control about the protocol, my choise is derivated from these motivations
@@ -2394,3 +2399,13 @@ the process is divided into 3 parts :
 ### Server side
 
 what information need the server for start the comunication ?
+
+## Protocol message types
+
+| Byte | Name | Direction | Description |
+|------|------|-----------|-------------|
+| `0x00` | DUMMY | Bidirectional | Dummy request for traffic obfuscation. Random payload, discarded by receiver. |
+| `0x01` | REGISTER_TOKEN_REQ | Client → Server | Request a registration token. Initiates the blind signature flow. |
+| `0x02` | POW_TOKEN | Server → Client | Proof-of-Work challenge for token minting. |
+| `0x03` | CHALLENGE_RESPONSE | Client → Server | Challenge response for the token request. |
+| `0x04` | TOKEN_FOR_SIGNATURE | Server → Client | Signed token that can be used for registration signature. |

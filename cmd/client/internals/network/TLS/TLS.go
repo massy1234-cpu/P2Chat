@@ -1,7 +1,7 @@
 package tls
 
 import (
-	"P2Chat/cmd/client/internals/network/structs"
+	"P2Chat/cmd/client/internals/network/connection"
 	"P2Chat/cmd/client/internals/network/tor"
 	"P2Chat/cmd/client/internals/network/wrapper"
 	"P2Chat/pkg/apperr"
@@ -12,7 +12,7 @@ import (
 )
 
 // initialize the TLS connection and return a ConnectionManager type
-func ServerInitialize(addr string) (connectionScheme *structs.ConnectionManager, err error) {
+func ServerInitialize(addr string) (connectionScheme *connection.ConnectionManager, err error) {
 
 	// set the TLS configuration
 	config := &tls.Config{

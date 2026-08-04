@@ -2345,15 +2345,105 @@ the client after receive this token will have to opne anoother connection with t
 
 for this phase i choose the following architectural choises
 - server database : badgerDB ( easy data to manage, very fast, internal data managment very interesting )
-- blind signature protocol : Schnorr Ristretto255 ( not PQ safe but in this case is not worth it use a really big certificate in fact this will last for maximum 10-30 minutes )
+- blind signature protocol : Blind BLS ( the first choice was Schnorr Ristretto255 but i changed idea cause the ROS attack, a one-more-signature forgery that exploit the reuse of the nonce in parallel signing sessions, the classic blind Schnorr is vulnerable to this and my registration flow is exactly the worst case for this attack because i have many clients in parallel asking tokens, Blind BLS instead is immune to this class of attacks, has no concurrency problems ( every session is independent, there is no nonce commitment to coordinate ), the signatures are short and the performances are optimal, and the security is proven under the One-More-BDH assumption )
 - for get the token the client will have to pass a PoW ( is not the solution for DDoS attacks but i could implement this PoW and replace it with for example crypto mining for get a small rewards for the free service )
 
+in past i choosed to use the Ristretto255 protocol with Schnorr 
+both protocol are not PQ safe but in this case is not relevant, the token last only few minutes and is NOT critical broke the signature and create new bundle, because in worst case the server becomes sature of bundles and crash but the users privacy is NOT compromised, this is important
 
-let's go deep inside the architecture
+the differences between the old and new protocol for blind signature are :
+- no nonce needed 
+- smaller sign
+- this new protocol is not ROS vulnerable 
+the ROS attack is a vulnerability in the server side where the server reuse the nonce and the attacker is capable to reproduce a fake signature without the sign of the server
+is not critical because in the worse scenario the server could go down cause of too much bundles but this does not influence the users privacy at all
 
-the client in this phase have to 
-- open a new session with the server
-- 
+i created a scheme on paper ![paper_scheme](images/IMG_5903.jpg)
+
+converted in markdown for more detailed and clean description
+
+# Blind BLS — Schema del flusso
+
+## 0. Scalare vs Punto — la distinzione fondamentale
+
+| | **Scalare** | **Punto sulla curva** |
+|---|---|---|
+| Cos'è | Un numero intero, e basta | Una coppia di coordinate `(x, y)` |
+| Dove vive | Nell'intervallo `{0, ..., ℓ-1}` (ℓ = ordine del gruppo) | Sulla curva: deve soddisfare `y² = x³ + a·x + b mod p` |
+| Esempi nel nostro schema | `x` (chiave privata), `r` (rumore), `r⁻¹` | `M`, `M'`, `σ`, `σ'`, `G`, `Y` (chiave pubblica) |
+| Ha coordinate? | No | Sì, sempre |
+
+**Moltiplicare uno scalare per un punto** (es. `r · M`) **non è** una moltiplicazione normale tra numeri — è **addizione ripetuta** del punto a se stesso, `r` volte, usando la regola geometrica di somma tra punti su curva ellittica (retta secante/tangente + riflessione). In pratica si calcola velocemente con l'algoritmo **double-and-add**, non sommando letteralmente `r` volte.
+
+Il risultato di `scalare · punto` è **sempre un altro punto** — mai un numero. Ecco perché `M`, `M'` e `σ` sono tutti punti nello schema sotto: derivano l'uno dall'altro tramite moltiplicazioni scalari, ma restano sempre punti sulla curva.
+
+## 1. Hash del messaggio su un numero
+
+```
+u = SHA-256(msg) mod p
+```
+
+`u` viene passato alla funzione di map-to-curve (BLS12) → ottengo il punto:
+
+```
+M
+```
+
+## 2. Mascheramento di M con il rumore R
+
+```
+M' = M moltiplicato per il rumore r
+```
+
+> Sarebbe una somma ripetuta (`M + M + ... + M`, r volte) — **modo difficile da invertire**.
+
+Geometricamente: intersezione tra la curva e i punti di `M` e poi... ripetuto sull'asse x, ripetuto `r` volte (double-and-add).
+
+## 3. Il client manda M' al server
+
+```
+Client ────────── M' ──────────> Server
+```
+
+## 4. Il server firma alla cieca
+
+```
+Server effettua:  σ' = x · M'
+```
+
+x = chiave privata del server (**randomica**, è un numero casuale)
+
+```
+Server ────────── manda al client ──────────> σ'
+```
+
+## 5. Il client rimuove il rumore
+
+```
+Client effettua:  σ = r⁻¹ · σ'
+```
+
+→ **Rumore rimosso**: ora rimane la firma. Il server **non sa** su cosa è stato firmato.
+
+## 6. Il client invia (σ, msg) al server
+
+```
+Client ────────── manda (σ, msg) ──────────> Server
+```
+
+## 7. Il server verifica
+
+```
+Server verifica:  msg + σ + Y  (Y = chiave pubblica)
+```
+
+- `msg` → **messaggio iniziale**
+- `σ` → **firma**
+
+Output: **il server non sa di aver già firmato** questo specifico (msg, σ) — non può ricollegarlo alla sessione di firma originale (blindness).
+'''
+
+the implementation in the code is available in the codebase (server -> blind signature)
 
 ### Network package managment 
 

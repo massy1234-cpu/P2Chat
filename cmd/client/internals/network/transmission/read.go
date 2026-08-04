@@ -13,6 +13,7 @@ import (
 
 const MaxMessageSize = 64 * 1024
 
+// read a message from the connection, it removes the padding and verify the checksum, the header is read first
 func ReadMessage(conn net.Conn) (data []byte, err error) {
 
 	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
@@ -53,6 +54,7 @@ func ReadMessage(conn net.Conn) (data []byte, err error) {
 
 }
 
+// compare the sha256 of the data with the checksum received in the header
 func MatchChecksum(data []byte, checksum []byte) bool {
 
 	hash := sha256.Sum256(data)

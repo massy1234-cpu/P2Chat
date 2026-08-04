@@ -3,7 +3,7 @@
 syntax = "proto3";
 
 package proto_struct_mldsa;
-import "cmd/client/internals/proto/argon_params.proto";
+import "cmd/client/internals/proto/argon/argon_params.proto";
 
 option go_package = "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa";		// specify where put the generated file
 

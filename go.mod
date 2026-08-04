@@ -4,6 +4,7 @@ go 1.25.8
 
 require (
 	github.com/awnumar/memguard v0.23.0
+	github.com/consensys/gnark-crypto v0.20.1
 	github.com/cretz/bine v0.2.0
 	github.com/google/go-tpm v0.9.8
 	github.com/hashicorp/yamux v0.1.2
@@ -18,6 +19,7 @@ require (
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/awnumar/memcall v0.4.0 // indirect
+	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 )

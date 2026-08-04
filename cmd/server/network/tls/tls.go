@@ -1,12 +1,16 @@
 package tls
 
 import (
-	connpkg "P2Chat/cmd/server/network/connection"
+	"P2Chat/cmd/server/network/client"
+	//connpkg "P2Chat/cmd/server/network/connection"
 	"crypto/tls"
 	"net"
 )
 
+// listen for TLS connections and for each one create a new client in the registry
 func ServerListener() (connection net.Conn, err error) {
+	registry := client.NewRegistry()
+
 	config := &tls.Config{
 		CurvePreferences: []tls.CurveID{
 			tls.X25519MLKEM768,
@@ -23,6 +27,7 @@ func ServerListener() (connection net.Conn, err error) {
 		if err != nil {
 			continue
 		}
-		go connpkg.NewClient(connection, nil)
+		client := client.NewClient(connection)
+		registry.AddClient(client)
 	}
 }

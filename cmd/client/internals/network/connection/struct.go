@@ -9,6 +9,7 @@ import (
 type Connection struct {
 	MasterSession  *yamux.Session
 	ActiveSessions sync.Map
+	DeadSessions   chan uint32
 	nextID         uint32
 	freeIDs        []uint32
 	mu             sync.Mutex

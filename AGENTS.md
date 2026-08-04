@@ -19,29 +19,62 @@ P2Chat/
 │   ├── keys/mlkem/                    # ML-KEM-768 keygen, encapsulate, decapsulate
 │   ├── keys/x25519/                   # X25519 ECDH + XEdDSA signatures
 │   ├── network/                       # Networking layer
-│   │   ├── TLS/
-│   │   │   └── TLS.go                 # Server TLS + certificate (da integrare con Tor dialer)
+│   │   ├── tls/
+│   │   │   └── tls.go                 # TLS 1.3 (X25519MLKEM768) + Tor dialer → ConnectionManager
 │   │   ├── transmission/
-│   │   │   ├── read.go                # ReadMessage: 4B size + 32B SHA-256 checksum header
-│   │   │   └── write.go               # WriteMessage + CreateHeader
-│   │   ├── structs/
-│   │   │   ├── structs.go             # SingleSession, Connection (with Done), ConnectionManager
-│   │   │   ├── session_methods.go     # NewSession, Listener (sentinel), Writer, Close
-│   │   │   └── connection_methods.go  # NextID, ReleaseID, ListenOnWire, ReleaseSession, Close
+│   │   │   ├── read.go                # ReadMessage: 38B header (4B size + 2B padLen + 32B checksum)
+│   │   │   └── write.go               # WriteMessage + CreateHeader + CreatePadding
+│   │   ├── connection/
+│   │   │   ├── struct.go              # Connection + ConnectionManager (GlobalOut, Done)
+│   │   │   └── methods.go             # NextID/ReleaseID, NewSession, Registration, Close
+│   │   ├── session/
+│   │   │   ├── struct.go              # SingleSession (Incoming/Outgoing/GlobalOut/DummyBase)
+│   │   │   └── methods.go             # Init, Listener (estrae Tag 1B), Writer, dummyRequests
+│   │   ├── phases/
+│   │   │   └── registration.go        # RequestTokenRegistration (0x01) — lato client
+│   │   ├── PoW/
+│   │   │   └── PoW.go                 # Argon2id PoW solver: Level 1-5, Solve, CountZeroBits — usa proto_struct_pow.Challenge
 │   │   ├── wrapper/
 │   │   │   └── wrap_connection.go     # Wrapper: yamux.Client + ConnectionManager
 │   │   ├── tor/
-│   │   │   ├── tor.go                 # CreateConnectionTor (da fixare: return type, leak, panics)
+│   │   │   ├── tor.go                 # TorProcess, DialTor, InitializeTor, EstablishTor
 │   │   │   └── tor_test.go            # Test di bootstrap Tor
+│   │   ├── random.go                  # network.CryptoInt (crypto/rand)
+│   │   ├── error_console/             # TODO: gestione errori
 │   │   └── certificate/
 │   │       └── certificate.go         # Client TLS certificate generation
 │   ├── p2log/                         # Colored console+file logger (Debug/Info/Warning/Error)
 │   ├── p2version/                     # Magic bytes "P2CH1"
 │   ├── proto/                         # .proto source definitions
+│   │   ├── argon/argon_params.proto   # ArgonParams
+│   │   ├── mldsa/mldsa_proto.proto    # PrivateKeyMLDSA / PublicKeyMLDSA (importa proto/argon)
+│   │   └── PoW/pow_challenge.proto    # Challenge (Timestamp, Salt, Level, MAC)
 │   ├── proto_generated/               # Generated .pb.go + methods.go (SetChecksum/VerifyChecksum)
+│   │   ├── argon/argon_params/        # argon_params.pb.go
+│   │   ├── mldsa/proto_struct_mldsa/  # mldsa_proto.pb.go + methods.go
+│   │   └── PoW/proto_struct_pow/      # pow_challenge.pb.go — challenge usata da client+server PoW
 │   ├── protocol/pqxdh/               # PQXDH bundle data structures
 │   ├── storage/                       # File I/O for keys (SK.bin, PK.bin), BasePath init
 │   └── bbolt/                         # BoltDB init (database/database.db)
+├── pkg/apperr/                        # fmt.Errorf wrapper (Wrap, New)
+├── cirl-custom/circl/                 # Forked CIRCL: ML-DSA-87 with memguard
+├── docs/recap.md                      # Full design doc (2226 lines)
+├── cmd/server/                        # Server
+│   ├── main.go                        # p2log + certificato Ed25519 + InitializeTLS (:8443)
+│   ├── network/
+│   │   ├── connection.go              # InitializeTLS, handleConn, dispatchConnection (switch 0x01)
+│   │   ├── connection/                # Connection (yamux.Server), DeadSessions, CheckDeadSessions/CheckConnection
+│   │   ├── client/                    # Client + RegistryClients (ID pool, DeadClients chan, RemoveDeadClient)
+│   │   ├── session/                   # SingleSession + Handler + Dispatcher + Writer (DummyBase/delay)
+│   │   ├── phases/
+│   │   │   ├── dispatcher.go          # Dispatcher: switch msg[0] → 0x01 RequestTokenRegistration
+│   │   │   └── token_registration.go  # RequestTokenRegistration (handshake PoW: Issue→serialize→Verify)
+│   │   ├── PoW/
+│   │   │   └── PoW.go                 # Argon2 PoW: Issue (challenge + HMAC MAC), Verify — usa proto_struct_pow.Challenge
+│   │   ├── load_status/               # LoadReport: ClientsNumber → pow.Level (funzione pura, rompi import cycle)
+│   │   ├── tls/tls.go                 # 🗑️ Obsoleto (duplicato non integrato)
+│   │   └── certificate/               # Certificato Ed25519 autofirmato
+│   └── pinned_keys/                   # ML-DSA-87 keys per EKM layer
 ├── pkg/apperr/                        # fmt.Errorf wrapper (Wrap, New)
 ├── cirl-custom/circl/                 # Forked CIRCL: ML-DSA-87 with memguard
 ├── docs/recap.md                      # Full design doc (2226 lines)
@@ -168,6 +201,9 @@ All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/d
 - `PrivateKeyMLDSA` protobuf stores the encrypted key blob; `IK_mldsa` is excluded from `pqxdhPrivateBundle` (lives on filesystem).
 - `EncryptPrivateKey` + `SerializePrivateKey` pattern used across X25519, ML-KEM, and ML-DSA.
 - ML-DSA key store usa un parametro `bool` per decidere se salvare su disco — da sostituire con un tipo dedicato (es. `StorePolicy` enum) quando si sistema la funzione.
+- PoW è duplicato in due package `pow` (client `internals/network/PoW` e server `network/PoW`): core condiviso (presets, `argonHash`, `CountZeroBits`) identico; il server aggiunge `Issue`/`Verify`+MAC. Da valutare un package condiviso.
+- Il server NON compila durante il refactor registrazione: `cmd/server/network/phases/dispatcher.go` chiama `RequestTokenRegistration(session, level)` con 2 arg ma la firma è `(session, level, privateKey *blindsignature.PrivateKey)`. Il dispatcher è cablato come `SessionHandler` (2 arg) e non riceve la chiave blind signature a lungo termine. `cmd/server/main.go` è commentato (main mancante).
+- `cmd/client/main.go` è temporaneamente vuoto.
 
 ## Progress recap
 
@@ -204,10 +240,18 @@ All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/d
 | Dummy requests | ✅ Done | Timer random 0.4-1.4s, tag `0x00`, size `DummyBase ± 250`, rand.Read, `crypto/rand` |
 | Padding messaggi | ✅ Done | `CreatePadding()` in WriteMessage, `crypto/rand`, checksum solo su dati veri |
 | Debug logging | ✅ Done | p2log su session lifecycle + send/receive + connection events |
-| Dispatch / Reader Manager | ❌ Da fare | Cicla su Incoming, smista per tipo a handler via clientDispatch |
+| PoW client solver | ✅ Done | `network/PoW/PoW.go`: Argon2id, Level 1-5 (difficulty+memory), `Solve`/`CountZeroBits` |
+| PoW server issue/verify | ✅ Done | `network/PoW/PoW.go`: `Issue` (challenge + HMAC-MAC), `Verify` (MAC + zero-bits) |
+| PoW su proto struct | ✅ Done | `pow_challenge.proto` → `proto_struct_pow.Challenge`; client+server PoW la usano (passata per puntatore, non per valore: contiene sync.Mutex via MessageState) |
+| PoW challenge serialize | ✅ Done | Server `Issue` ritorna `*proto_struct_pow.Challenge`; `token_registration.go` usa `proto.Marshal` / client nonce via `binary.BigEndian.Uint64` |
+| argon proto in cartella | ✅ Done | `proto/argon_params.proto` → `proto/argon/argon_params.proto`; `mldsa_proto.proto` import aggiornato; Makefile + import path fixati |
+| Server chiusura client morti | ✅ Done | `RegistryClients`/`Client`: `DeadClients chan`, `Done`, `Once`; `Client.Close()` (send bloccante), `ImDead` watchdog su `Conn.Done`, `RemoveClient`/`RemoveDeadClient` loop |
+| Server session Writer | ✅ Done | Writer allineato al client: `DummyBase`, `delay()`, logging tag/len. SENZA generazione dummy (solo il client le manda) |
+| `load_status` | 🔶 WIP | `LoadReport`: `ClientsNumber → pow.Level` (soglie 50/150/300/500). Da usare in `Dispatcher` (import cycle `phases→load_status→client→connection→phases`) |
+| Dispatch / Reader Manager | 🔶 WIP | Server: `phases.Dispatcher` cablata in `Connection.Listener` + `Session.Dispatcher()` (goroutine non ancora avviata in `Init`) |
 | Messaggio format | ✅ Done | 1B tag + msgpack payload + padding trasparente |
 | Riconnessione automatica | ❌ Da fare | Riaprire TLS + Connection se cade |
-| Registrazione (challenge-response ML-DSA) | ❌ Da fare | Challenge 32B + UserID + PublicBundle + ML-DSA signature |
+| Registrazione (PoW + challenge-response ML-DSA) | 🔶 WIP | PoW core pronto; manca wiring nel flusso (challenge→solve→UserID+PublicBundle+ML-DSA sign) |
 | Autenticazione server con IK ML-DSA | ❌ Da fare | Firma messaggi con identity key |
 | Invio public bundle + public sets al server | ❌ Da fare | Pubblicare `PublicBundle`, curve/KEM public sets |
 | Test | ❌ Da fare | Test su connection, dispatch, transmission |
@@ -268,13 +312,13 @@ Server :8443
 Client TLS conn
   │
   ▼
-handleConn → NewClient(conn)
+handleConn → NewClient(conn, handler)
   │
   ▼
 yamux.Server → Connection{MasterSession, ActiveSessions, SessionHandler}
   │
   ▼
-Connection.Listener — AcceptStream → NewSession(ID, stream)
+Connection.Listener — AcceptStream → NewSession(ID, stream) + sess.Handler = phases.Dispatcher
   │
   ▼
 Session{Listener, Writer, Dispatcher}
@@ -283,7 +327,7 @@ Session{Listener, Writer, Dispatcher}
   └─ Dispatcher: Incoming → Handler func(Session, []byte)
   │
   ▼
-clientDispatch(msg[0]) — switch 0x01 → Registration (TODO)
+phases.Dispatcher(msg[0]) — switch 0x01 → RequestTokenRegistration (PoW handshake)
 ```
 
 ### Key differences Client vs Server
@@ -396,7 +440,7 @@ Connection:
 4. Dispatch / Manager — ciclo su Incoming, handler routing
 5. WriterManager — per-connessione, serializza scritture
 6. Riconnessione — riapre TLS + Connection se cade
-7. Registrazione server — blind Schnorr su Ristretto255 + publish bundle
+7. Registrazione server — Blind BLS token (ex blind Schnorr/Ristretto255, abbandonato per ROS attack) + publish bundle
 8. Autenticazione — firma messaggi con IK ML-DSA
 9. Ottimizzazione pacchetti — compressione, single-key request
 
@@ -407,31 +451,40 @@ Connection:
 | TLS 1.3 listener + PQ curves | ✅ Done | `connection.go`: `tls.Listen` su `:8443`, `X25519MLKEM768` |
 | Certificato Ed25519 autofirmato | ✅ Done | `certificate.go`: generazione + salvataggio PEM con memguard |
 | Yamux multiplexing | ✅ Done | `structs.go`: Client, Session, Connection con sync.Map pool ID |
-| `Session.Listener` / `Session.Writer` | ✅ Done | `session_methods.go`: ReadMessage/WriteMessage loop |
-| `Connection.Listener` (accept stream) | ✅ Done | `connection_methods.go`: accetta stream yamux → NewSession |
-| `NewClient` + `clientDispatch` | ✅ Done | `client_methods.go`: yamux.Server, switch 0x01 |
-| `dispatcher/registration.go` | 🔶 Scheletro | Funzione vuota, nessuna logica |
+| `Session.Listener` / `Session.Writer` / `Dispatcher` | ✅ Done | `session_methods.go`: ReadMessage/WriteMessage loop + `Dispatcher()` (Incoming → Handler); goroutine Dispatcher non ancora avviata in `Init` |
+| `Connection.Listener` (accept stream) | ✅ Done | `connection_methods.go`: accetta stream yamux → NewSession + cabla `sess.Handler = phases.Dispatcher` |
+| `Client` + `RegistryClients` | ✅ Done | `client/`: ID pool, `DeadClients`, `RemoveDeadClient` loop, `Client.Close()` + `ImDead` watchdog |
+| `Connection` chiusura | ✅ Done | `DeadSessions` chan + `CheckDeadSessions` + `CheckConnection` (CloseChan) + `Close`/`IsClosed` |
+| `phases/dispatcher.go` + `token_registration.go` | 🔶 WIP | Dispatcher (switch 0x01) attivo; `RequestTokenRegistration` integra PoW (issueChallenge→receiveNonce→Verify) + Blind BLS (`ReceiveAndSign`→`sendBlindSignature`); build rotto per signature Handler (Dispatcher 2 arg vs `RequestTokenRegistration` 3 arg — manca `privateKey`) |
 | `pinned_keys/initialization.go` | ✅ Done | ML-DSA-87 keys per EKM layer |
 | `network/tls/tls.go` | 🗑️ Obsoleto | Duplicato non integrato (package name conflitto) |
 | Database server (BadgerDB) | ❌ Da fare | Menzionato in recap.md |
-| Blind signature (Ristretto255) | ❌ Da fare | Nessuna implementazione |
+| Blind signature (Blind BLS) | ❌ Da fare | Scelto al posto di blind Schnorr/Ristretto255 (vulnerabile a ROS attack: one-more-signature forgery via nonce reuse in sessioni parallele). BLS (Boldyreva): sessioni indipendenti, nessuno stato/concorrenza condivisa, firme corte, prestazioni ottimali, sicuro sotto One-More-BDH |
 | Mailbox system | ❌ Da fare | Cifratura + deposito offline |
 | Bundle store + distribution | ❌ Da fare | Ricevere, memorizzare bundle pubblici |
 | EKM layer integration | ❌ Da fare | Firma ML-DSA transcript hash |
 | Autenticazione client IK ML-DSA | ❌ Da fare | Verifica firma messaggi |
-| Rate limiting / PoW | ❌ Da fare | Protezione DDoS |
+| PoW / Rate limiting | 🔶 WIP | `network/PoW`: `Issue`/`Verify` (HMAC-MAC) pronti; `load_status.LoadReport` da collegare al Dispatcher (import cycle) |
 
 ## TODO prossima sessione
 
-### Registrazione (challenge-response ML-DSA)
-- Implementare flusso registrazione lato client (registration.go)
-- Implementare `Registration` handler lato server (dispatcher/registration.go)
-- Challenge 32B, UserID + PublicBundle + ML-DSA sign
-- Integrare con dispatch e writer esistenti
+### Registrazione (PoW + challenge-response ML-DSA)
+- PoW core pronto: client `Solve` (Level 1-5), server `Issue`/`Verify` (challenge + HMAC-MAC) su `proto_struct_pow.Challenge`
+- Flusso Blind BLS pronto, da verificare: client `requestChallenge→solveChallenge→sendNonce→CreateAndBlind→SendFactor→GetTokenObfuscated→Unblind`; server `issueChallenge→receiveNonce→Verify→ReceiveAndSign→sendBlindSignature`. G1 in formato compresso (48B). PoW `Challenge` 56-65B.
+- Fix build server Dispatcher: `phases.Dispatcher` ora ha 2 arg (`(session,msg)`), ma `RequestTokenRegistration` ne ha 3 (`(session, level, privateKey *blindsignature.PrivateKey)`) → mismatch. La `PrivateKey` blind signature a lungo termine va generata una volta e iniettata nel dispatcher (es. package-level var in `phases` o via `SessionHandler`/`Connection`)
+- Risolvere import cycle: `phases → load_status → client → connection → phases`. Rendi `LoadReport` funzione pura (`LoadReport(connected uint64) pow.Level`) per rompere il bordo `load_status → client`
+- Avviare `Session.Dispatcher()` goroutine in `Init()`
+- Il client chiama `RequestTokenRegistration(sess)`: restituisce il token non blindato (`blindstate.Unblind`) ma oggi è scartato con `_`
+
+### Da finire: processo di registrazione completo
+- **Server: ricordare i token emessi** per la registrazione (il server deve tenere traccia dei token blind signature validi emessi, per verificare che il client sia autorizzato a registrarsi/uploadare il bundle)
+- **Client: uploadare il suo bundle** dopo l'ottenimento del token (invio `PublicBundle`/public sets al server una volta autenticato)
+- Collegare token emesso → autorizzazione a completare la registrazione con UserID + PublicBundle + ML-DSA sign
 
 ### Dispatch / Reader Manager
-- Cicla su Incoming, smista per tipo a handler via clientDispatch (case 0x00→scarta, 0x01→Registration, ...)
-- Integrare con la sessione esistente
+- Server: `phases.Dispatcher` con 3 arg (level) vs `Session.Handler` 2 arg → mismatch. Far risolvere `level` dentro `Dispatcher` (da registry via load_status) e spezzare import cycle
+- Avviare `Session.Dispatcher()` goroutine in `Init`
+- Client: da fare (ciclo su Incoming, smista per tag: 0x00→scarta, 0x01→Registration, ...)
 
 ### Client logic
 - Iniziare logica inizializzazione client (connessione → registrazione → publish bundle)
@@ -442,6 +495,13 @@ Connection:
 - Integrare EKM layer con ML-DSA pinned keys
 - Buildare Dockerfile server
 - Eliminare `network/tls/tls.go` duplicato
+
+### Overload / memoria (protezione registrazioni)
+- Rilevare carico troppo elevato o memoria esaurita → **smetti di accettare nuove registrazioni** per evitare il crash di sistema
+- Metriche da monitorare: connessioni attive (già in `load_status`), CPU, memoria di processo (es. `runtime.ReadMemStats`)
+- Oltre soglia → rifiutare `REGISTER_TOKEN_REQ` (risposta di errore o chiusura sessione) e loggare l'evento
+- Estendere `load_status`: oggi scala solo la PoW (Level 1-5), in futuro aggiungere il rifiuto secco delle registrazioni
+- Considerare `debug.SetMemoryLimit` (GC soft limit) come rete di sicurezza anti-crash
 
 ### Riconnessione automatica
 - Riaprire TLS + Connection se cade

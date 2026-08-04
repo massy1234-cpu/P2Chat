@@ -1,43 +1,11 @@
 package connection
 
 import (
-	"net"
-	"os"
-	"sync"
-	"time"
+	"P2Chat/cmd/server/network/phases"
 	"P2Chat/cmd/server/network/session"
-	"github.com/hashicorp/yamux"
 )
 
-func NewClient(connection net.Conn, handler func(*session.SingleSession, []byte)) *Client {
-	if connection == nil {
-		return nil
-	}
-
-	config := yamux.DefaultConfig()
-	config.KeepAliveInterval = 15 * time.Second
-	config.MaxStreamWindowSize = 512 * 1024
-	config.LogOutput = os.Stdout
-
-	sess, err := yamux.Server(connection, config)
-	if err != nil {
-		return nil
-	}
-
-	connScheme := &Connection{
-		MasterSession:  sess,
-		ActiveSessions: sync.Map{},
-		Done:           make(chan struct{}),
-		SessionHandler: handler,
-	}
-
-	connScheme.Init()
-
-	return &Client{
-		Conn: connScheme,
-	}
-}
-
+// return the next available ID for a session, reuse the freed IDs if any
 func (c *Connection) NextID() uint32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -51,12 +19,14 @@ func (c *Connection) NextID() uint32 {
 	return c.nextID
 }
 
+// put back the ID in the pool for reuse it
 func (c *Connection) ReleaseID(number uint32) {
 	c.mu.Lock()
 	c.freeIDs = append(c.freeIDs, number)
 	c.mu.Unlock()
 }
 
+// accept the streams from the master session and create a new session with the dispatcher for each one
 func (c *Connection) Listener() {
 	for {
 		stream, err := c.MasterSession.AcceptStream()
@@ -64,12 +34,14 @@ func (c *Connection) Listener() {
 			return
 		}
 		ID := c.NextID()
-		sess := session.NewSession(ID, stream)
+		sess := session.NewSession(ID, stream, c.DeadSessions)
+		sess.Handler = phases.Dispatcher
 		sess.Init()
 		c.ActiveSessions.Store(ID, sess)
 	}
 }
 
+// remove the session from the connection and close it
 func (c *Connection) ReleaseSession(sess *session.SingleSession) {
 	_, loaded := c.ActiveSessions.LoadAndDelete(sess.ID)
 	if !loaded {
@@ -79,6 +51,7 @@ func (c *Connection) ReleaseSession(sess *session.SingleSession) {
 	sess.Close()
 }
 
+// close all the active sessions of the connection
 func (c *Connection) CloseAllSessions() {
 	c.ActiveSessions.Range(func(key any, value any) bool {
 		c.ReleaseSession(value.(*session.SingleSession))
@@ -86,14 +59,53 @@ func (c *Connection) CloseAllSessions() {
 	})
 }
 
+// start the goroutines of the connection
 func (c *Connection) Init() {
 	go c.Listener()
+	go c.CheckDeadSessions()
+	go c.CheckConnection()
 }
 
+// goroutine that read the dead sessions chan and release them from the connection
+func (c *Connection) CheckDeadSessions() {
+	for {
+		select {
+		case <-c.Done:
+			return
+		case ID := <-c.DeadSessions:
+			value, loaded := c.ActiveSessions.Load(ID)
+			if loaded {
+				c.ReleaseSession(value.(*session.SingleSession))
+			}
+		}
+	}
+}
+
+// watchdog that close the connection if the master session is closed
+func (c *Connection) CheckConnection() {
+	select {
+	case <-c.Done:
+		return
+	case <-c.MasterSession.CloseChan():
+		c.Close()
+	}
+}
+
+// close the connection, the master session and all the active sessions
 func (c *Connection) Close() {
 	c.Once.Do(func() {
 		close(c.Done)
 		c.MasterSession.Close()
 		c.CloseAllSessions()
 	})
+}
+
+// return true if the connection is already closed
+func (c *Connection) IsClosed() bool {
+	select {
+    case <-c.Done:
+        return true
+    default:
+        return false
+    }
 }

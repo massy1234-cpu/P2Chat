@@ -1,20 +1,19 @@
 package wrapper
 
 import (
-	connpkg "P2Chat/cmd/client/internals/network/connection"
+	"P2Chat/cmd/client/internals/network/connection"
 	"P2Chat/cmd/client/internals/p2log"
 	"net"
 	"os"
-	"sync"
 	"time"
 	"github.com/cretz/bine/tor"
 	"github.com/hashicorp/yamux"
 )
 
 // wrap the connection in a struct that can handle sessions
-func Wrapper(connection net.Conn,tor *tor.Tor) ( connectionManager *connpkg.ConnectionManager ) {
+func Wrapper(netConn net.Conn,tor *tor.Tor) ( connectionManager *connection.ConnectionManager ) {
 
-	if connection == nil {
+	if netConn == nil {
 		return nil
 	}
 
@@ -26,32 +25,24 @@ func Wrapper(connection net.Conn,tor *tor.Tor) ( connectionManager *connpkg.Conn
 
 
 	// wrap the connection with yamux
-	session, err := yamux.Client(connection,config)
+	session, err := yamux.Client(netConn,config)
 	if err != nil {
 		return nil
 	}
 
-	// create the Connection
 	var globalOut chan<- []byte
-	globalOut = make(chan []byte)
+	globalOut = make(chan []byte, 128)
 
-	connectionScheme := &connpkg.Connection{
-		MasterSession:		session,
-		ActiveSessions: 	sync.Map{},
-		Done:				make(chan struct{}),
-		GlobalOut:			globalOut,
-	}
+	connectionScheme := connection.NewConnection(globalOut,session)
 
-	connectionScheme.Init()
 	p2log.Debug("wrapper created")
 
-	connectionManager = &connpkg.ConnectionManager{
-		Conn: 		connectionScheme,
-		GlobalOut:	globalOut,
-		Done:		make(chan struct{}),
+	connectionManager, err = connection.NewConnectionManager(connectionScheme, tor, globalOut)
+	if err != nil {
+		return nil
 	}
 
-	connectionManager.Tor = tor
+	go connectionManager.CheckConnection()
 
 	return connectionManager
 }

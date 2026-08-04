@@ -1,4 +1,4 @@
-// protoc --go_out=. --go_opt=module=P2Chat cmd/client/internals/proto/argon_params.proto
+// protoc --go_out=. --go_opt=module=P2Chat cmd/client/internals/proto/argon/*.proto
 
 syntax = "proto3";
 

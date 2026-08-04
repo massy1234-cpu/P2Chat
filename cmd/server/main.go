@@ -1,9 +1,9 @@
 package main
 
+/*
 import (
 	"P2Chat/cmd/client/internals/p2log"
 	"P2Chat/cmd/client/internals/storage"
-	"P2Chat/cmd/server/network"
 	"P2Chat/cmd/server/network/certificate"
 	"crypto/tls"
 	"path/filepath"
@@ -27,3 +27,4 @@ func main() {
 
 	network.InitializeTLS(tlsCert)
 }
+*/

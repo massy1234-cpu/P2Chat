@@ -1,0 +1,14 @@
+// protoc --go_out=. --go_opt=module=P2Chat cmd/client/internals/proto/PoW/*.proto
+
+syntax = "proto3";
+
+package proto_struct_pow;
+option go_package = "P2Chat/cmd/client/internals/proto_generated/PoW/proto_struct_pow";
+
+// challenge issued by the server, solved by the client, verified back on the server
+message Challenge {
+    int64 timestamp = 1;
+    bytes salt = 2;
+    uint32 level = 3;
+    bytes mac = 4;
+}

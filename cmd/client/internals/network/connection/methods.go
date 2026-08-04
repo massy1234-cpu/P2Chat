@@ -2,13 +2,44 @@ package connection
 
 import (
 	"P2Chat/cmd/client/internals/network/phases"
-	"P2Chat/cmd/client/internals/network/session"
+	session "P2Chat/cmd/client/internals/network/session"
 	"P2Chat/cmd/client/internals/p2log"
 	"P2Chat/pkg/apperr"
-
+	"sync"
+	"github.com/cretz/bine/tor"
 	"github.com/hashicorp/yamux"
 )
 
+// --- connection ---
+// create a new connection with the yamux session and start its goroutines
+func NewConnection(globalOut chan<- []byte,session *yamux.Session) *Connection {
+
+	connectionScheme := &Connection{
+		MasterSession:		session,
+		ActiveSessions: 	sync.Map{},
+		DeadSessions:		make(chan uint32, 64),
+		Done:				make(chan struct{}),
+		GlobalOut:			globalOut,
+	}
+
+	connectionScheme.Init()
+
+	return connectionScheme
+}
+
+
+// watchdog that close the connection if the master session is closed
+func (c *Connection) CheckConnection() {
+	select {
+	case <- c.Done:
+		return
+	case <- c.MasterSession.CloseChan():
+		c.Close()
+	}
+}
+
+
+// return the next available ID for a session, reuse the freed IDs if any
 func (c *Connection) NextID() uint32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -21,42 +52,56 @@ func (c *Connection) NextID() uint32 {
 	return c.nextID
 }
 
+// put back the ID in the pool for reuse it
 func (c *Connection) ReleaseID(number uint32) {
 	c.mu.Lock()
 	c.freeIDs = append(c.freeIDs, number)
 	c.mu.Unlock()
 }
 
+// create a new session for the stream and start it
 func (c *Connection) NewSession(stream *yamux.Stream) *session.SingleSession {
 	ID := c.NextID()
-	sess := session.NewSession(ID, stream, c.GlobalOut)
+	sess := session.NewSession(ID, stream, c.GlobalOut, c.DeadSessions)
 	sess.Init()
 	p2log.Debug("connection listener, new session ID:", ID)
 	c.ActiveSessions.Store(ID, sess)
 	return sess
 }
 
-func (c *Connection) ReleaseSession(sess *session.SingleSession) {
-	_, loaded := c.ActiveSessions.LoadAndDelete(sess.ID)
+// remove the session from the connection and close it
+func (c *Connection) ReleaseSession(ID uint32) {
+	value, loaded := c.ActiveSessions.LoadAndDelete(ID)
 	if !loaded {
 		return
 	}
-	p2log.Debug("session released, ID:", sess.ID)
-	c.ReleaseID(sess.ID)
-	sess.Close()
+
+	// if the session is not closed yet i close it 
+	sess := value.(*session.SingleSession)
+	if !sess.IsClosed() {
+		sess.Close()
+	}
+
+	p2log.Debug("session released, ID:", ID)
+	c.ReleaseID(ID)
 }
 
+// close all the active sessions of the connection
 func (c *Connection) CloseAllSessions() {
 	c.ActiveSessions.Range(func(key any, value any) bool {
-		c.ReleaseSession(value.(*session.SingleSession))
+		c.ReleaseSession(key.(uint32))
 		return true
 	})
 }
 
+// start the goroutines of the connection
 func (c *Connection) Init() {
 	p2log.Debug("connection init")
+	go c.CheckDeadSessions()
+	go c.CheckConnection()
 }
 
+// close the connection, the master session and all the active sessions
 func (c *Connection) Close() {
 	c.Once.Do(func() {
 		p2log.Debug("connection closing")
@@ -66,6 +111,8 @@ func (c *Connection) Close() {
 	})
 }
 
+
+// open a new stream for the registration phase and start the token request flow
 func (c *Connection) Registration() error {
 	newStream, err := c.MasterSession.OpenStream()
 	if err != nil {
@@ -74,11 +121,69 @@ func (c *Connection) Registration() error {
 	}
 
 	sess := c.NewSession(newStream)
+	sess.Tag = "registration token request"
 	phases.RequestTokenRegistration(sess)
 
 	return nil
 }
 
+// goroutine that read the dead sessions chan and release them from the connection
+func (c *Connection) CheckDeadSessions() {
+	for {
+		select {
+		case <-c.Done:
+			return
+		case msg := <-c.DeadSessions:
+			c.ReleaseSession(msg)
+		}
+	}
+}
+
+// --- connection manger ---
+
+// create a new connection manager, it wrap the connection with the tor process and the global out chan
+func NewConnectionManager(connection *Connection, tor *tor.Tor, globalOut chan<- []byte) (*ConnectionManager, error) {
+	if connection == nil || tor == nil || globalOut == nil {
+		return nil, apperr.New("connection manager: nil parameter")
+	}
+
+	connectionManager := &ConnectionManager{
+		Conn: 		connection,
+		Tor: 		tor,
+		GlobalOut:	globalOut,
+		Done:		make(chan struct{}),
+	}
+	return connectionManager, nil
+}
+
+// watchdog that watch the tor process and the connection, when one exit it close everything
+func (manager *ConnectionManager) CheckConnection() {
+	var torDone <-chan struct{}
+
+	// this is a goroutiness for Tor process, the wait function wait the exit of Tor 
+	// and when it exit close the torDone chan
+	if manager.Tor != nil && manager.Tor.Process != nil {
+		ch := make(chan struct{})
+		torDone = ch
+		go func() {
+			manager.Tor.Process.Wait()
+			close(ch)
+		}()
+	}
+
+	select {
+	case <-torDone:
+		p2log.Error("watchdog: tor process exited")
+	case <-manager.Done:
+		p2log.Debug("watchdog: manager closed")
+	case <-manager.Conn.MasterSession.CloseChan():			// CloseChan() is a yamux internal function that manage all types of network closure/error 
+		p2log.Error("watchdog: connection to server lost")
+	}
+
+	manager.Close()
+}
+
+// close the manager, the connection, the tor and all the chans
 func (manager *ConnectionManager) Close() {
 	manager.Once.Do(func() {
 		manager.Conn.Close()

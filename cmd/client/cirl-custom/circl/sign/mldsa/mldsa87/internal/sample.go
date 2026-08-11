@@ -5,9 +5,9 @@ package internal
 import (
 	"encoding/binary"
 
-	"P2Chat/cirl-custom/circl/internal/sha3"
-	common "P2Chat/cirl-custom/circl/sign/internal/dilithium"
-	"P2Chat/cirl-custom/circl/simd/keccakf1600"
+	"P2Chat/cmd/client/cirl-custom/circl/internal/sha3"
+	common "P2Chat/cmd/client/cirl-custom/circl/sign/internal/dilithium"
+	"P2Chat/cmd/client/cirl-custom/circl/simd/keccakf1600"
 )
 
 // DeriveX4Available indicates whether the system supports the quick fourway

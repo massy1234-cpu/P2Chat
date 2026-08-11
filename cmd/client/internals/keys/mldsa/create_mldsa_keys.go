@@ -1,19 +1,17 @@
 package mldsa_keys
 
 import (
-	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
+	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/argon"
 	hsm "P2Chat/cmd/client/internals/encryption/encryption_hsm"
 	mldsaencryption "P2Chat/cmd/client/internals/encryption/mldsa_encryption"
 	"P2Chat/cmd/client/internals/p2version"
-	data "P2Chat/cmd/client/internals/storage"
 	mldsadata "P2Chat/cmd/client/internals/storage/mldsa_data"
 	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	"P2Chat/pkg/apperr"
 	"crypto/rand"
 	"github.com/awnumar/memguard"
 	"time"
-	"path/filepath"
 )
 
 
@@ -75,10 +73,10 @@ func fillPrivateKey(level int, algorithm string, rawKeyEncrypted []byte, nonce [
 }
 
 // fillPublicKey fills the protobuf payload for the packed ML-DSA public key.
-func fillPublicKey(algoritm string, rawPublicKey []byte) (*struct_mldsa.PublicKeyMLDSA, error) {
+func fillPublicKey(algorithm string, rawPublicKey []byte) (*struct_mldsa.PublicKeyMLDSA, error) {
 
 	publicKeyStruct := &struct_mldsa.PublicKeyMLDSA{}
-	publicKeyStruct.Algorithm = algoritm
+	publicKeyStruct.Algorithm = algorithm
 	publicKeyStruct.P2ChatVersion = string(p2version.MagicByte())
 	publicKeyStruct.Timestamp = uint32(time.Now().Unix())
 	publicKeyStruct.Key = rawPublicKey
@@ -87,11 +85,17 @@ func fillPublicKey(algoritm string, rawPublicKey []byte) (*struct_mldsa.PublicKe
 }
 
 
-// CreateKeys generates an ML-DSA-87 keypair, encrypts the private key,
-// builds the protobuf payloads, and optionally stores them on disk.
-// HSM bool is the parameters that decide if add another layer of security using hardware security.
-// Returns the protobuf structs and the raw private key enclave for immediate use (e.g. signing).
-func CreateKeys(level int, password *memguard.Enclave, store bool, HSM bool, nameDir string) (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, *memguard.Enclave, error) {
+// CreateKeys generates an ML-DSA-87 keypair and encrypts the private key.
+// level must be between 1 and 3. If HSM is true the private key is protected by the
+// hardware security module of the platform (SE on darwin, TPM on linux/windows);
+// otherwise it is protected by Argon2id + AES-256-GCM derived from the password.
+// Returns the protobuf payloads and the raw private key enclave for immediate use
+// (e.g. signing). Persist the payloads with StoreKeys when needed.
+func CreateKeys(level int, password *memguard.Enclave, HSM bool) (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, *memguard.Enclave, error) {
+
+	if level < 1 || level > 3 {
+		return nil, nil, nil, apperr.New("level must be between 1 and 3")
+	}
 
 	// generation of the keys
 	publicKey, privateKeyExposed, err := mldsa87.GenerateKey(nil)
@@ -102,7 +106,6 @@ func CreateKeys(level int, password *memguard.Enclave, store bool, HSM bool, nam
 
 	// put the private key inside an Enclave and wipe the bytes after
 	privateKey := memguard.NewEnclave(privateKeyExposed.Bytes())
-	defer memguard.WipeBytes(privateKeyExposed.Bytes())
 
 	// encrypt private key ML-DSA-87 with or without HSM
 	var rawKeyEncrypted, nonce, salt []byte
@@ -144,13 +147,6 @@ func CreateKeys(level int, password *memguard.Enclave, store bool, HSM bool, nam
 	privateKeyStruct, publicKeyStruct, err := fillKeyPair(level, "ML-DSA-87", rawKeyEncrypted, packedPublic[:], nonce, salt, hsmMethod)
 	if err != nil {
 		return nil, nil, nil, apperr.Wrap("build generated key payloads", err)
-	}
-
-	if store {
-		err = StoreKeys(privateKeyStruct, publicKeyStruct, filepath.Join(data.BasePath,nameDir))
-		if err != nil {
-			return nil, nil, nil, apperr.Wrap("store generated keys", err)
-		}
 	}
 
 	return privateKeyStruct, publicKeyStruct, privateKey, nil

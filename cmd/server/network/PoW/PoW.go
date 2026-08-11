@@ -117,7 +117,8 @@ func CountZeroBits(hash []byte) uint8 {
 
 // verify the challenge, first check the mac for avoid manomission and then count the zero bits of the nonce
 func Verify(secret []byte, c *proto_struct_pow.Challenge, nonce uint64) bool {
-	expected := mac(secret, c)
+	expected := mac(secret, c)	// check if the client manipulated the challenge
+	
 	if !hmac.Equal(expected, c.Mac) {
 		return false
 	}
@@ -127,4 +128,23 @@ func Verify(secret []byte, c *proto_struct_pow.Challenge, nonce uint64) bool {
 		return false
 	}
 	return CountZeroBits(argonHash(c, nonce, p)) >= p.difficulty
+}
+
+// MaxWaitTime returns the maximum time the server waits for the client response,
+// estimated from the difficulty of the level issued to the client
+func (l Level) MaxWaitTime() time.Duration {
+	switch l {
+	case Level1:
+		return 30 * time.Second
+	case Level2:
+		return 1 * time.Minute
+	case Level3:
+		return 2 * time.Minute
+	case Level4:
+		return 5 * time.Minute
+	case Level5:
+		return 10 * time.Minute
+	default:
+		return 1 * time.Minute
+	}
 }

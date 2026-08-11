@@ -4,8 +4,8 @@
 package internal
 
 import (
-	"P2Chat/cirl-custom/circl/internal/sha3"
-	common "P2Chat/cirl-custom/circl/sign/internal/dilithium"
+	"P2Chat/cmd/client/cirl-custom/circl/internal/sha3"
+	common "P2Chat/cmd/client/cirl-custom/circl/sign/internal/dilithium"
 	cryptoRand "crypto/rand"
 	"crypto/subtle"
 	"io"

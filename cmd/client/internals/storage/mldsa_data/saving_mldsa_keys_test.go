@@ -1,7 +1,7 @@
 package mldsa_data
 
 import (
-	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
+	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/argon"
 		
 	"P2Chat/cmd/client/internals/encryption"

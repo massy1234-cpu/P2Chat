@@ -4,8 +4,12 @@ import (
 	"P2Chat/cmd/client/internals/network"
 	"P2Chat/cmd/client/internals/network/transmission"
 	"P2Chat/cmd/client/internals/p2log"
+	"P2Chat/pkg/apperr"
 	"crypto/rand"
+	"fmt"
+	"sync"
 	"time"
+
 	"github.com/hashicorp/yamux"
 )
 
@@ -20,6 +24,8 @@ func NewSession(ID uint32, stream *yamux.Stream, globalOut chan<- []byte, deadSe
 		GlobalOut:    globalOut,
 		DeadSessions: deadSessions,
 		Done:         make(chan struct{}),
+		phaseState: nil,
+		WaitGroup: sync.WaitGroup{},
 	}
 }
 
@@ -29,6 +35,7 @@ func (session *SingleSession) Init() {
 	go session.Listener()
 	go session.Writer()
 	go session.dummyRequests()
+	go session.Router()
 }
 
 // read the messages from the stream, strip the padding and put them in the Incoming chan
@@ -49,10 +56,93 @@ func (session *SingleSession) Listener() {
 	}
 }
 
+// Router is the only process that can read from Incoming
+// have the role to route the process
+func (session *SingleSession) Router() error {
+	var bytecode byte
+	var slice []byte
+
+	if session.Handler == nil {
+		return apperr.New("Handler is nil")
+	}
+
+	// the timer is created and is stopped
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
+
+	for {
+		select {
+		case <-session.Done:
+			p2log.Warning("router session ID: %d closed",session.ID)
+			return apperr.New("router session ID: " + fmt.Sprint(session.ID) + " closed")
+
+		case <-timer.C:
+			session.Close()
+			return apperr.New("error timeout")
+
+		case msg := <- session.Incoming:
+			// stop the timer and drain (if present) the chan timer.C
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			if len(msg) < 1 {
+				session.Close()
+				return apperr.New("router session ID: " + fmt.Sprint(session.ID) + " closed")
+			}
+			bytecode = msg[0]
+			slice = msg[1:]
+
+			result := session.Handler(bytecode,slice,&session.phaseState)		// call the protocol function
+
+			// parse the result
+			if result == nil {
+				session.Close()
+				return apperr.New("result is nil, something goes wrong")
+			}
+
+			if result.CloseStream {
+				session.Close()
+				p2log.Error("stream closed during the stream")
+				return apperr.New("stream closed during the stream")
+			}
+			
+			if result.Err != nil {
+				session.Close()
+				p2log.Error("phase generated an error: ", result.Err.Error())
+				return apperr.New("router session ID: " + fmt.Sprint(session.ID) + " closed")
+			}
+
+			for _,value := range result.Replies {
+				session.PutOutgoing(value)
+			}
+
+			if result.Completed {
+				if len(result.Replies) > 0 {
+					session.Flush(5 * time.Second)		// wait the transmission of all messages
+				}
+				session.Close()
+				p2log.Info("Phase completed with success, session with ID :",fmt.Sprint(session.ID),",closed")
+				return nil
+			}
+
+			// set the timeout only if the NextDeadLine have a time setted
+			if result.NextDeadline > 0{
+				timeout := result.NextDeadline.Abs()
+				timer.Reset(timeout)
+			}
+		}
+	}
+}
+
+
 // wait a random amount of time for make the traffic pattern less predictable
 func delay() {
 	time.Sleep(time.Duration(network.CryptoInt(500)+200) * time.Millisecond)
 }
+
 
 // write the messages from the Outgoing chan into the stream, the header and the padding are added inside by WriteMessage
 func (session *SingleSession) Writer() {
@@ -60,13 +150,18 @@ func (session *SingleSession) Writer() {
 	for {
 		select {
 		case msg := <-session.Outgoing:
+			if len(msg) == 0 {
+				continue
+			}
 			if msg[0] != 0x00 {
 				session.DummyBase.Store(int64(len(msg)))
 			}
 			delay()
 			p2log.Debug("session sending tag:", string(msg[0]), "len:", len(msg))
 			err := transmission.WriteMessage(session.Stream, msg)
+			session.WaitGroup.Done()		// keep track of the message if it's been transmitted
 			if err != nil {
+				session.NotTransmitted.Add(1)
 				p2log.Error("error writing message", err)
 				session.Close()
 				return
@@ -79,12 +174,14 @@ func (session *SingleSession) Writer() {
 
 // put the data in the Outgoing chan for send it, do not add the header or the padding here
 func (session *SingleSession) PutOutgoing(data []byte) {
-	if data == nil {
+	if len(data) == 0 {
 		return
 	}
-	select {
+	session.WaitGroup.Add(1)
+    select {
 	case session.Outgoing <- data:
 	case <-session.Done:
+		session.WaitGroup.Done()
 	}
 }
 
@@ -103,9 +200,35 @@ func (session *SingleSession) Close() {
 	})
 }
 
+
+// Flush wait until all the messages into the OutGoing are trasmitted using the WaitGroup
+// the timeout avoid the deadlock in case the messages are NOT transmitted
+func (session *SingleSession) Flush(timeout time.Duration) {
+	done := make(chan struct{})
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	go func() {
+		session.WaitGroup.Wait()
+		close(done)
+	}()
+
+	// if the WaitGroup last more than timeout the select-case enter in timer.C and terminate the Flush
+	// avoid deadlock
+	select {
+	case <-timer.C:
+		p2log.Warning("warning timeout, not all the messages were transmitted, ID:", session.ID)
+	case <-done:
+	}
+
+	if n := session.NotTransmitted.Load(); n > 0 {
+		p2log.Warning("messages NOT transmitted, ID:", session.ID, "count:", n)
+	}
+}
+
 // return true if the session is already closed
 func (session *SingleSession) IsClosed() bool {
-    select {
+	select {
     case <-session.Done:
         return true
     default:

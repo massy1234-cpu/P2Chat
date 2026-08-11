@@ -1,7 +1,7 @@
 package mldsa_keys
 
 import (
-	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
+	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/encryption"
 	"P2Chat/pkg/apperr"
 
@@ -28,7 +28,7 @@ func Sign(privateKey *memguard.Enclave, message []byte, context []byte, randomiz
 
 	signatureBuffer := make([]byte, mldsa87.SignatureSize)
 
-	err = mldsa87.SignTo(&rawKey, message, context, true, signatureBuffer)
+	err = mldsa87.SignTo(&rawKey, message, context, randomized, signatureBuffer)
 	if err != nil {
 		return nil, apperr.Wrap("error during Signature of the message", err)
 	}
@@ -38,12 +38,8 @@ func Sign(privateKey *memguard.Enclave, message []byte, context []byte, randomiz
 
 
 // verify the message's signature, the context must be the same used in the Sign 
-func verifySignature(publicKey *mldsa87.PublicKey,signedMessage []byte,context []byte) bool {
+func VerifySignature(publicKey *mldsa87.PublicKey, message []byte, context []byte, signature []byte) bool {
 
-	signatureBuffer := make([]byte, mldsa87.SignatureSize)
+	return mldsa87.Verify(publicKey, message, context, signature)
 
-	verify := mldsa87.Verify(publicKey, signedMessage, context, signatureBuffer)
-	
-	return verify
-	
 }

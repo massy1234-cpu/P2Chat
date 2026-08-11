@@ -1,15 +1,14 @@
 package p2log
 
-
 import (
 	"P2Chat/cmd/client/internals/storage"
-	"encoding/json" 						// for a more structured log file
+	"encoding/json" // for a more structured log file
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
-
 
 // ANSI escape codes for colors
 const (
@@ -21,9 +20,7 @@ const (
 	nameDir 	= "Log Files"
 )
 
-
 var encoder *json.Encoder
-
 
 type log struct {
 	Time 	string	`json:"time"`
@@ -32,18 +29,23 @@ type log struct {
 	Args    string	`json:"args"`
 }
 
-
 // Debug : details
 // Info : normal events
 // Warn : something go wrong
 // Error : need attention
 
-
-var file *os.File
-
+var initialized bool = false
+var mu sync.Mutex
 
 // create a log 
 func createLog(prototype string, level int, msg string, args ...any) {
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !initialized {
+		initializeLog()
+	}
+
 	timestamp := time.Now().Format("02-01-2006 15:04:05")
 	argsMsg := fmt.Sprint(args...)
 	Logmsg := fmt.Sprintf("[%s] [%s] %s %v", timestamp, prototype, msg, argsMsg)
@@ -105,14 +107,14 @@ func initMessage(file *os.File) {
 
 
 // initialize the FILE LOG 
-func InitializeLog() {
+func initializeLog() {
 	var err error
 
 	// opening the file
 	dir := filepath.Join(storage.BasePath, nameDir)
 	os.MkdirAll(dir, 0700)
 
-	file, err = os.OpenFile(filepath.Join(dir, "log_console.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(filepath.Join(dir, "log_console.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Println("Error with opening log file : ", err)
 	}
@@ -122,4 +124,6 @@ func InitializeLog() {
 
 	// i notice in the file that the server and the file are opening again
 	initMessage(file)
+
+	initialized = true
 }

@@ -64,6 +64,7 @@ func DialTor(torObject *tor.Tor) (dialer *tor.Dialer, err error) {
 
 
 // initialize the tor process ( proxy + deamon )
+// must call once
 func InitializeTor() (dialer *tor.Dialer,torObj *tor.Tor,err error) {
 	obj,err := TorProcess()
 	if err != nil {
@@ -78,15 +79,6 @@ func InitializeTor() (dialer *tor.Dialer,torObj *tor.Tor,err error) {
 
 	return dialer,obj,err
 }
-
-// close the tor process if it is running
-func CloseTor(torObj *tor.Tor) error {
-	if torObj == nil {
-		return nil
-	}
-	return torObj.Close()
-}
-
 
 // create the connection with the address using the tor network
 func EstablishTor(dialer *tor.Dialer,address string,port int) (connection net.Conn,err error) {
@@ -104,5 +96,12 @@ func EstablishTor(dialer *tor.Dialer,address string,port int) (connection net.Co
 
 }
 
+// close the tor process if it is running
+func CloseTor(torObj *tor.Tor) error {
+	if torObj == nil {
+		return nil
+	}
+	return torObj.Close()
+}
 
 // force new circuit for the registration phase

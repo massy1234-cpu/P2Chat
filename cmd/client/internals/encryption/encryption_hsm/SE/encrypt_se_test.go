@@ -3,7 +3,7 @@
 package HSM
 
 import (
-	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
+	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/argon"
 	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	"P2Chat/cmd/client/internals/HSM/SE"

@@ -20,7 +20,7 @@ import (
 	"runtime"
 	"unsafe"
 
-	"P2Chat/cirl-custom/circl/internal/sha3"
+	"P2Chat/cmd/client/cirl-custom/circl/internal/sha3"
 	"golang.org/x/sys/cpu"
 )
 

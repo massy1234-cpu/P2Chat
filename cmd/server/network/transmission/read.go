@@ -16,7 +16,7 @@ const MaxMessageSize = 64 * 1024
 // read a message from the connection, it removes the padding and verify the checksum, the header is read first
 func ReadMessage(conn net.Conn) (data []byte, err error) {
 
-	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	conn.SetReadDeadline(time.Now().Add(30 * time.Minute))
 
 	var header [38]byte
 
@@ -29,6 +29,14 @@ func ReadMessage(conn net.Conn) (data []byte, err error) {
 	totalSize := binary.BigEndian.Uint32(header[:4])
 	padLen := binary.BigEndian.Uint16(header[4:6])
 	checksum := header[6:]
+
+	if totalSize == 0 {
+		return nil, apperr.New("empty packet")
+	}
+
+	if uint32(padLen) >= totalSize {
+		return nil, apperr.New("invalid padding length")
+	}
 
 	if totalSize > MaxMessageSize {
 		p2log.Error("Packet is too much larger, possible attacker ", err)

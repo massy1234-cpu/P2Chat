@@ -1,7 +1,7 @@
 package mldsa_keys
 
 import (
-	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87"
+	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/argon"
 	data "P2Chat/cmd/client/internals/storage"
 	mldsa_data "P2Chat/cmd/client/internals/storage/mldsa_data"
@@ -28,7 +28,18 @@ func TestStoreKeys(t *testing.T) {
 	//test with some pre-created key for import cycle error
 	//the test want only to verificate that the write and read of the keys is correcly set
 
-	privateKey, publicKey, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password")), true, false, "mldsa")
+	privateKey, publicKey, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password")), false)
+	if err != nil {
+		t.Fatal("error during key creation", err)
+	}
+
+	if err := privateKey.SetChecksum(); err != nil {
+		t.Fatal("error setting private key checksum", err)
+	}
+
+	if err := publicKey.SetChecksum(); err != nil {
+		t.Fatal("error setting public key checksum", err)
+	}
 
 	privateKeyBytes, err := proto.Marshal(privateKey)
 	if err != nil {
@@ -73,20 +84,14 @@ func TestStoreKeys(t *testing.T) {
 // The test call the method CreateKey()
 func TestSignature(t *testing.T) {
 
-	privateKeyStruct, publicKeyStruct, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password1")), false, false, "mldsa")
+	privateKeyStruct, publicKeyStruct, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password1")), false)
 
 	// signature will contain the sign of the key and ctx is an another control that during the Verify() must coincide
 	msg := []byte("message to verify")
 	signature := make([]byte, mldsa87.SignatureSize)
 	ctx := []byte("test")
 
-	// i decided to manage the hash with argon not internal at DecodePrivateKeyMLDSA for better control of the aesKey and for efficency
-	aesKey, err := argon.HashWithArgon(3, encryption.Encaps("password1"), privateKeyStruct.ArgonParams.Salt)
-	if err != nil {
-		t.Fatal("Hashing password with params", err)
-	}
-
-	rawPublicKey, rawPrivateKey, err := DecodePairKeys(publicKeyStruct, privateKeyStruct, aesKey, 3, privateKeyStruct.ArgonParams.Salt)
+	rawPublicKey, rawPrivateKey, err := DecodePairKeys(publicKeyStruct, privateKeyStruct, lockToEnc(t, encryption.Encaps("password1")))
 	if err != nil {
 		t.Fatal("error during decoding keys from struct", err)
 	}
@@ -122,7 +127,7 @@ func TestSignature(t *testing.T) {
 func TestCreateKeysFields(t *testing.T) {
 	const level = 3
 
-	privateKeyStruct, publicKeyStruct, _, err := CreateKeys(level, lockToEnc(t, encryption.Encaps("password1")), false, false, "mldsa")
+	privateKeyStruct, publicKeyStruct, _, err := CreateKeys(level, lockToEnc(t, encryption.Encaps("password1")), false)
 	if err != nil {
 		t.Fatal("error during key creation", err)
 	}
@@ -222,24 +227,19 @@ func TestDecodePublicKeyMLDSAErrors(t *testing.T) {
 }
 
 func TestDecodePrivateKeyMLDSAWrongPassword(t *testing.T) {
-	privateKeyStruct, _, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password1")), false, false, "mldsa")
+	privateKeyStruct, _, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password1")), false)
 	if err != nil {
 		t.Fatal("error during key creation", err)
 	}
 
-	wrongAESKey, err := argon.HashWithArgon(3, encryption.Encaps("wrong-password"), privateKeyStruct.ArgonParams.Salt)
-	if err != nil {
-		t.Fatal("error during wrong key derivation", err)
-	}
-
-	_, err = DecodePrivateKey(privateKeyStruct, wrongAESKey, 3, privateKeyStruct.ArgonParams.Salt)
+	_, err = DecodePrivateKey(lockToEnc(t, encryption.Encaps("wrong-password")), privateKeyStruct)
 	if err == nil {
 		t.Fatal("wrong password should not decrypt private key")
 	}
 }
 
 func TestDecodePrivateKeyMLDSAInvalidKeyField(t *testing.T) {
-	privateKeyStruct, _, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password1")), false, false, "mldsa")
+	privateKeyStruct, _, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password1")), false)
 	if err != nil {
 		t.Fatal("error during key creation", err)
 	}
@@ -253,12 +253,7 @@ func TestDecodePrivateKeyMLDSAInvalidKeyField(t *testing.T) {
 		ArgonParams:   privateKeyStruct.ArgonParams,
 	}
 
-	aesKey, err := argon.HashWithArgon(3, encryption.Encaps("password1"), privateKeyStruct.ArgonParams.Salt)
-	if err != nil {
-		t.Fatal("error during key derivation", err)
-	}
-
-	_, err = DecodePrivateKey(corruptedPrivateKey, aesKey, 3, privateKeyStruct.ArgonParams.Salt)
+	_, err = DecodePrivateKey(lockToEnc(t, encryption.Encaps("password1")), corruptedPrivateKey)
 	if err == nil {
 		t.Fatal("invalid private key field should return error")
 	}

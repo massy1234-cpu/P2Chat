@@ -14,6 +14,7 @@ var dst = []byte("P2CHAT-BLINDBLS_BLS12381G1_XMD:SHA-256_SSWU_RO_")
 // save the actual point
 type BlindState struct {
 	rInv fr.Element
+	msg []byte
 }
  
 // CreateAndBlind map the message on the curve and bond the coordinates with a noise r
@@ -51,7 +52,7 @@ func CreateAndBlind() (*BlindState, *bls.G1Affine, error) {
 	var blinded bls.G1Affine
 	blinded.FromJacobian(&blindedJ)
  
-	return &BlindState{rInv: rInv}, &blinded, nil
+	return &BlindState{rInv: rInv,msg: msg}, &blinded, nil
 }
 
 // remove the noise from the signature, now the server cannot associate

@@ -11,9 +11,9 @@ import (
 	"io"
 	"unsafe"
 
-	"P2Chat/cirl-custom/circl/sign"
-	common "P2Chat/cirl-custom/circl/sign/internal/dilithium"
-	"P2Chat/cirl-custom/circl/sign/mldsa/mldsa87/internal"
+	"P2Chat/cmd/client/cirl-custom/circl/sign"
+	common "P2Chat/cmd/client/cirl-custom/circl/sign/internal/dilithium"
+	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87/internal"
 	"github.com/awnumar/memguard"
 )
 

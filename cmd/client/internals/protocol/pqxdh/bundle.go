@@ -2,8 +2,6 @@ package pqxdh
 
 import (
 	"P2Chat/cmd/client/database"
-	"P2Chat/cmd/client/internals/argon"
-	hsm "P2Chat/cmd/client/internals/encryption/encryption_hsm"
 	mldsa_keys "P2Chat/cmd/client/internals/keys/mldsa"
 	mlkem_keys "P2Chat/cmd/client/internals/keys/mlkem"
 	x25519_keys "P2Chat/cmd/client/internals/keys/x25519"
@@ -102,40 +100,15 @@ func loadIKKeys(password *memguard.Enclave, basePath string) (privateMLDSA *memg
 		return nil, nil, nil, apperr.New("file size check failed for IK keys")
 	}
 
-	// decrypt ML-DSA private key
+	// decrypt ML-DSA private key (Argon2id or HSM handled internally)
 	skStruct := &proto_struct_mldsa.PrivateKeyMLDSA{}
 	if err := proto.Unmarshal(sk, skStruct); err != nil {
 		return nil, nil, nil, apperr.Wrap("unmarshal SK.bin", err)
 	}
 
-	// check if the private key ML-DSA was encrypted with an HSM
-	if skStruct.HsmMethod != 0 {
-
-		plaintext, err := hsm.DecryptHSM(password, skStruct.Key, skStruct.Nonce, int(skStruct.HsmMethod))
-		if err != nil {
-			return nil, nil, nil, apperr.Wrap("decrypt ML-DSA private key with HSM", err)
-		}
-		privateMLDSA = memguard.NewEnclave(plaintext.Bytes())
-		plaintext.Destroy()
-
-	} else {
-
-		pwdBuf, err := password.Open()
-		if err != nil {
-			return nil, nil, nil, apperr.Wrap("open password enclave", err)
-		}
-		defer pwdBuf.Destroy()
-
-		aesKey, err := argon.HashWithArgon(int(skStruct.ArgonParams.Level), pwdBuf, skStruct.ArgonParams.Salt)
-		if err != nil {
-			return nil, nil, nil, apperr.Wrap("derive argon key for ML-DSA", err)
-		}
-		defer aesKey.Destroy()
-
-		privateMLDSA, err = mldsa_keys.DecodePrivateKey(skStruct, aesKey, int(skStruct.ArgonParams.Level), skStruct.ArgonParams.Salt)
-		if err != nil {
-			return nil, nil, nil, apperr.Wrap("decrypt ML-DSA private key", err)
-		}
+	privateMLDSA, err = mldsa_keys.DecodePrivateKey(password, skStruct)
+	if err != nil {
+		return nil, nil, nil, apperr.Wrap("decrypt ML-DSA private key", err)
 	}
 
 	// public ML-DSA key - NOT encrypted
@@ -201,7 +174,7 @@ func CreateBundles(password *memguard.Enclave, level int, HSM bool, ID int) (pub
 // fill the public bundle with MLDSA and store keys in the bundle IK directory
 func FillMLDSA(password *memguard.Enclave, level int, HSM bool, public *structures.PublicBundle, ikDir string) (privateKeyMldsa *memguard.Enclave, err error) {
 
-	privateKeyStruct, publicKeyStruct, privateKeyMldsa, err := mldsa_keys.CreateKeys(level, password, false, HSM, "mldsa")
+	privateKeyStruct, publicKeyStruct, privateKeyMldsa, err := mldsa_keys.CreateKeys(level, password, HSM)
 	if err != nil {
 		return nil, apperr.Wrap("error during the creation of the bundle for pqxdh (mldsa) ", err)
 	}

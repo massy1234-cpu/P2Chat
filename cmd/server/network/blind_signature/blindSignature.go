@@ -1,8 +1,11 @@
 package blindsignature
 
 import (
+	"P2Chat/cmd/client/internals/p2log"
 	"P2Chat/pkg/apperr"
 	"math/big"
+
+	"github.com/awnumar/memguard"
 	bls "github.com/consensys/gnark-crypto/ecc/bls12-381" // contains the point on the curve
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"  // contains the scalar
 )
@@ -16,12 +19,14 @@ type KeysBlindSignature struct {
 }
 
 type PrivateKey struct {
-	x fr.Element
+	//x fr.Element
+	x *memguard.Enclave
 }
 
 type PublicKey struct {
 	Y bls.G2Affine
 }
+
 
 // Create the Public and Private key for the blind signature 
 func GenerateKeyPair() (*PrivateKey,*PublicKey,error) {
@@ -32,6 +37,10 @@ func GenerateKeyPair() (*PrivateKey,*PublicKey,error) {
 	if err != nil {
 		return nil,nil,apperr.Wrap("error in the key creation for blind signature",err)
 	}
+	bytes := x.Bytes()
+	enclave := memguard.NewEnclave(bytes[:])
+	memguard.WipeBytes(bytes[:])
+	defer func(){x.SetZero()}()
 
 	// return some point that are const in this protocol
 	_, _, _, g2Gen := bls.Generators()
@@ -50,14 +59,34 @@ func GenerateKeyPair() (*PrivateKey,*PublicKey,error) {
 	var Y bls.G2Affine
 	Y.FromJacobian(&Yj)
 
-	return &PrivateKey{x:x},&PublicKey{Y:Y},nil
+	return &PrivateKey{x:enclave},&PublicKey{Y:Y},nil
+}
+
+
+func (sk *PrivateKey) GetX() *fr.Element {
+	var x fr.Element
+	
+	buffer,err := sk.x.Open()
+	if err != nil {
+		return nil
+	}
+	x.SetBytes(buffer.Bytes())
+	defer buffer.Destroy()
+
+	return &x
 }
 
 
 // Do a blind signature on a point bond with some noise
 func (sk *PrivateKey) SignBlind(blindedPoint *bls.G1Affine) *bls.G1Affine {
 	xBig := new(big.Int)
-	sk.x.BigInt(xBig)
+	x := sk.GetX()
+	if x == nil {
+		p2log.Error("error during blind signature, x is nil")
+		return nil
+	}
+	defer func(){x.SetZero()}()
+	x.BigInt(xBig)
  
 	var p, res bls.G1Jac
 	p.FromAffine(blindedPoint)

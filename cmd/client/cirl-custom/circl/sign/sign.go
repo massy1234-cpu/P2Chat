@@ -2,7 +2,7 @@
 //
 // A register of schemes is available in the package
 //
-//	P2Chat/cirl-custom/circl/sign/schemes
+//	P2Chat/cmd/client/cirl-custom/circl/sign/schemes
 package sign
 
 import (

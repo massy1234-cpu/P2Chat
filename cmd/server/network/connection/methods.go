@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"P2Chat/cmd/server/network/dispatcher"
 	"P2Chat/cmd/server/network/phases"
 	"P2Chat/cmd/server/network/session"
 )
@@ -35,10 +36,24 @@ func (c *Connection) Listener() {
 		}
 		ID := c.NextID()
 		sess := session.NewSession(ID, stream, c.DeadSessions)
-		sess.Handler = phases.Dispatcher
-		sess.Init()
-		c.ActiveSessions.Store(ID, sess)
+		c.AssignHandler(sess, ID)
 	}
+}
+
+// AssignHandler attaches the generic dispatcher before the session starts.
+func (c *Connection) AssignHandler(sess *session.SingleSession, ID uint32) {
+	sess.Handler = func(byteCode byte, msg []byte, state *any) *phases.Result {
+		handler, err := dispatcher.Dispatcher(byteCode)
+		if err != nil {
+			return phases.FillResult(&phases.Result{}, nil, 0, false, true, err)
+		}
+
+		sess.Handler = handler
+		return handler(byteCode, msg, state)
+	}
+
+	c.ActiveSessions.Store(ID, sess)
+	sess.Init()
 }
 
 // remove the session from the connection and close it
@@ -103,9 +118,9 @@ func (c *Connection) Close() {
 // return true if the connection is already closed
 func (c *Connection) IsClosed() bool {
 	select {
-    case <-c.Done:
-        return true
-    default:
-        return false
-    }
+	case <-c.Done:
+		return true
+	default:
+		return false
+	}
 }

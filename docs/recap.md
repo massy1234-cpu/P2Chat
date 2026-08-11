@@ -1,66 +1,66 @@
 # ML-DSA Security Update
 
-## Obiettivo della regressione
+## Objective of the regression
 
-Questa regressione introduce un primo livello di hardening software per la gestione delle chiavi ML-DSA e dei materiali sensibili in RAM.
+This regression introduces a first level of software hardening for the management of ML-DSA keys and sensitive materials in RAM.
 
-Il problema iniziale era che alcuni valori critici, tra cui `seed`, `eSeed`, `sSeed`, chiave privata e chiave pubblica, potevano restare in memoria ordinaria ed essere osservabili tramite dump della RAM. L'obiettivo non e rendere il sistema "impossibile da violare", ma ridurre in modo concreto l'esposizione dei dati sensibili e pulire la memoria appena possibile.
+The initial problem was that some critical values, including `seed`, `eSeed`, `sSeed`, the private key and the public key, could remain in ordinary memory and be observable via RAM dumps. The objective is not to make the system "impossible to compromise", but to concretely reduce the exposure of sensitive data and clean up the memory as soon as possible.
 
-## Modifiche principali
+## Main changes
 
-### 1. Protezione dei buffer sensibili
+### 1. Protection of sensitive buffers
 
-Nel file [dilithium.go](/Users/massy/Desktop/P2Chat/cirl-custom/circl/sign/mldsa/mldsa87/internal/dilithium.go) alcune variabili sensibili non vengono piu gestite come semplici allocazioni ordinarie, ma tramite `memguard.LockedBuffer`.
+In the file [dilithium.go](/Users/massy/Desktop/P2Chat/cirl-custom/circl/sign/mldsa/mldsa87/internal/dilithium.go) some sensitive variables are no longer handled as simple ordinary allocations, but through `memguard.LockedBuffer`.
 
-Questo porta due benefici pratici:
+This brings two practical benefits:
 
-- blocco delle pagine in RAM tramite `mlock`, per ridurre l'esposizione allo swapping;
-- distruzione esplicita del contenuto tramite `Destroy()` quando il dato non serve piu.
+- locking of pages in RAM via `mlock`, to reduce exposure to swapping;
+- explicit destruction of the content via `Destroy()` when the data is no longer needed.
 
-I valori coinvolti includono in particolare:
+The values involved in particular include:
 
 - `seed`
 - `eSeed`
 - `sSeed`
-- porzioni della chiave privata durante generazione e derivazione
+- portions of the private key during generation and derivation
 
-### 2. Distruzione della chiave privata
+### 2. Destruction of the private key
 
-La struct `PrivateKey` contiene ora un riferimento interno al buffer protetto:
+The `PrivateKey` struct now contains an internal reference to the protected buffer:
 
 ```go
 buf *memguard.LockedBuffer
 ```
 
-Questo permette di associare la vita logica della chiave privata alla vita del buffer protetto e di distruggerlo esplicitamente tramite il metodo:
+This allows associating the logical lifetime of the private key with the lifetime of the protected buffer and destroying it explicitly through the method:
 
 ```go
 func (sk *PrivateKey) Destroy()
 ```
 
-In questo modo la chiave non resta in memoria oltre il necessario.
+In this way the key does not remain in memory longer than necessary.
 
-### 3. Rimozione del seed dalla struct
+### 3. Removal of the seed from the struct
 
-Per scelta progettuale, il seed originale non viene piu conservato nella struct della chiave privata.
+By design choice, the original seed is no longer kept in the private key struct.
 
-La decisione ha un costo funzionale: non e piu possibile ricostruire o replicare la chiave a partire dal seed mantenuto in memoria.
+This decision has a functional cost: it is no longer possible to reconstruct or replicate the key starting from the seed held in memory.
 
-Il vantaggio e che si riduce la superficie di attacco:
+The benefit is that the attack surface is reduced:
 
-- meno dati sensibili persistenti nella struct;
-- minore rischio di leak del seed;
-- minore rischio di replica non autorizzata della chiave.
+- fewer sensitive data persisted in the struct;
+- lower risk of seed leakage;
+- lower risk of unauthorized replication of the key.
 
-## Cifratura della chiave privata
+## Private key encryption
 
-La chiave privata viene protetta appena possibile dopo la generazione. Il flusso attuale e:
+The private key is protected as soon as possible after generation. The current flow is:
 
 1. `password + salt -> Argon2id`
-2. chiave derivata a 32 byte -> `AES-256`
-3. cifratura della chiave privata con `AES-GCM`
+2. derived 32-byte key -> `AES-256`
+3. encryption of the private key with `AES-GCM`
 
-Nel codice client questo passaggio e distribuito principalmente tra:
+In the client code this step is mainly distributed between:
 
 - [argon.go](/Users/massy/Desktop/P2Chat/cmd/client/internals/argon/argon.go)
 - [aes256.go](/Users/massy/Desktop/P2Chat/cmd/client/internals/encryption/aes256.go)
@@ -69,115 +69,115 @@ Nel codice client questo passaggio e distribuito principalmente tra:
 
 ### Argon2id
 
-Sono presenti tre livelli di costo per Argon2id. Il livello piu alto usa molta RAM ed e pensato per massimizzare la resistenza agli attacchi offline, ma ha un impatto prestazionale reale.
+There are three cost levels for Argon2id. The highest level uses a lot of RAM and is designed to maximize resistance to offline attacks, but it has a real performance impact.
 
-Questa scelta e sensata perche permette di bilanciare sicurezza e usabilita in base al contesto.
+This choice makes sense because it allows balancing security and usability based on the context.
 
-### Enclave in memoria
+### In-memory enclave
 
-Nel flusso di decodifica e riapertura della chiave privata viene usato anche `memguard.Enclave`, che consente di mantenere il contenuto cifrato in memoria fino al momento dell'uso e di riaprirlo con `Open()` solo quando serve.
+In the private key decode and reopen flow, `memguard.Enclave` is also used, which allows keeping the encrypted content in memory until the moment of use and reopening it with `Open()` only when needed.
 
-Questo e un buon compromesso per conservare temporaneamente materiale sensibile senza lasciarlo sempre disponibile in chiaro nello spazio di memoria del processo.
+This is a good compromise for temporarily keeping sensitive material without always leaving it available in plaintext in the process's memory space.
 
-## Rischi residui
+## Residual risks
 
-L'hardening introdotto migliora la situazione, ma non elimina ogni finestra di esposizione.
+The hardening introduced improves the situation, but it does not eliminate every exposure window.
 
-I rischi residui principali sono:
+The main residual risks are:
 
-- la chiave derivata con Argon2id esiste comunque per un breve intervallo durante l'uso;
-- il codice della libreria `circl` non e stato interamente riprogettato per la sicurezza della memoria;
-- l'uso di `unsafe.Pointer` per costruire la `PrivateKey` richiede attenzione, anche se qui e una scelta intenzionale e limitata;
-- `mlock` riduce il rischio di swapping, ma non basta da solo a dichiarare il sistema "immune ai dump" in senso assoluto.
+- the key derived with Argon2id nevertheless exists for a brief interval during use;
+- the code of the `circl` library has not been entirely redesigned for memory security;
+- the use of `unsafe.Pointer` to build the `PrivateKey` requires attention, even if here it is an intentional and limited choice;
+- `mlock` reduces the swapping risk, but by itself is not enough to declare the system "immune to dumps" in an absolute sense.
 
-In altre parole: il progetto e sensibilmente piu robusto di prima, ma non va descritto come impenetrabile. La formulazione corretta e che il rischio viene ridotto e circoscritto.
+In other words: the project is noticeably more robust than before, but it should not be described as impenetrable. The correct formulation is that the risk is reduced and contained.
 
-## Nota su `unsafe.Sizeof`
+## Note on `unsafe.Sizeof`
 
-Nel punto seguente:
+In the following point:
 
 ```go
 sk1 := memguard.NewBuffer(int(unsafe.Sizeof(PrivateKey{})))
 sk := (*PrivateKey)(unsafe.Pointer(&sk1.Bytes()[0]))
 ```
 
-usare `PrivateKeySize` non sarebbe corretto, perche `PrivateKeySize` rappresenta la dimensione serializzata o packed della chiave, non la dimensione della struct Go completa in memoria.
+using `PrivateKeySize` would not be correct, because `PrivateKeySize` represents the serialized or packed size of the key, not the size of the full Go struct in memory.
 
-L'uso di `int(unsafe.Sizeof(PrivateKey{}))` e quindi coerente con l'obiettivo di ospitare una `PrivateKey` intera nel buffer protetto.
+The use of `int(unsafe.Sizeof(PrivateKey{}))` is therefore consistent with the goal of hosting an entire `PrivateKey` in the protected buffer.
 
 ## Watchdog
 
-Il watchdog intercetta segnali di terminazione o fault e prova a pulire la memoria sensibile prima dell'uscita del processo.
+The watchdog intercepts termination or fault signals and tries to clean up the sensitive memory before the process exits.
 
-Riferimento: [watchdog.go](/Users/massy/Desktop/P2Chat/cmd/client/internals/errors/watchdog.go)
+Reference: [watchdog.go](/Users/massy/Desktop/P2Chat/cmd/client/internals/errors/watchdog.go)
 
-L'idea e corretta: davanti a `SIGINT`, `SIGTERM`, `SIGSEGV` o `SIGBUS`, il processo riceve il segnale, invoca `memguard.Purge()` e termina con `os.Exit(1)`.
+The idea is correct: on `SIGINT`, `SIGTERM`, `SIGSEGV` or `SIGBUS`, the process receives the signal, invokes `memguard.Purge()` and terminates with `os.Exit(1)`.
 
-Va comunque tenuto presente che, nei crash piu violenti, non esiste garanzia assoluta che ogni cleanup applicativo riesca sempre a completarsi.
+Still, it must be kept in mind that, in the most violent crashes, there is no absolute guarantee that every application cleanup can always complete.
 
-## Persistenza su file
+## File persistence
 
-Nel client, allo stato attuale del repository, le chiavi non sono ancora salvate entrambe come `.dat`:
+In the client, at the current state of the repository, the keys are not yet both saved as `.dat`:
 
-- la chiave privata viene serializzata in protobuf e salvata come `SK.bin`;
-- la chiave pubblica viene salvata come `PK.json`.
+- the private key is serialized into protobuf and saved as `SK.bin`;
+- the public key is saved as `PK.json`.
 
-Riferimenti:
+References:
 
 - [saving_mldsa_keys.go](/Users/massy/Desktop/P2Chat/cmd/client/internals/datacontrol/mldsa/saving_mldsa_keys.go)
 - [mldsa.proto](/Users/massy/Desktop/P2Chat/cmd/client/internals/proto/mldsa/mldsa.proto)
 
-Nel payload della chiave privata sono gia presenti metadati utili come:
+The private key payload already contains useful metadata such as:
 
-- algoritmo
-- parametri Argon2
+- algorithm
+- Argon2 parameters
 - `salt`
 - `nonce`
-- magic byte di versione
+- magic version byte
 - timestamp
 
-La chiave pubblica, essendo pubblica, non richiede cifratura. Tenerla in chiaro evita costo computazionale inutile.
+The public key, being public, does not require encryption. Keeping it in plaintext avoids useless computational cost.
 
-## Organizzazione del codice
+## Code organization
 
-La frammentazione dell'ex file `IK.go` in moduli distinti e una scelta buona e gia giustificata dal repository attuale. Le aree oggi risultano separate in modo piu leggibile:
+Fragmentation of the former `IK.go` file into distinct modules is a good choice and is already justified by the current repository. The areas are now separated in a more readable way:
 
 - Argon2
 - AES-256
 - key management
 - data control
 
-I vantaggi pratici sono reali:
+The practical benefits are real:
 
-- ricerca dei problemi piu rapida;
-- file piu piccoli e leggibili;
-- test piu semplici da scrivere e mantenere.
+- faster problem search;
+- smaller and more readable files;
+- simpler tests to write and maintain.
 
-## Test presenti
+## Tests present
 
-Nel repository sono gia presenti test utili su:
+The repository already contains useful tests on:
 
-- cifratura e decifratura AES: [encryption_test.go](/Users/massy/Desktop/P2Chat/cmd/client/internals/encryption/encryption_test.go)
-- comportamento con password errata: [encryption_test.go](/Users/massy/Desktop/P2Chat/cmd/client/internals/encryption/encryption_test.go)
-- fuzz test su encrypt/decrypt: [encryption_test.go](/Users/massy/Desktop/P2Chat/cmd/client/internals/encryption/encryption_test.go)
-- scrittura e lettura delle chiavi su file: [saving_mldsa_keys_test.go](/Users/massy/Desktop/P2Chat/cmd/client/internals/datacontrol/mldsa/saving_mldsa_keys_test.go)
+- AES encryption and decryption: [encryption_test.go](/Users/massy/Desktop/P2Chat/cmd/client/internals/encryption/encryption_test.go)
+- behavior with wrong password: [encryption_test.go](/Users/massy/Desktop/P2Chat/cmd/client/internals/encryption/encryption_test.go)
+- fuzz test on encrypt/decrypt: [encryption_test.go](/Users/massy/Desktop/P2Chat/cmd/client/internals/encryption/encryption_test.go)
+- writing and reading of keys to file: [saving_mldsa_keys_test.go](/Users/massy/Desktop/P2Chat/cmd/client/internals/datacontrol/mldsa/saving_mldsa_keys_test.go)
 
-Questa base e gia buona per evitare di costruire il progetto sopra primitive non verificate.
+This base is already good to avoid building the project on unverified primitives.
 
-## Bug corretto durante i test
+## Bug fixed during testing
 
-Durante i test e emerso un bug importante: usare direttamente il risultato di `aesKey.Bytes()` e poi chiamare `memguard.WipeBytes()` sullo slice porta a cancellare anche il contenuto protetto referenziato dal buffer originale.
+During testing an important bug emerged: using directly the result of `aesKey.Bytes()` and then calling `memguard.WipeBytes()` on the slice leads to deleting also the protected content referenced by the original buffer.
 
-In pratica, questo pattern e pericoloso:
+In practice, this pattern is dangerous:
 
 ```go
 password := aesKey.Bytes()
 defer memguard.WipeBytes(password)
 ```
 
-perche lo slice restituito da `Bytes()` punta alla stessa area protetta.
+because the slice returned by `Bytes()` points to the same protected area.
 
-La correzione concettualmente giusta e copiare prima i byte in uno slice separato e cancellare solo la copia temporanea:
+The conceptually correct fix is to first copy the bytes into a separate slice and wipe only the temporary copy:
 
 ```go
 password := make([]byte, len(aesKey.Bytes()))
@@ -186,38 +186,39 @@ block, err := aes.NewCipher(password)
 defer memguard.WipeBytes(password)
 ```
 
-## Test argon e primi benchmark
+## Argon tests and first benchmarks
 
-mi sono accorto in seguito ai primi test che i parametri per argon erano davvero troppo elevati e impiegavano un livello di memoria superiore addirittura a 10Gb il che portava a tempi troppo elevati ma sopratutto avevo **invertito** i livelli di argon che ho aggiustato
+I noticed after the first tests that the argon parameters were really too high and used a memory level even above 10GB, which led to times that were too long, but above all I had **inverted** the argon levels, which I then fixed.
 
-i test che ho implementato sono su :
-- casi limite di argon, tramite **table-driven**
-- benchmark su alcune stringhe che permettono di capire piu o meno iterazioni e prestazioni dei vari livelli ( 1,2,3 )
+The tests I implemented are on:
+- boundary cases of argon, via **table-driven**
+- benchmarks on some strings that allow understanding roughly iterations and performance of the various levels (1, 2, 3)
 
-### Test Argon
-qui ho usato la funzione `run` che mi ha permesso di effettuare diversi test e capire quali passavano e quali no, molto utile e pratico nella realtà, inoltre confrontavo gli errori che ho inserito nella struct con quelli che argon mi dava realmente con determianti parametri input errati
+### Argon test
+here I used the `run` function which allowed me to perform several tests and understand which ones passed and which ones did not, very useful and practical in reality; moreover I compared the errors I inserted in the struct with those that argon actually gave me with certain wrong input parameters.
 
-### Benchmark Argon
-usando sempre `run` ma anche `b.N` ho capito che GO usa quest'ultimo per capire quanti test continuare a fare finchè non ha una tempistica corretta per la quale poi può effettuare un test, precedentemente non andava in quanto b.N è impostato ad 1 secondo e se il test impiega meno fa una sorta di errore dove inserisce valori errati
+### Argon benchmark
+always using `run` but also `b.N` I understood that GO uses the latter to figure out how many tests to keep doing until it has a correct timing for which it can then perform a test; previously it did not work because `b.N` is set to 1 second and if the test takes less it does a sort of error where it inserts incorrect values.
 
-per effettuare i test ho usato solo una stringa molto lunga come esempio in quanto variare con diverse stringhe può modificare la reale efficacia del test
+to run the tests I used only a very long string as an example, since varying with different strings can modify the real effectiveness of the test.
 
-ho variato i parametri e inoltre impostato il parametro `threads` usato per argon al numero di CPU che la macchina che usa il codice ha a disposizione
+I varied the parameters and also set the `threads` parameter used by argon to the number of CPUs available on the machine that runs the code.
 
 
-### Base testi vari 
-ho chiesto a Codex di generarmi dei casi limite e verificare se gli errori venissero gestiti correttamente, in particolar modo sule seguenti funzioni :
-- cifratura files e decifratura, verificata con diversi casi limite
-- argon effettuati diversi test con casi limite
-- datacontrol creati test con casi limite + eventuale scrittura di chiave con corruzione del file, verificato che il file non possa piu essere messo nel programma
-  
-## Test consigliati come prossimo passo
+### Base tests — various
+I asked Codex to generate some boundary cases for me and to verify whether the errors were handled correctly, in particular on the following functions:
+- file encryption and decryption, verified with several boundary cases
+- argon, several tests run with boundary cases
+- datacontrol, tests created with boundary cases + possible key writing with file corruption, verified that the file can no longer be loaded into the program
 
-I prossimi test che hanno piu valore sono:
 
-- usare un tipo diverso di cheksum, hash non basta in quanto una persona potrebbe modificare il tutto e successivamente ricreare il checksum
-  
-- controllare che quando vado a leggere le paia di chiavi queste siano un paio corretto ( usando una signature come prova )
+## Tests recommended as next step
+
+The next tests with the most value are:
+
+- use a different type of checksum; hash alone is not enough since a person could modify everything and then recreate the checksum
+
+- check that, when I read the key pairs, they are a correct pair (using a signature as proof)
 
 ### HMAC With Proto Structs - TPM
 
@@ -809,46 +810,46 @@ the HMAC key material itself never appears in the "process RAM" column. only its
 
 ---
 
-## Implementazione TPM effettiva
+## Actual TPM implementation
 
-### Architettura finale: Sealed Blob (non HMAC)
+### Final architecture: Sealed Blob (not HMAC)
 
-Dopo la fase di studio documentata sopra, l'architettura implementata si discosta dall'approccio HMAC descritto nelle sezioni precedenti. La scelta finale è il **sealed blob**:
+After the study phase documented above, the implemented architecture departs from the HMAC approach described in the previous sections. The final choice is the **sealed blob**:
 
-- il TPM genera internamente un segreto casuale
-- lo sigilla sotto la chiave primaria (blob cifrato, inutile su qualsiasi altro TPM)
-- i due blob (`OutPrivate` + `OutPublic`) vengono salvati su disco
-- quando il segreto serve, si chiama `Unseal`: il TPM disigilla e restituisce il segreto in RAM per un istante, poi `memguard` lo prende in carico
+- the TPM internally generates a random secret
+- seals it under the primary key (encrypted blob, useless on any other TPM)
+- the two blobs (`OutPrivate` + `OutPublic`) are saved to disk
+- when the secret is needed, `Unseal` is called: the TPM unseals and returns the secret to RAM for an instant, then `memguard` takes charge of it
 
-Rispetto all'approccio HMAC:
+Compared to the HMAC approach:
 
-| aspetto | HMAC key | Sealed blob (scelto) |
+| aspect | HMAC key | Sealed blob (chosen) |
 |---|---|---|
-| il segreto esce mai dalla RAM del TPM? | no (esce solo il derivato) | sì, brevemente durante Unseal |
-| complessità | maggiore (label, domain separation) | minore |
-| adatto alla fase attuale | no (over-engineering) | sì |
+| does the secret ever leave the TPM's RAM? | no (only the derived value exits) | yes, briefly during Unseal |
+| complexity | greater (label, domain separation) | lower |
+| suitable for the current phase | no (over-engineering) | yes |
 
-L'approccio HMAC rimane documentato in [`linux_legacy.go`](/Users/massy/Desktop/P2Chat/cmd/client/internals/tpm/linux_legacy.go) come riferimento commentato.
+The HMAC approach remains documented in [`linux_legacy.go`](/Users/massy/Desktop/P2Chat/cmd/client/internals/tpm/linux_legacy.go) as commented reference.
 
 ---
 
-### Nuova API go-tpm (command-based)
+### New go-tpm API (command-based)
 
-Il codice legacy mostrato nelle sezioni precedenti usa la vecchia API procedurale di `go-tpm` (`tpm2.OpenTPM`, `tpm2.Create`, ecc.). L'implementazione reale usa la **nuova API command-based**:
+The legacy code shown in the previous sections uses the old procedural API of `go-tpm` (`tpm2.OpenTPM`, `tpm2.Create`, etc.). The real implementation uses the **new command-based API**:
 
 ```
 libreria: github.com/google/go-tpm/tpm2
 transport: github.com/google/go-tpm/tpm2/transport/linuxtpm
 ```
 
-Il pattern cambia da:
+The pattern changes from:
 
 ```go
 // vecchia API (legacy)
 tpm2.CreatePrimary(tpmDev, tpm2.HandleOwner, ...)
 ```
 
-a:
+to:
 
 ```go
 // nuova API (command struct + Execute)
@@ -860,9 +861,9 @@ tpm2.CreatePrimary{
 
 **New2B** is a func that convert a normal declaration of the `primaryTemplate` in a TPM compatible struct
 
-ogni comando è una struct con campi espliciti — più leggibile, più type-safe, allineato con la spec TPM 2.0.
+every command is a struct with explicit fields — more readable, more type-safe, aligned with the TPM 2.0 specification.
 
-un'altra differenza importante è `tpm2.NamedHandle`: nella nuova API, quando si passa un handle come parent a `Load`, bisogna passare anche il `Name` crittografico, non solo l'handle numerico. questo garantisce che il TPM verifichi l'identità del parent prima di procedere.
+another important difference is `tpm2.NamedHandle`: in the new API, when passing a handle as parent to `Load`, you must also pass the cryptographic `Name`, not only the numeric handle. this ensures that the TPM verifies the identity of the parent before proceeding.
 
 ```go
 parentHandle := tpm2.NamedHandle{
@@ -873,9 +874,9 @@ parentHandle := tpm2.NamedHandle{
 
 ---
 
-### Primary template aggiornato
+### Updated primary template
 
-Il template nella nuova API specifica gli attributi e la modalità AES in modo esplicito:
+The template in the new API specifies the attributes and the AES mode explicitly:
 
 ```go
 var primaryTemplate = tpm2.TPMTPublic{
@@ -901,13 +902,13 @@ var primaryTemplate = tpm2.TPMTPublic{
 }
 ```
 
-il template è definito a livello di package (non di funzione) perché `CreateTPMResponse` e `UnsealSecret` devono usare **esattamente lo stesso template**: `CreatePrimary` è deterministico, stesso template + stesso TPM = stessa chiave. se i due template differissero anche di un bit, `Load` fallirebbe.
+the template is defined at package level (not function level) because `CreateTPMResponse` and `UnsealSecret` must use **exactly the same template**: `CreatePrimary` is deterministic, same template + same TPM = same key. if the two templates differed even by one bit, `Load` would fail.
 
 ---
 
 ### Secret template: `TPMAlgNull` = sealed blob
 
-Il template del segreto figlio usa `TPMAlgNull` come scheme:
+The child secret template uses `TPMAlgNull` as scheme:
 
 ```go
 secretTemplate := tpm2.TPMTPublic{
@@ -926,32 +927,32 @@ secretTemplate := tpm2.TPMTPublic{
 }
 ```
 
-`TPMAlgNull` come scheme dice al TPM: questo oggetto non è una chiave operativa (non firma, non fa HMAC), è solo un contenitore di dati sigillati. il TPM genera il segreto casualmente internamente e lo sigilla — l'unica operazione permessa è `Unseal`.
+`TPMAlgNull` as scheme tells the TPM: this object is not an operational key (it does not sign, it does not do HMAC), it is only a container of sealed data. the TPM generates the secret randomly internally and seals it — the only permitted operation is `Unseal`.
 
 ---
 
-### Funzioni implementate
+### Functions implemented
 
-Riferimento: [`linux.go`](/Users/massy/Desktop/P2Chat/cmd/client/internals/tpm/linux.go)
+Reference: [`linux.go`](/Users/massy/Desktop/P2Chat/cmd/client/internals/tpm/linux.go)
 
 #### `AvailableTPM() bool`
-controlla la presenza di `/dev/tpmrm0` (il TPM resource manager). restituisce `true` se il file esiste.
+checks for the presence of `/dev/tpmrm0` (the TPM resource manager). returns `true` if the file exists.
 
 #### `StatusTPM() (bool, error)`
-legge `/sys/class/tpm/tpm0/tpm_version_major` e verifica che la versione sia >= 2. restituisce `false` con errore se il TPM non è disponibile o la versione non è supportata.
+reads `/sys/class/tpm/tpm0/tpm_version_major` and verifies that the version is >= 2. returns `false` with error if the TPM is not available or the version is not supported.
 
 #### `CreateTPMResponse() (*tpm2.CreateResponse, error)`
-crea il sealed blob e restituisce la coppia `OutPrivate + OutPublic`. il segreto non esce dal TPM durante questa chiamata — esce solo come blob cifrato. il chiamante deve poi passare la risposta a `StoreBlobs`.
+creates the sealed blob and returns the `OutPrivate + OutPublic` pair. the secret does not leave the TPM during this call — it only exits as an encrypted blob. the caller must then pass the response to `StoreBlobs`.
 
-flusso interno:
-1. apre `/dev/tpmrm0`
-2. `CreatePrimary` con `primaryTemplate` → `primaryHandle`
-3. `Create` con `secretTemplate` → `createResp` (contiene private e public blob)
-4. `FlushContext` sul primary handle
-5. restituisce `createResp`
+internal flow:
+1. opens `/dev/tpmrm0`
+2. `CreatePrimary` with `primaryTemplate` → `primaryHandle`
+3. `Create` with `secretTemplate` → `createResp` (contains private and public blob)
+4. `FlushContext` on the primary handle
+5. returns `createResp`
 
 #### `UnsealSecret(private TPM2BPrivate, public TPM2BPublic) (*memguard.LockedBuffer, error)`
-ricrea la chiave primaria (deterministicamente), carica il blob figlio con `Load`, disigilla con `Unseal`, e immediatamente copia il segreto in un `memguard.LockedBuffer` (mlock). i byte grezzi vengono azzerati con `WipeBytes` prima di restituire.
+recreates the primary key (deterministically), loads the child blob with `Load`, unseals with `Unseal`, and immediately copies the secret into a `memguard.LockedBuffer` (mlock). the raw bytes are zeroed with `WipeBytes` before returning.
 
 ```go
 buf := memguard.NewBuffer(len(unsealResp.OutData.Buffer))
@@ -959,10 +960,10 @@ copy(buf.Bytes(), unsealResp.OutData.Buffer)
 memguard.WipeBytes(unsealResp.OutData.Buffer) // azzeramento immediato
 ```
 
-la finestra di esposizione in RAM ordinaria è la stessa pochi microsecondi tra `Unseal` e `WipeBytes`.
+the exposure window in ordinary RAM is the same few microseconds between `Unseal` and `WipeBytes`.
 
 #### `StoreBlobs(private TPM2BPrivate, public TPM2BPublic) error`
-serializza i blob con `tpm2.Marshal` (che produce il formato binario canonico TPM 2.0) e li salva su file tramite `datacontrol.SaveBytesOnFile`:
+serializes the blobs with `tpm2.Marshal` (which produces the canonical TPM 2.0 binary format) and saves them to file via `datacontrol.SaveBytesOnFile`:
 
 ```
 /data/blobs/privateBlob.bin  ← blob cifrato (inutile senza il TPM che l'ha creato)
@@ -971,7 +972,7 @@ serializza i blob con `tpm2.Marshal` (che produce il formato binario canonico TP
 
 ---
 
-### Flusso completo aggiornato (Sealed Blob)
+### Updated complete flow (Sealed Blob)
 
 ```
                       DISK                      TPM internal RAM          process RAM
@@ -994,24 +995,24 @@ after Flush:    privateBlob.bin           (tutti gli handle flushed)    secret (
 
 ---
 
-### Supporto multi-OS
+### Multi-OS support
 
-| OS | stato |
+| OS | state |
 |---|---|
-| Linux | implementato (`linux.go`) |
-| Windows | non ancora implementato (`windows.go` vuoto) |
-| macOS | non ancora implementato (`macos.go` vuoto) |
+| Linux | implemented (`linux.go`) |
+| Windows | not yet implemented (`windows.go` empty) |
+| macOS | not yet implemented (`macos.go` empty) |
 
-macOS non ha un TPM standard (ha il Secure Enclave, ma con API completamente diverse). Windows ha un TPM accessibile tramite `tbs.dll` (TPM Base Services). entrambi sono lasciati come estensione futura.
+macOS has no standard TPM (it has the Secure Enclave, but with completely different APIs). Windows has a TPM accessible via `tbs.dll` (TPM Base Services). both are left as future extensions.
 
 ---
 
-### Rischi residui aggiornati (TPM)
+### Updated residual risks (TPM)
 
-- il segreto esiste in RAM ordinaria per un brevissimo intervallo tra `Unseal` e `memguard.WipeBytes` — finestra non eliminabile ma molto ristretta
-- se il processo viene killato tra `Unseal` e `WipeBytes`, il segreto potrebbe restare in memoria — il watchdog con `memguard.Purge()` riduce questo rischio ma non lo elimina nei crash violenti
-- i blob su disco (`privateBlob.bin`) sono inutili senza il TPM che li ha creati, ma la loro integrità non è verificata con HMAC — un attaccante che li corrompe causa un errore al `Load`, non una compromissione silenziosa
-- il TPM da solo non protegge da un attaccante con accesso fisico al laptop acceso e al TPM non bloccato — combinare con password (come descritto nella sezione Dual Factor) rimane la scelta corretta
+- the secret exists in ordinary RAM for a very brief interval between `Unseal` and `memguard.WipeBytes` — a window that cannot be eliminated but is very narrow
+- if the process is killed between `Unseal` and `WipeBytes`, the secret could remain in memory — the watchdog with `memguard.Purge()` reduces this risk but does not eliminate it in violent crashes
+- the blobs on disk (`privateBlob.bin`) are useless without the TPM that created them, but their integrity is not verified with HMAC — an attacker who corrupts them causes an error at `Load`, not a silent compromise
+- the TPM alone does not protect against an attacker with physical access to a powered-on laptop and an unlocked TPM — combining with a password (as described in the Dual Factor section) remains the correct choice
 
 ---
 
@@ -1198,6 +1199,7 @@ SPI bus — 4 physical traces on the PCB   (sniffable but nowadays mitigated)
     │
     ▼
 TPM chip                    (discrete microcontroller — Infineon, Nuvoton, etc.)
+
 ```
 
 the TPM protocol is fully public (TCG TPM 2.0 Part 3 — Commands). the SE protocol between `AppleKeyStore.kext` and the SE hardware is completely proprietary — Apple does not publish it. you can only interact with the SE through the high-level Security.framework API; there is no `/dev/se` you can write raw commands to.
@@ -1854,7 +1856,7 @@ i tought that do the copy of a `mlock()` variable, use it and then call `wipebyt
 is not a good move for 2 reasons:
 - i copy the data on a safe memory area in a NOT safe area
 - i encrease the time exposure of the data in the memory
-  
+
 use directly `.Bytes()` is better that copy the data on another varible and then wipe it because `.Bytes()` return the direct reference to a data in a safe memory zone, so it cannot be dumped from the RAM 
 
 
@@ -2362,85 +2364,85 @@ i created a scheme on paper ![paper_scheme](images/IMG_5903.jpg)
 
 converted in markdown for more detailed and clean description
 
-# Blind BLS — Schema del flusso
+# Blind BLS — Flow schema
 
-## 0. Scalare vs Punto — la distinzione fondamentale
+## 0. Scalar vs Point — the fundamental distinction
 
-| | **Scalare** | **Punto sulla curva** |
+| | **Scalar** | **Point on the curve** |
 |---|---|---|
-| Cos'è | Un numero intero, e basta | Una coppia di coordinate `(x, y)` |
-| Dove vive | Nell'intervallo `{0, ..., ℓ-1}` (ℓ = ordine del gruppo) | Sulla curva: deve soddisfare `y² = x³ + a·x + b mod p` |
-| Esempi nel nostro schema | `x` (chiave privata), `r` (rumore), `r⁻¹` | `M`, `M'`, `σ`, `σ'`, `G`, `Y` (chiave pubblica) |
-| Ha coordinate? | No | Sì, sempre |
+| What it is | An integer, nothing more | A pair of coordinates `(x, y)` |
+| Where it lives | In the interval `{0, ..., ℓ-1}` (ℓ = group order) | On the curve: must satisfy `y² = x³ + a·x + b mod p` |
+| Examples in our scheme | `x` (private key), `r` (noise), `r⁻¹` | `M`, `M'`, `σ`, `σ'`, `G`, `Y` (public key) |
+| Does it have coordinates? | No | Yes, always |
 
-**Moltiplicare uno scalare per un punto** (es. `r · M`) **non è** una moltiplicazione normale tra numeri — è **addizione ripetuta** del punto a se stesso, `r` volte, usando la regola geometrica di somma tra punti su curva ellittica (retta secante/tangente + riflessione). In pratica si calcola velocemente con l'algoritmo **double-and-add**, non sommando letteralmente `r` volte.
+**Multiplying a scalar by a point** (e.g. `r · M`) **is not** a normal multiplication between numbers — it is **repeated addition** of the point to itself, `r` times, using the geometric rule for adding points on an elliptic curve (secant/tangent line + reflection). In practice it is computed quickly with the **double-and-add** algorithm, not by literally adding `r` times.
 
-Il risultato di `scalare · punto` è **sempre un altro punto** — mai un numero. Ecco perché `M`, `M'` e `σ` sono tutti punti nello schema sotto: derivano l'uno dall'altro tramite moltiplicazioni scalari, ma restano sempre punti sulla curva.
+The result of `scalar · point` is **always another point** — never a number. That is why `M`, `M'` and `σ` are all points in the scheme below: they derive from one another through scalar multiplications, but they always remain points on the curve.
 
-## 1. Hash del messaggio su un numero
+## 1. Hash the message to a number
 
 ```
 u = SHA-256(msg) mod p
 ```
 
-`u` viene passato alla funzione di map-to-curve (BLS12) → ottengo il punto:
+`u` is passed to the map-to-curve function (BLS12) → I obtain the point:
 
 ```
 M
 ```
 
-## 2. Mascheramento di M con il rumore R
+## 2. Masking M with the noise R
 
 ```
-M' = M moltiplicato per il rumore r
+M' = M multiplied by the noise r
 ```
 
-> Sarebbe una somma ripetuta (`M + M + ... + M`, r volte) — **modo difficile da invertire**.
+> It would be a repeated sum (`M + M + ... + M`, r times) — **hard to invert**.
 
-Geometricamente: intersezione tra la curva e i punti di `M` e poi... ripetuto sull'asse x, ripetuto `r` volte (double-and-add).
+Geometrically: intersection between the curve and the points of `M` and then... repeated on the x axis, repeated `r` times (double-and-add).
 
-## 3. Il client manda M' al server
+## 3. The client sends M' to the server
 
 ```
 Client ────────── M' ──────────> Server
 ```
 
-## 4. Il server firma alla cieca
+## 4. The server signs blindly
 
 ```
-Server effettua:  σ' = x · M'
+Server performs:  σ' = x · M'
 ```
 
-x = chiave privata del server (**randomica**, è un numero casuale)
+x = server private key (**random**, it is a random number)
 
 ```
-Server ────────── manda al client ──────────> σ'
+Server ────────── sends to client ──────────> σ'
 ```
 
-## 5. Il client rimuove il rumore
+## 5. The client removes the noise
 
 ```
-Client effettua:  σ = r⁻¹ · σ'
+Client performs:  σ = r⁻¹ · σ'
 ```
 
-→ **Rumore rimosso**: ora rimane la firma. Il server **non sa** su cosa è stato firmato.
+→ **Noise removed**: the signature now remains. The server **does not know** what was signed.
 
-## 6. Il client invia (σ, msg) al server
-
-```
-Client ────────── manda (σ, msg) ──────────> Server
-```
-
-## 7. Il server verifica
+## 6. The client sends (σ, msg) to the server
 
 ```
-Server verifica:  msg + σ + Y  (Y = chiave pubblica)
+Client ────────── sends (σ, msg) ──────────> Server
 ```
 
-- `msg` → **messaggio iniziale**
-- `σ` → **firma**
+## 7. The server verifies
 
-Output: **il server non sa di aver già firmato** questo specifico (msg, σ) — non può ricollegarlo alla sessione di firma originale (blindness).
+```
+Server verifies:  msg + σ + Y  (Y = public key)
+```
+
+- `msg` → **initial message**
+- `σ` → **signature**
+
+Output: **the server does not know it has already signed** this specific (msg, σ) — it cannot link it back to the original signing session (blindness).
 '''
 
 the implementation in the code is available in the codebase (server -> blind signature)
@@ -2488,14 +2490,72 @@ the process is divided into 3 parts :
 
 ### Server side
 
-what information need the server for start the comunication ?
+i tried to create the most symmetrical and coherent network architecture possible between the client side and the server side.
+The basic structure, common to both sides, is a single process per session called the **Router** which is the only consumer of the `Incoming` channel. The Router dispatches every message to the **Handler** of the corresponding phase and, based on the result, sends the responses, sets a timeout on the evolution of the phase, or closes the stream.
+
+### "Phase" abstraction (phases)
+
+To make every phase (registration, bundle, chat, ...) autonomous and encapsulated, a shared "phase" convention has been introduced on both the client and server side:
+
+- **Uniform Handler**: `func(byteCode byte, msg []byte, state *any) *phases.Result`
+- **`phases.Result`** — the outcome of a single phase step, with fields:
+  - `Replies [][]byte` (messages to send, already with the tag inline)
+  - `NextDeadline time.Duration` (timeout for the next step, applied by the Router with `timer.Reset`)
+  - `Completed bool` (phase concluded successfully)
+  - `CloseStream bool`
+  - `Err error`
+  - helpers `phases.FillResult(...)` and `phases.StripTag(msg, tag)` to remove/verify the first byte.
+- **`GetPhaseState[T any](phaseState any) *T`** — converts the shared `state any` into the typed struct of a specific phase.
+- **Phase state** kept inside the session (`phaseState any`), so the Router does not know the details of the phase: it only calls the Handler and reacts to the `Result`.
+
+### Dispatcher (server)
+
+- The server exposes `dispatcher.Dispatcher(byteCode)` which, from a bytecode, returns the Handler of the corresponding phase (for now only `RegisterTokenReq` → registration handler).
+- `Connection.AssignHandler` wires as the initial Handler a wrapper that resolves the dispatch on the first message and then replaces itself with the resolved Handler for the subsequent steps of the same session.
+- Each phase has its own `CheckSize(tag, len)` to validate the payload length before processing it.
+
+### Registration phases
+
+Registration refactored as a **state machine** (previously it was a linear flow). The server maintains a `RegistrationServer` with states:
+
+`stateAwaitRequest → stateAwaitNonce → stateAwaitSignature → stateCompleted | stateFailed`
+
+- **stateAwaitRequest**: waits for the `RegisterTokenReq` bytecode; generates a per-session secret + random jump, sends the PoW (`PowToken`, serialized protobuf challenge).
+- **stateAwaitNonce**: receives `ChallengeResponse` (8B big-endian nonce), verifies PoW; if valid it moves to waiting for the signature.
+- **stateAwaitSignature**: receives `SignatureRequest` (blind point M', compressed 48B G1), signs blindly and returns `TokenEmission` (σ', 48B).
+- The PoW level (and therefore the wait time `stateAwaitNonce → stateAwaitSignature`) is chosen based on the *server load*.
+
+The client maintains a `RegistrationClient` with states:
+
+`stateAwaitChallenge → stateAwaitToken → stateCompleted | stateFailed`
+
+- **stateAwaitChallenge**: receives `PowToken`, decodes the challenge and solves it (`pow.Solve`); in parallel it creates the blind state (`CreateAndBlind`) and sends in one shot `ChallengeResponse` + `SignatureRequest` (nonce and M').
+- **stateAwaitToken**: receives `TokenEmission`, removes the noise (`Unblind`) and obtains the unblinded token σ.
+
+### Probe/anti-spam (server side)
+
+- **`load_report`** has been made a pure function without circular dependencies: `Init(*atomic.Uint64)` connects the client counter, `LoadReport() (pow.Level, error)` maps `clientsNumber → Level` PoW (thresholds 50/150/300/500). The correct count of connected clients to initialize the atomic is still missing.
+- **Server database BadgerDB** (`cmd/server/database`): `Init`, `GC` (interval that scales with load via `getTimeFromLoad`), `IsInitialized`, `CloseDB`. The GC adapts the VLog GC interval to the current PoW level (from 300s to 15s).
+- **Blind signature** server: `InitBlindSignature()` generates (`GenerateKeyPair`) and stores in a thread-safe way the blind BLS key pair in the package `network/blind_signature` (private key in `memguard.Enclave`, public key in G2). `SerializeAndSave(token)` hashes and saves the token in the DB (`TokenDeduplication`) to prevent its reuse.
+
+### Complete registration flow (implemented)
+
+1. the client opens a new yamux stream (`Connection.Registration`) and sends `RegisterTokenReq` (0x01, empty payload)
+2. the server (Dispatcher → registration handler) responds with `PowToken` (0x02, protobuf challenge)
+3. the client solves the PoW and sends `ChallengeResponse` (0x03, nonce) + `SignatureRequest` (0x04, M')
+4. the server verifies the challenge (MAC + zero-bits) and signs M' blindly → `TokenEmission` (0x05, σ')
+5. the client removes the noise from σ' and obtains the final token
+
 
 ## Protocol message types
 
-| Byte | Name | Direction | Description |
-|------|------|-----------|-------------|
-| `0x00` | DUMMY | Bidirectional | Dummy request for traffic obfuscation. Random payload, discarded by receiver. |
-| `0x01` | REGISTER_TOKEN_REQ | Client → Server | Request a registration token. Initiates the blind signature flow. |
-| `0x02` | POW_TOKEN | Server → Client | Proof-of-Work challenge for token minting. |
-| `0x03` | CHALLENGE_RESPONSE | Client → Server | Challenge response for the token request. |
-| `0x04` | TOKEN_FOR_SIGNATURE | Server → Client | Signed token that can be used for registration signature. |
+The bytecodes are now defined in the `phases` packages (`bytecodes.go`) on both the client and the server side.
+
+| Byte | Name | Direction | Payload | Description |
+|------|------|-----------|---------|-------------|
+| `0x00` | DUMMY | Client → Server | random ≥1B | Dummy request for traffic obfuscation (padding). The server discards it without going through the Router. |
+| `0x01` | REGISTER_TOKEN_REQ | Client → Server | 0B | Request for a registration token. Starts the blind signature flow. |
+| `0x02` | POW_TOKEN | Server → Client | 56-65B | Proof-of-Work challenge (serialized protobuf challenge, `proto_struct_pow.Challenge`). |
+| `0x03` | CHALLENGE_RESPONSE | Client → Server | 8B | Nonce (big-endian) that solves the PoW challenge. |
+| `0x04` | SIGNATURE_REQUEST | Client → Server | 48B | Blind point M' (compressed affine G1) to sign. |
+| `0x05` | TOKEN_EMISSION | Server → Client | 48B | Blind signature σ' (compressed affine G1); the client removes the noise and obtains σ. |

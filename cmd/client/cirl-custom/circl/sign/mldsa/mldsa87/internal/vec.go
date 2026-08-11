@@ -3,7 +3,7 @@
 package internal
 
 import (
-	common "P2Chat/cirl-custom/circl/sign/internal/dilithium"
+	common "P2Chat/cmd/client/cirl-custom/circl/sign/internal/dilithium"
 )
 
 // A vector of L polynomials.

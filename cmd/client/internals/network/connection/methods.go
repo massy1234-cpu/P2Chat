@@ -2,13 +2,17 @@ package connection
 
 import (
 	"P2Chat/cmd/client/internals/network/phases"
+	"P2Chat/cmd/client/internals/network/phases/registration"
 	session "P2Chat/cmd/client/internals/network/session"
 	"P2Chat/cmd/client/internals/p2log"
 	"P2Chat/pkg/apperr"
 	"sync"
+
 	"github.com/cretz/bine/tor"
 	"github.com/hashicorp/yamux"
 )
+
+type Handler func(byteCode byte, msg []byte, state *any) *phases.Result
 
 // --- connection ---
 // create a new connection with the yamux session and start its goroutines
@@ -59,13 +63,14 @@ func (c *Connection) ReleaseID(number uint32) {
 	c.mu.Unlock()
 }
 
-// create a new session for the stream and start it
+// create a new session linked with the stream but IT WONT START
+// have to be started with Init()
 func (c *Connection) NewSession(stream *yamux.Stream) *session.SingleSession {
 	ID := c.NextID()
 	sess := session.NewSession(ID, stream, c.GlobalOut, c.DeadSessions)
-	sess.Init()
-	p2log.Debug("connection listener, new session ID:", ID)
 	c.ActiveSessions.Store(ID, sess)
+
+	p2log.Debug("connection listener, new session ID:", ID)
 	return sess
 }
 
@@ -121,8 +126,11 @@ func (c *Connection) Registration() error {
 	}
 
 	sess := c.NewSession(newStream)
-	sess.Tag = "registration token request"
-	phases.RequestTokenRegistration(sess)
+	sess.Tag = "Registration token request"
+	sess.Handler = registration.Handler
+	sess.Init()
+
+	sess.PutOutgoing([]byte{phases.RegisterTokenReq})	// request the registration token to the server  
 
 	return nil
 }

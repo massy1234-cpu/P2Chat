@@ -1,7 +1,7 @@
 package dilithium
 
 import (
-	"P2Chat/cirl-custom/circl/sign/internal/dilithium/params"
+	"P2Chat/cmd/client/cirl-custom/circl/sign/internal/dilithium/params"
 )
 
 const (

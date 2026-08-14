@@ -45,8 +45,9 @@ func ReadMessage(conn net.Conn) (data []byte, err error) {
 
 	buf := make([]byte, totalSize)
 	_, err = io.ReadFull(conn, buf)
+	
 	if err != nil {
-		p2log.Error("Packet NOT received correctly", err)
+		p2log.Warning("connection closed, read error:", err)
 		return nil, err
 	}
 

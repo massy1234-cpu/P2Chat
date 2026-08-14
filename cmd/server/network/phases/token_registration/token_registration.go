@@ -89,6 +89,7 @@ func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 			currentState.state = stateFailed
 			return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid registration token request"))
 		}
+		p2log.Debug("server registration: received RegisterTokenReq, emitting PoW challenge")
 
 		secret := make([]byte, 64)
 		if _, err := rand.Read(secret); err != nil {
@@ -105,6 +106,7 @@ func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 		currentState.secret = secret
 		currentState.challenge = challenge
 		currentState.state = stateAwaitNonce
+		p2log.Info("server registration: PoW challenge emitted, level: ", currentState.level)
 		return phases.FillResult(result, [][]byte{reply}, currentState.level.MaxWaitTime(), false, false, nil)
 
 	case stateAwaitNonce:
@@ -119,11 +121,14 @@ func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 			currentState.state = stateFailed
 			return phases.FillResult(result, nil, 0, false, true, err)
 		}
+		p2log.Debug("server registration: received nonce: ", nonce)
 
 		if !pow.Verify(currentState.secret, currentState.challenge, nonce) {
 			currentState.state = stateFailed
+			p2log.Error("server registration: PoW verification failed")
 			return phases.FillResult(result, nil, 0, false, true, apperr.New("challenge not solved"))
 		}
+		p2log.Info("server registration: PoW verified")
 
 		currentState.state = stateAwaitSignature
 		currentState.PowPassed = true
@@ -135,6 +140,7 @@ func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 			currentState.state = stateFailed
 			return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid blind signature request"))
 		}
+		p2log.Debug("server registration: received SignatureRequest, generating blind signature")
 
 		if currentState.PowPassed != true {
 			p2log.Error("client did not passed the PoW")
@@ -149,12 +155,15 @@ func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 		}
 
 		currentState.state = stateCompleted
+		p2log.Info("server registration: blind signature sent, token emission complete")
 		return phases.FillResult(result, [][]byte{reply}, 0, true, false, nil)
 
 	case stateCompleted:
+		p2log.Warning("server registration: message received after completion")
 		return phases.FillResult(result, nil, 0, true, false, nil)
 
 	case stateFailed:
+		p2log.Warning("server registration: message received after failure")
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("registration phase failed"))
 	}
 

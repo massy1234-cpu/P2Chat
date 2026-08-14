@@ -1,4 +1,4 @@
-package tor
+package client_tor
 
 import (
 	"P2Chat/cmd/client/internals/storage"
@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,8 +21,7 @@ import (
 func TorProcess(dataDir ...string) (torObject *tor.Tor,err error) {
 
 	// TOR network bootstrap
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
+	ctx, _:= context.WithTimeout(context.Background(), 2*time.Minute)
 
 	dir := filepath.Join(storage.BasePath,"Tor")
 	if len(dataDir) > 0 && dataDir[0] != "" {
@@ -31,14 +31,23 @@ func TorProcess(dataDir ...string) (torObject *tor.Tor,err error) {
 	// specify the path where store data
 	conf := &tor.StartConf{
 		DataDir: dir,
-		TempDataDirBase: filepath.Join(dir,"Tmp"),
+		TempDataDirBase: filepath.Join(dir, "Tmp"),
 		RetainTempDataDir: false,
+		DebugWriter: os.Stdout, 
+		ExtraArgs: []string{
+			"--ClientRejectInternalAddresses", "0",
+		},
 	}
 
 	// start the bootstrap
 	torObj,err := tor.Start(ctx,conf)
 	if err != nil {
-		return nil, apperr.Wrap("error during opnening of a TOR connection",err)
+		return nil, apperr.Wrap("error during opening of a TOR connection",err)
+	}
+
+	err = torObj.EnableNetwork(ctx, true) // true = aspetta il bootstrap completo
+	if err != nil {
+		return nil, apperr.Wrap("error with EnableNetwork Tor deamon",err)
 	}
 
 	return torObj,nil

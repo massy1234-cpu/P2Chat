@@ -38,6 +38,7 @@ func (c *Connection) CheckConnection() {
 	case <- c.Done:
 		return
 	case <- c.MasterSession.CloseChan():
+		p2log.Error("connection with the server lost,closing... ")
 		c.Close()
 	}
 }
@@ -84,7 +85,7 @@ func (c *Connection) ReleaseSession(ID uint32) {
 	// if the session is not closed yet i close it 
 	sess := value.(*session.SingleSession)
 	if !sess.IsClosed() {
-		sess.Close()
+		sess.ForceClose()
 	}
 
 	p2log.Debug("session released, ID:", ID)
@@ -125,11 +126,14 @@ func (c *Connection) Registration() error {
 		return apperr.Wrap("error during the registration phase: ", err)
 	}
 
+	p2log.Info("opened new stream for the registration phase")
+
 	sess := c.NewSession(newStream)
 	sess.Tag = "Registration token request"
 	sess.Handler = registration.Handler
 	sess.Init()
 
+	p2log.Info("registration session started, sending RegisterTokenReq")
 	sess.PutOutgoing([]byte{phases.RegisterTokenReq})	// request the registration token to the server  
 
 	return nil
@@ -150,9 +154,9 @@ func (c *Connection) CheckDeadSessions() {
 // --- connection manger ---
 
 // create a new connection manager, it wrap the connection with the tor process and the global out chan
-func NewConnectionManager(connection *Connection, tor *tor.Tor, globalOut chan<- []byte) (*ConnectionManager, error) {
+func NewConnectionManager(connection *Connection, tor *tor.Tor, globalOut chan<- []byte) *ConnectionManager {
 	if connection == nil || tor == nil || globalOut == nil {
-		return nil, apperr.New("connection manager: nil parameter")
+		return nil
 	}
 
 	connectionManager := &ConnectionManager{
@@ -161,7 +165,7 @@ func NewConnectionManager(connection *Connection, tor *tor.Tor, globalOut chan<-
 		GlobalOut:	globalOut,
 		Done:		make(chan struct{}),
 	}
-	return connectionManager, nil
+	return connectionManager
 }
 
 // watchdog that watch the tor process and the connection, when one exit it close everything

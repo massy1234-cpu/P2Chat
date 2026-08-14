@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"P2Chat/cmd/client/internals/p2log"
 	"P2Chat/cmd/server/network/dispatcher"
 	"P2Chat/cmd/server/network/phases"
 	"P2Chat/cmd/server/network/session"
@@ -32,10 +33,12 @@ func (c *Connection) Listener() {
 	for {
 		stream, err := c.MasterSession.AcceptStream()
 		if err != nil {
+			p2log.Debug("connection listener stopped, master session closed")
 			return
 		}
 		ID := c.NextID()
 		sess := session.NewSession(ID, stream, c.DeadSessions)
+		p2log.Debug("server connection accepted a new stream, ID:", ID)
 		c.AssignHandler(sess, ID)
 	}
 }
@@ -63,7 +66,7 @@ func (c *Connection) ReleaseSession(sess *session.SingleSession) {
 		return
 	}
 	c.ReleaseID(sess.ID)
-	sess.Close()
+	sess.ForceClose()
 }
 
 // close all the active sessions of the connection

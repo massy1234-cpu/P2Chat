@@ -21,5 +21,6 @@ type SingleSession struct {
 	Handler		 func(byteCode byte,msg []byte,state *any) *phases.Result 		// linked to the correct protocol to handle
 	phaseState	 any												// contains the struct that keep in memory the state of the phase
 	WaitGroup	 sync.WaitGroup
-	NotTransmitted	 atomic.Int64
+	StopRead	 chan struct{}
+	StopDummy	 chan struct{}
 }

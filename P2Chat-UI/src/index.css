@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #07090f;
+  --color-panel: #0c1019;
+  --color-panel-2: #111726;
+  --color-edge: #1c2436;
+  --color-edge-2: #27314a;
+  --color-cyan-glow: #22d3ee;
+  --color-violet-glow: #a78bfa;
+  --color-fg: #e2e8f0;
+  --color-muted: #7c8aa5;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-ink);
+  color: var(--color-fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+::selection {
+  background: rgba(34, 211, 238, 0.28);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #27314a transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #27314a;
+  border-radius: 8px;
+}
+
+.glass {
+  background: linear-gradient(180deg, rgba(17, 23, 38, 0.82), rgba(12, 16, 25, 0.92));
+  border: 1px solid var(--color-edge);
+}
+
+.glow-ring {
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.25), 0 0 32px -8px rgba(34, 211, 238, 0.18);
+}
+
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(39, 49, 74, 0.16) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(39, 49, 74, 0.16) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 20%, black 30%, transparent 75%);
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+.pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, #151c2c 25%, #1d2639 50%, #151c2c 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+@keyframes step-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.step-in { animation: step-in 0.35s ease-out both; }

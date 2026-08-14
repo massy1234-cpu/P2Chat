@@ -19,8 +19,14 @@ P2Chat/
 │   ├── keys/mlkem/                    # ML-KEM-768 keygen, encapsulate, decapsulate
 │   ├── keys/x25519/                   # X25519 ECDH + XEdDSA signatures
 │   ├── network/                       # Networking layer
-│   │   ├── tls/
-│   │   │   └── tls.go                 # TLS 1.3 (X25519MLKEM768) + Tor dialer → ConnectionManager
+│   │   ├── bootstrap/                 # Composizione connessione server (TLS + TOR + yamux)
+│   │   │   ├── bootstrap.go           # InitializeServerConn(addr, port): TOR→TLS→Wrapper, propagation errori
+│   │   │   └── wrapper.go             # Wrapper: yamux.Client + ConnectionManager (restituisce anche error)
+│   │   ├── client_tls/
+│   │   │   └── tls.go                 # TLSonTor: TLS 1.3 (X25519MLKEM768) su connessione Tor
+│   │   ├── client_tor/
+│   │   │   ├── tor.go                 # TorProcess, DialTor, InitializeTor, EstablishTor
+│   │   │   └── tor_test.go
 │   │   ├── transmission/
 │   │   │   ├── read.go                # ReadMessage: 38B header (4B size + 2B padLen + 32B checksum)
 │   │   │   └── write.go               # WriteMessage + CreateHeader + CreatePadding
@@ -162,7 +168,7 @@ correttamente. Segui la procedura sopra per build + .app + codesign.
   - `*memguard.LockedBuffer` → segreti a breve durata (buffer mlock'd, va distrutto subito dopo l'uso)
   - `[]byte` → dati pubblici, ciphertext, nonce, salt, firme
 - **Argon2id levels:** 1=low (fast), 2=medium, 3=high (slow, high memory). Don't invert them.
-- **Watchdog goroutine** runs at startup (`errors.Watchdog()`). Purges mlock'd memory on SIGINT/SIGTERM/SIGSEGV/SIGBUS.
+- **Watchdog goroutine** runs at startup (`p2chat_errors.Watchdog()`). Purges mlock'd memory on SIGINT/SIGTERM/SIGSEGV/SIGBUS.
 - **SHA-256 checksums** on protobuf payloads via `SetChecksum()`/`VerifyChecksum()`.
 
 ## Key file locations on disk
@@ -237,6 +243,7 @@ All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/d
 | `Connection` struct (client) | ✅ Done | yamux-based, SingleSession + Connection con Done pattern |
 | `Wrapper` (yamux) | ✅ Done | yamux.Client + ConnectionManager |
 | `Tor bootstrap` + dialer | ✅ Done | `InitializeTor` con cleanup, `CloseTor` |
+| Bootstrap network refactor | ✅ Done | Client socket separati per ruolo: `client_tls` (TLSonTor), `client_tor` (InitializeTor/EstablishTor), `bootstrap` (InitializeServerConn → TOR→TLS→Wrapper). `Wrapper` ora restituisce anche `error` (yamux + ConnectionManager) e `InitializeServerConn` propaga ogni errore con `apperr.Wrap` |
 | Dummy requests | ✅ Done | Timer random 0.4-1.4s, tag `0x00`, size `DummyBase ± 250`, rand.Read, `crypto/rand` |
 | Padding messaggi | ✅ Done | `CreatePadding()` in WriteMessage, `crypto/rand`, checksum solo su dati veri |
 | Debug logging | ✅ Done | p2log su session lifecycle + send/receive + connection events |
@@ -491,6 +498,7 @@ Connection:
 - Simulare connessione post-implementazione
 
 ### Server
+- **Bootstrap server** (speculare al client): `bootstrap.StartServer(addr, port, ctx)` crea `client.NewRegistry()` + certificato + `server_tls.Listen`, lancia in goroutine `AcceptLoop(ctx, ln, registry)` (loop accept → `client.NewClient(conn, registry.DeadClients)` → `registry.AddClient(c)`), ritorna `RegistryClients`. Variante B: inizializzazione nel main. `AcceptLoop` resta pubblico per ciclo di vita gestito dal chiamante
 - Implementare BadgerDB per storage utenti/bundle
 - Integrare EKM layer con ML-DSA pinned keys
 - Buildare Dockerfile server

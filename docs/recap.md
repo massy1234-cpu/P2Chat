@@ -2559,3 +2559,26 @@ The bytecodes are now defined in the `phases` packages (`bytecodes.go`) on both 
 | `0x03` | CHALLENGE_RESPONSE | Client → Server | 8B | Nonce (big-endian) that solves the PoW challenge. |
 | `0x04` | SIGNATURE_REQUEST | Client → Server | 48B | Blind point M' (compressed affine G1) to sign. |
 | `0x05` | TOKEN_EMISSION | Server → Client | 48B | Blind signature σ' (compressed affine G1); the client removes the noise and obtains σ. |
+
+
+### Good and Force Close
+
+during some tests with the connection for verify the execution of the token registration i notice from the LOG files a some particular type of errors :
+
+```go 
+[WARNING] Packet NOT received correctly EOF            ← 1
+[ERROR]   error: session listener closed, ID: 1 EOF    ← 2
+[WARNING] force closing session, ID: 1                 ← 3
+[ERROR]   data transmission error                      ← 4
+[ERROR]   error writing message data transmission error ← 5
+```
+
+this happened after the token registration request phase and was strange because it all was did correctly
+but after i realized that i had planned a `Close()` function that closed all the process of the session in the case that should accour some problem or errors so when the phase was completed the use of `Close()` forced the closing of the session create some problem for
+- Outgoing chan still NOT empty
+- Listener closed with force
+so i separate the Close functino in `GoodClose()` and `ForceClose()` where the first must be used for graceful closing and the second used when some problems or error occour in the session
+
+now the phase doesnt create any error 
+
+PS i did this modify also in the server 

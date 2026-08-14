@@ -23,6 +23,7 @@ func NewSession(ID uint32, stream *yamux.Stream, deadSessions chan<- uint32) *Si
 		Done:         make(chan struct{}),
 		Handler:      nil,
 		phaseState:   nil,
+		StopRead:     make(chan struct{}),
 	}
 }
 
@@ -39,12 +40,18 @@ func (s *SingleSession) Listener() {
 	for {
 		data, err := transmission.ReadMessage(s.Stream)
 		if err != nil {
-			p2log.Debug("server session listener closed, ID:", s.ID, err)
-			s.Close()
+			select {
+			case <-s.StopRead:
+				p2log.Debug("server session listener closed correctly, ID:", s.ID)
+				return
+			default:
+			}
+			p2log.Error("server session listener closed, ID:", s.ID, err)
+			s.ForceClose()
 			return
 		}
 
-		p2log.Debug("server session received tag:", s.Tag, "len:", len(data))
+		p2log.Debug("server session received tag:", s.Tag, "\tlen:", len(data))
 		// ignore the dummy requests, doesnt even put it in the Incoming chan
 		if data[0] == 0x00 {
 			continue
@@ -53,6 +60,8 @@ func (s *SingleSession) Listener() {
 		select {
 		case s.Incoming <- data:
 		case <-s.Done:
+			return
+		case <-s.StopRead:
 			return
 		}
 	}
@@ -82,7 +91,7 @@ func (s *SingleSession) Writer() {
 			if err != nil {
 				s.NotTransmitted.Add(1)
 				p2log.Error("error writing message", err)
-				s.Close()
+				s.ForceClose()
 				return
 			}
 		case <-s.Done:
@@ -104,15 +113,30 @@ func (session *SingleSession) PutOutgoing(data []byte) {
 	}
 }
 
-// close the session, the stream and signal the dead session to the connection
-func (s *SingleSession) Close() {
+// ForceClose abruptly terminates the session on error: it closes the stream and
+// signals the shutdown to every goroutine. It only touches the session, never the
+// connection.
+func (s *SingleSession) ForceClose() {
 	s.Once.Do(func() {
+		p2log.Warning("server force closing session, ID:", s.ID)
 		s.Stream.Close()
 		close(s.Done)
 		select {
 		case s.DeadSessions <- s.ID:
 		default:
 		}
+	})
+}
+
+// GoodClose gracefully terminates the session after a completed phase: it stops the
+// listener, waits for every pending real message to be transmitted, then signals the
+// shutdown. It keeps the stream writable while flushing.
+func (s *SingleSession) GoodClose() {
+	s.Once.Do(func() {
+		close(s.StopRead)
+		s.Stream.SetReadDeadline(time.Now())
+		s.Flush(15 * time.Second)
+		close(s.Done)
 	})
 }
 
@@ -155,7 +179,7 @@ func (s *SingleSession) Router() error {
 			return apperr.New("session closed")
 
 		case <-timer.C:
-			s.Close()
+			s.ForceClose()
 			p2log.Error("stream closed, timeout error")
 			return apperr.New("error timeout")
 
@@ -169,31 +193,34 @@ func (s *SingleSession) Router() error {
 			}
 
 			if len(msg) < 1 {
-				s.Close()
+				s.ForceClose()
 				p2log.Error("session closed")
 				return apperr.New("payload received is not valid")
 			}
 
+			p2log.Debug("server router received tag: ", fmt.Sprintf("0x%02x", msg[0]), "\tlen:", len(msg)-1)
+
 			result = s.Handler(msg[0], msg[1:], &s.phaseState)
 
 			if result == nil {
-				s.Close()
+				s.ForceClose()
 				return apperr.New("result is nil, something wrong")
 			}
 
 			if result.Err != nil {
-				s.Close()
+				s.ForceClose()
 				p2log.Error("server phase error", result.Err.Error())
 				return apperr.Wrap("server phase error", result.Err)
 			}
 
 			if result.CloseStream {
-				s.Close()
+				s.ForceClose()
 				p2log.Error("stream closed, session with ID :" , s.ID , "closed")
 				return apperr.New("stream closed, session with ID :" + fmt.Sprint(s.ID) + "closed" )
 			}
 
 			for _, value := range result.Replies {
+				p2log.Debug("server router sending reply tag: ", fmt.Sprintf("0x%02x", value[0]), "\tlen:", len(value))
 				s.PutOutgoing(value)
 			}
 
@@ -201,7 +228,12 @@ func (s *SingleSession) Router() error {
 				if len(result.Replies) > 0 {
 					s.Flush(5 * time.Second)
 				}
-				s.Close()
+
+				// close the connection after a random time (symmetric with client)
+				timeRandom := network.CryptoInt(500) + 200
+				time.Sleep(time.Duration(timeRandom) * time.Microsecond)
+
+				s.GoodClose()
 				p2log.Info("stream closed, phase completed with success")
 				return nil
 			}

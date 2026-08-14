@@ -21,4 +21,5 @@ type SingleSession struct {
 	phaseState     any
 	WaitGroup      sync.WaitGroup
 	NotTransmitted atomic.Int64
+	StopRead       chan struct{}
 }

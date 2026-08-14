@@ -15,7 +15,7 @@ const (
 	colorReset  = "\033[0m"
 	colorCyan   = "\033[36m"
 	colorGreen  = "\033[32m"
-	colorYellow = "\033[33m"
+	colorOrange = "\033[38;5;214m" // 256-color orange (no standard ANSI orange)
 	colorRed    = "\033[31m"
 	nameDir 	= "Log Files"
 )
@@ -57,7 +57,7 @@ func createLog(prototype string, level int, msg string, args ...any) {
 	case 2:
 		color2 = colorGreen
 	case 3:
-		color2 = colorYellow
+		color2 = colorOrange
 	case 4:
 		color2 = colorRed
 	}

@@ -1,4 +1,4 @@
-package tor
+package client_tor
 
 import (
 	"os/exec"

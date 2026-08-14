@@ -8,9 +8,10 @@ import (
 	challengeStruct "P2Chat/cmd/client/internals/proto_generated/PoW/proto_struct_pow"
 	"P2Chat/pkg/apperr"
 	"encoding/binary"
+	"time"
+
 	bls "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	proto "google.golang.org/protobuf/proto"
-	"time"
 )
 
 // define the registration phase states
@@ -91,12 +92,14 @@ func Handler(byteCode byte, msg []byte, state *any) *phases.Result {
 			currentState.state = stateFailed
 			return phases.FillResult(result, nil, 0, false, true, err)
 		}
+		p2log.Info("registration received PoW challenge, level: ", challenge.GetLevel())
 
 		nonce, err := solveChallenge(challenge)
 		if err != nil {
 			currentState.state = stateFailed
 			return phases.FillResult(result, nil, 0, false, true, err)
 		}
+		p2log.Info("registration PoW solved, nonce: ", nonce)
 
 		blindState, obfuscated, err := blindsignature.CreateAndBlind()
 		if err != nil {
@@ -104,6 +107,7 @@ func Handler(byteCode byte, msg []byte, state *any) *phases.Result {
 			currentState.state = stateFailed
 			return phases.FillResult(result, nil, 0, false, true, apperr.Wrap("error creating blind signature request", err))
 		}
+		p2log.Debug("registration blind signature request created")
 
 		nonceReply := make([]byte, 9)
 		nonceReply[0] = phases.ChallengeResponse
@@ -138,6 +142,8 @@ func Handler(byteCode byte, msg []byte, state *any) *phases.Result {
 			return phases.FillResult(result, nil, 0, false, true, apperr.New("registration blind state is nil"))
 		}
 
+		p2log.Debug("token obfuscated received")
+
 		blindedSignature, err := GetTokenObfuscated(msg)
 		if err != nil {
 			p2log.Error("error converting blinded signature", err)
@@ -145,9 +151,13 @@ func Handler(byteCode byte, msg []byte, state *any) *phases.Result {
 			return phases.FillResult(result, nil, 0, false, true, err)
 		}
 
+		p2log.Debug("proceed with the deobfuscation...")
+
 		token := currentState.blindState.Unblind(blindedSignature)
 		currentState.token = &token
 		currentState.state = stateCompleted
+
+		p2log.Info("registration phase completed, token obtained")
 
 		return phases.FillResult(result, nil, 0, true, false, nil)
 

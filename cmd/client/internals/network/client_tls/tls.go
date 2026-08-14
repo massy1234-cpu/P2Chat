@@ -1,4 +1,4 @@
-package tls
+package client_tls
 
 import (
 	"crypto/tls"

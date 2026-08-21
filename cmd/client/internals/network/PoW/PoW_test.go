@@ -9,7 +9,7 @@ import (
 )
 
 func TestSolveTiming(t *testing.T) {
-	if os.Getenv("POW_TIMING") == "1" {
+	if os.Getenv("POW_TIMING") != "1" {
 		t.Skip("set POW_TIMING=1 to run the timing benchmark")
 	}
 

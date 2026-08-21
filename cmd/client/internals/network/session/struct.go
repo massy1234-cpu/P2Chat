@@ -8,13 +8,14 @@ import (
 )
 
 type SingleSession struct {
-	ID           uint32
-	Tag          string
-	Stream       *yamux.Stream
-	Incoming     chan []byte
-	Outgoing     chan []byte
-	GlobalOut    chan<- []byte
-	DeadSessions chan<- uint32
+	ID           uint32					// identificator inside the MAP
+	Tag          string					// what the session do 
+	Stream       *yamux.Stream			// network channel
+	Incoming     chan []byte			// Listener
+	Outgoing     chan []byte			// Writer
+	Local		 chan []byte			// for router
+	GlobalOut    chan<- []byte			// for application modify
+	DeadSessions chan<- uint32			// for allert the connection struct and delete the session
 	Once         sync.Once
 	Done         chan struct{}
 	DummyBase    atomic.Int64

@@ -21,6 +21,7 @@ func NewSession(ID uint32, stream *yamux.Stream, globalOut chan<- []byte, deadSe
 		Stream:       stream,
 		Incoming:     make(chan []byte, 128),
 		Outgoing:     make(chan []byte, 128),
+		Local:        make(chan []byte, 64),
 		GlobalOut:    globalOut,
 		DeadSessions: deadSessions,
 		Done:         make(chan struct{}),
@@ -107,9 +108,6 @@ func (session *SingleSession) Writer() {
 // Router is the only process that can read from Incoming
 // have the role to route the process
 func (session *SingleSession) Router() error {
-	var bytecode byte
-	var slice []byte
-
 	if session.Handler == nil {
 		return apperr.New("Handler is nil")
 	}
@@ -129,68 +127,92 @@ func (session *SingleSession) Router() error {
 			return apperr.New("error timeout")
 
 		case msg := <- session.Incoming:
-			// stop the timer and drain (if present) the chan timer.C
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
 			if len(msg) < 1 {
 				session.ForceClose()
 				return apperr.New("router session ID: " + fmt.Sprint(session.ID) + " closed")
 			}
-			bytecode = msg[0]
-			slice = msg[1:]
-
-			p2log.Debug("router received tag: ", fmt.Sprintf("0x%02x", bytecode), "\tlen:", len(slice))
-
-			result := session.Handler(bytecode,slice,&session.phaseState)		// call the protocol function
-
-			// parse the result
-			if result == nil {
-				session.ForceClose()
-				return apperr.New("result is nil, something goes wrong")
+			if err := session.process(timer, msg[0], msg[1:]); err != nil {
+				return err
 			}
 
-			if result.Err != nil {
-				session.ForceClose()
-				p2log.Error("phase generated an error: ", result.Err.Error())
-				return apperr.New("router session ID: " + fmt.Sprint(session.ID) + " closed")
+		case event := <- session.Local:
+			if len(event) < 1 {
+				continue
 			}
-
-			if result.CloseStream {
-				session.ForceClose()
-				p2log.Error("stream closed during the stream")
-				return apperr.New("stream closed during the stream")
-			}
-
-			for _,value := range result.Replies {
-				p2log.Debug("router sending reply tag: 0x", fmt.Sprintf("%02x", value[0]), "len:", len(value))
-				session.PutOutgoing(value)
-			}
-
-			if result.Completed {
-				for i := range result.Replies {
-					session.PutOutgoing(result.Replies[i])
-				}
-				
-				// close the connection after a random time
-				timeRandom := network.CryptoInt(500) + 200
-				time.Sleep(time.Duration(timeRandom) * time.Microsecond)
-
-				session.GoodClose()
-				p2log.Info("Phase completed with success, session with ID :",fmt.Sprint(session.ID),",closed")
-				return nil
-			}
-
-			// set the timeout only if the NextDeadLine have a time setted
-			if result.NextDeadline > 0{
-				timeout := result.NextDeadline.Abs()
-				timer.Reset(timeout)
+			if err := session.process(timer, event[0], event[1:]); err != nil {
+				return err
 			}
 		}
 	}
+}
+
+// process handles one bytecode+payload through the phase handler, used both for
+// network messages (Incoming) and local events (Local).
+func (session *SingleSession) process(timer *time.Timer, bytecode byte, slice []byte) error {
+	// stop the timer and drain (if present) the chan timer.C
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+
+	p2log.Debug("router received tag: ", fmt.Sprintf("0x%02x", bytecode), "\tlen:", len(slice))
+
+	result := session.Handler(bytecode,slice,&session.phaseState)		// call the protocol function
+
+	// parse the result
+	if result == nil {
+		session.ForceClose()
+		return apperr.New("result is nil, something goes wrong")
+	}
+
+	if result.Err != nil {
+		session.ForceClose()
+		p2log.Error("phase generated an error: ", result.Err.Error())
+		return apperr.New("router session ID: " + fmt.Sprint(session.ID) + " closed")
+	}
+
+	if result.CloseStream {
+		session.ForceClose()
+		p2log.Error("stream closed during the stream")
+		return apperr.New("stream closed during the stream")
+	}
+
+	for _,value := range result.Replies {
+		p2log.Debug("router sending reply tag: 0x", fmt.Sprintf("%02x", value[0]), "len:", len(value))
+		session.PutOutgoing(value)
+	}
+
+	// forward the user notification to the application, without blocking if the session is closed
+	for _, value := range result.GlobalOut {
+		select {
+		case session.GlobalOut <- value:
+		case <-session.Done:
+		}
+	}
+
+	if result.Completed {
+		for i := range result.Replies {
+			session.PutOutgoing(result.Replies[i])
+		}
+		
+		// close the connection after a random time
+		timeRandom := network.CryptoInt(500) + 200
+		time.Sleep(time.Duration(timeRandom) * time.Microsecond)
+
+		session.GoodClose()
+		p2log.Info("Phase completed with success, session with ID :",fmt.Sprint(session.ID),",closed")
+		return nil
+	}
+
+	// set the timeout only if the NextDeadLine have a time setted
+	if result.NextDeadline > 0{
+		timeout := result.NextDeadline.Abs()
+		timer.Reset(timeout)
+	}
+
+	return nil
 }
 
 
@@ -199,6 +221,14 @@ func delay() {
 	time.Sleep(time.Duration(network.CryptoInt(500)+200) * time.Millisecond)
 }
 
+
+// PutRouter injects a local event (bytecode + payload) into the router's Local chan
+func (session *SingleSession) PutRouter(bytecode byte, payload []byte) {
+	select {
+	case session.Local <- append([]byte{bytecode}, payload...):
+	case <-session.Done:
+	}
+}
 
 // put the data in the Outgoing chan for send it, do not add the header or the padding here
 func (session *SingleSession) PutOutgoing(data []byte) {

@@ -10,6 +10,10 @@ import (
 
 func SaveSets(arraySet [][]byte, bundleName string) error {
 
+	if !IsInitialized() {
+		return apperr.New("database not initialized")
+	}
+
 	var err error
 	identifierBytes := []byte("bundle:"+bundleName)
 
@@ -41,6 +45,10 @@ func SaveSets(arraySet [][]byte, bundleName string) error {
 
 // save the private part of the bundle inside the database, serialize the privateBundle inside of it
 func SavePrivateBundle(privateBundle *structures.PrivateBundle,bundleName string) error {
+
+	if !IsInitialized() {
+		return apperr.New("database not initialized")
+	}
 
 	var err error
 	

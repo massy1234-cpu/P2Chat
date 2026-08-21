@@ -92,6 +92,127 @@ func (x *Challenge) GetMac() []byte {
 	return nil
 }
 
+// is the struct used for the token verification execute from the server
+type TokenVerification struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Token         []byte                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	M             []byte                 `protobuf:"bytes,2,opt,name=m,proto3" json:"m,omitempty"`
+	Challenge     *Challenge             `protobuf:"bytes,3,opt,name=challenge,proto3" json:"challenge,omitempty"`
+	Signature     *Signature             `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TokenVerification) Reset() {
+	*x = TokenVerification{}
+	mi := &file_cmd_client_internals_proto_PoW_pow_challenge_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TokenVerification) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TokenVerification) ProtoMessage() {}
+
+func (x *TokenVerification) ProtoReflect() protoreflect.Message {
+	mi := &file_cmd_client_internals_proto_PoW_pow_challenge_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TokenVerification.ProtoReflect.Descriptor instead.
+func (*TokenVerification) Descriptor() ([]byte, []int) {
+	return file_cmd_client_internals_proto_PoW_pow_challenge_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *TokenVerification) GetToken() []byte {
+	if x != nil {
+		return x.Token
+	}
+	return nil
+}
+
+func (x *TokenVerification) GetM() []byte {
+	if x != nil {
+		return x.M
+	}
+	return nil
+}
+
+func (x *TokenVerification) GetChallenge() *Challenge {
+	if x != nil {
+		return x.Challenge
+	}
+	return nil
+}
+
+func (x *TokenVerification) GetSignature() *Signature {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
+type Signature struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Obfuscated    []byte                 `protobuf:"bytes,1,opt,name=Obfuscated,proto3" json:"Obfuscated,omitempty"`
+	HashPk        []byte                 `protobuf:"bytes,2,opt,name=hashPk,proto3" json:"hashPk,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Signature) Reset() {
+	*x = Signature{}
+	mi := &file_cmd_client_internals_proto_PoW_pow_challenge_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Signature) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Signature) ProtoMessage() {}
+
+func (x *Signature) ProtoReflect() protoreflect.Message {
+	mi := &file_cmd_client_internals_proto_PoW_pow_challenge_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Signature.ProtoReflect.Descriptor instead.
+func (*Signature) Descriptor() ([]byte, []int) {
+	return file_cmd_client_internals_proto_PoW_pow_challenge_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *Signature) GetObfuscated() []byte {
+	if x != nil {
+		return x.Obfuscated
+	}
+	return nil
+}
+
+func (x *Signature) GetHashPk() []byte {
+	if x != nil {
+		return x.HashPk
+	}
+	return nil
+}
+
 var File_cmd_client_internals_proto_PoW_pow_challenge_proto protoreflect.FileDescriptor
 
 const file_cmd_client_internals_proto_PoW_pow_challenge_proto_rawDesc = "" +
@@ -101,7 +222,17 @@ const file_cmd_client_internals_proto_PoW_pow_challenge_proto_rawDesc = "" +
 	"\ttimestamp\x18\x01 \x01(\x03R\ttimestamp\x12\x12\n" +
 	"\x04salt\x18\x02 \x01(\fR\x04salt\x12\x14\n" +
 	"\x05level\x18\x03 \x01(\rR\x05level\x12\x10\n" +
-	"\x03mac\x18\x04 \x01(\fR\x03macBBZ@P2Chat/cmd/client/internals/proto_generated/PoW/proto_struct_powb\x06proto3"
+	"\x03mac\x18\x04 \x01(\fR\x03mac\"\xad\x01\n" +
+	"\x11TokenVerification\x12\x14\n" +
+	"\x05token\x18\x01 \x01(\fR\x05token\x12\f\n" +
+	"\x01m\x18\x02 \x01(\fR\x01m\x129\n" +
+	"\tchallenge\x18\x03 \x01(\v2\x1b.proto_struct_pow.ChallengeR\tchallenge\x129\n" +
+	"\tsignature\x18\x04 \x01(\v2\x1b.proto_struct_pow.SignatureR\tsignature\"C\n" +
+	"\tSignature\x12\x1e\n" +
+	"\n" +
+	"Obfuscated\x18\x01 \x01(\fR\n" +
+	"Obfuscated\x12\x16\n" +
+	"\x06hashPk\x18\x02 \x01(\fR\x06hashPkBBZ@P2Chat/cmd/client/internals/proto_generated/PoW/proto_struct_powb\x06proto3"
 
 var (
 	file_cmd_client_internals_proto_PoW_pow_challenge_proto_rawDescOnce sync.Once
@@ -115,16 +246,20 @@ func file_cmd_client_internals_proto_PoW_pow_challenge_proto_rawDescGZIP() []byt
 	return file_cmd_client_internals_proto_PoW_pow_challenge_proto_rawDescData
 }
 
-var file_cmd_client_internals_proto_PoW_pow_challenge_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_cmd_client_internals_proto_PoW_pow_challenge_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_cmd_client_internals_proto_PoW_pow_challenge_proto_goTypes = []any{
-	(*Challenge)(nil), // 0: proto_struct_pow.Challenge
+	(*Challenge)(nil),         // 0: proto_struct_pow.Challenge
+	(*TokenVerification)(nil), // 1: proto_struct_pow.TokenVerification
+	(*Signature)(nil),         // 2: proto_struct_pow.Signature
 }
 var file_cmd_client_internals_proto_PoW_pow_challenge_proto_depIdxs = []int32{
-	0, // [0:0] is the sub-list for method output_type
-	0, // [0:0] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	0, // 0: proto_struct_pow.TokenVerification.challenge:type_name -> proto_struct_pow.Challenge
+	2, // 1: proto_struct_pow.TokenVerification.signature:type_name -> proto_struct_pow.Signature
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_cmd_client_internals_proto_PoW_pow_challenge_proto_init() }
@@ -138,7 +273,7 @@ func file_cmd_client_internals_proto_PoW_pow_challenge_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cmd_client_internals_proto_PoW_pow_challenge_proto_rawDesc), len(file_cmd_client_internals_proto_PoW_pow_challenge_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   1,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -2,7 +2,8 @@ package connection
 
 import (
 	"P2Chat/cmd/client/internals/network/phases"
-	"P2Chat/cmd/client/internals/network/phases/registration"
+	bundlereg "P2Chat/cmd/client/internals/network/phases/bundle_reg"
+	"P2Chat/cmd/client/internals/network/phases/token_registration"
 	session "P2Chat/cmd/client/internals/network/session"
 	"P2Chat/cmd/client/internals/p2log"
 	"P2Chat/pkg/apperr"
@@ -13,10 +14,11 @@ import (
 )
 
 type Handler func(byteCode byte, msg []byte, state *any) *phases.Result
+type PutOnRouter func()
 
 // --- connection ---
 // create a new connection with the yamux session and start its goroutines
-func NewConnection(globalOut chan<- []byte,session *yamux.Session) *Connection {
+func NewConnection(globalOut chan []byte,session *yamux.Session) *Connection {
 
 	connectionScheme := &Connection{
 		MasterSession:		session,
@@ -118,27 +120,6 @@ func (c *Connection) Close() {
 }
 
 
-// open a new stream for the registration phase and start the token request flow
-func (c *Connection) Registration() error {
-	newStream, err := c.MasterSession.OpenStream()
-	if err != nil {
-		p2log.Error("error during registration phase", err)
-		return apperr.Wrap("error during the registration phase: ", err)
-	}
-
-	p2log.Info("opened new stream for the registration phase")
-
-	sess := c.NewSession(newStream)
-	sess.Tag = "Registration token request"
-	sess.Handler = registration.Handler
-	sess.Init()
-
-	p2log.Info("registration session started, sending RegisterTokenReq")
-	sess.PutOutgoing([]byte{phases.RegisterTokenReq})	// request the registration token to the server  
-
-	return nil
-}
-
 // goroutine that read the dead sessions chan and release them from the connection
 func (c *Connection) CheckDeadSessions() {
 	for {
@@ -151,10 +132,54 @@ func (c *Connection) CheckDeadSessions() {
 	}
 }
 
+// open a new stream for the registration phase and start the token request flow
+func (c *Connection) TokenRegistration() error {
+	newStream, err := c.MasterSession.OpenStream()
+	if err != nil {
+		p2log.Error("error during registration phase", err)
+		return apperr.Wrap("error during the registration phase: ", err)
+	}
+
+	p2log.Info("opened new stream for the registration phase")
+
+	sess := c.NewSession(newStream)
+	sess.Tag = "Registration token request"
+	sess.Handler = token_registration.Handler
+	sess.Init()
+
+	p2log.Info("registration session started, sending RegisterTokenReq")
+	sess.PutOutgoing([]byte{phases.RegisterTokenReq})	// request the registration token to the server  
+
+	return nil
+}
+
+// open a new stream for the bundle upload phase and start the flow. It returns
+// the session so the orchestrator can inject local events (token, nickname,
+// bundle, signed originalM) via the Local chan.
+func (c *Connection) BundleUpload() (*session.SingleSession, error) {
+	newStream, err := c.MasterSession.OpenStream()
+	if err != nil {
+		p2log.Error("error during bundle upload phase", err)
+		return nil, apperr.Wrap("error during the bundle upload phase: ", err)
+	}
+
+	p2log.Info("opened new stream for the bundle upload phase")
+
+	sess := c.NewSession(newStream)
+	sess.Tag = "Bundle upload phase"
+	sess.Handler = bundlereg.Handler
+	sess.Init()
+
+	p2log.Info("Upload bundle phase started")
+	// the bundle handler waits for the registration token from the Local chan
+	// (injected by the orchestrator via PutRouter) before sending anything
+	return sess, nil
+}
+
 // --- connection manger ---
 
 // create a new connection manager, it wrap the connection with the tor process and the global out chan
-func NewConnectionManager(connection *Connection, tor *tor.Tor, globalOut chan<- []byte) *ConnectionManager {
+func NewConnectionManager(connection *Connection, tor *tor.Tor, globalOut chan []byte) *ConnectionManager {
 	if connection == nil || tor == nil || globalOut == nil {
 		return nil
 	}

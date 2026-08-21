@@ -13,7 +13,7 @@ type Connection struct {
 	nextID         uint32
 	freeIDs        []uint32
 	mu             sync.Mutex
-	GlobalOut      chan<- []byte
+	GlobalOut      chan []byte
 	Once           sync.Once
 	Done           chan struct{}
 }
@@ -21,7 +21,7 @@ type Connection struct {
 type ConnectionManager struct {
 	Conn      *Connection
 	Tor       *tor.Tor
-	GlobalOut chan<- []byte
+	GlobalOut chan []byte
 	Once      sync.Once
 	Done      chan struct{}
 }

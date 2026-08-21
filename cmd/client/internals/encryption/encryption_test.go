@@ -94,7 +94,15 @@ func TestEncryptionAndDecryption(t *testing.T) {
 				defer encryptKey.Destroy()
 			}
 
-			ciphertext, nonce, err := EncryptAes256(encryptKey, tt.secret.Bytes())
+			var secretBytes []byte
+			if tt.secret != nil {
+				secretBytes = tt.secret.Bytes()
+				if secretBytes == nil {
+					secretBytes = []byte{}
+				}
+			}
+
+			ciphertext, nonce, err := EncryptAes256(encryptKey, secretBytes)
 			if err != nil {
 				if !tt.wantError {
 					t.Fatalf("unexpected encryption error: %v", err)

@@ -12,3 +12,16 @@ message Challenge {
     uint32 level = 3;
     bytes mac = 4;
 }
+
+// is the struct used for the token verification execute from the server 
+message TokenVerification {
+    bytes token = 1;
+    bytes m = 2;
+    Challenge challenge = 3;
+    Signature signature = 4;
+}
+
+message Signature {
+    bytes Obfuscated = 1;
+    bytes hashPk = 2;
+}

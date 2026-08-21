@@ -4,9 +4,13 @@ import (
 	"crypto/rand"
 	"os"
 	"testing"
+	"time"
 
 	data "P2Chat/cmd/client/internals/storage"
+
 	"github.com/awnumar/memguard"
+	messagepack "github.com/vmihailenco/msgpack/v5"
+	"google.golang.org/protobuf/proto"
 )
 
 const testBundleID = 99
@@ -37,16 +41,16 @@ func TestCreateBundlesNonHSM(t *testing.T) {
 	if private == nil {
 		t.Fatal("private bundle is nil")
 	}
-	if len(public.IK_mldsa) == 0 {
+	if len(public.GetIkMldsa()) == 0 {
 		t.Fatal("IK_mldsa is empty")
 	}
-	if len(public.IK_X25519) == 0 {
+	if len(public.GetIkX25519()) == 0 {
 		t.Fatal("IK_X25519 is empty")
 	}
-	if len(public.SPK) == 0 {
+	if len(public.GetSpk()) == 0 {
 		t.Fatal("SPK is empty")
 	}
-	if len(public.Last_resort_PQKEM) == 0 {
+	if len(public.GetLastResortPqkem()) == 0 {
 		t.Fatal("Last_resort_PQKEM is empty")
 	}
 	if len(private.SPK) == 0 {
@@ -57,6 +61,7 @@ func TestCreateBundlesNonHSM(t *testing.T) {
 	}
 
 	ikDir := bundleIKDir(1)
+
 	if _, err := data.LoadByteFromFile(ikDir, "SK.bin"); err != nil {
 		t.Fatal("SK.bin not found in bundle IK dir:", err)
 	}
@@ -77,7 +82,7 @@ func TestCreateCurveSetSingle(t *testing.T) {
 		t.Fatal("CreateBundles:", err)
 	}
 
-	privateMLDSA, _, privateX25519, err := loadIKKeys(password, data.BasePath)
+	privateMLDSA, _, privateX25519, err := LoadIKKeys(password, data.BasePath, testBundleID)
 	if err != nil {
 		t.Fatal("loadIKKeys:", err)
 	}
@@ -103,7 +108,7 @@ func TestCreatePQKEMSetSingle(t *testing.T) {
 		t.Fatal("CreateBundles:", err)
 	}
 
-	privateMLDSA, _, privateX25519, err := loadIKKeys(password, data.BasePath)
+	privateMLDSA, _, privateX25519, err := LoadIKKeys(password, data.BasePath, testBundleID)
 	if err != nil {
 		t.Fatal("loadIKKeys:", err)
 	}
@@ -130,7 +135,7 @@ func TestCreateCurveSetsBatch(t *testing.T) {
 	}
 
 	n := 5
-	privSets, pubSets, err := CreateCurveSets(password, false, data.BasePath, n)
+	privSets, pubSets, err := CreateCurveSets(password, false, data.BasePath, testBundleID, n)
 	if err != nil {
 		t.Fatal("CreateCurveSets:", err)
 	}
@@ -160,7 +165,7 @@ func TestCreateKEMsetsBatch(t *testing.T) {
 	}
 
 	n := 5
-	privSets, pubSets, err := CreateKEMsets(password, false, data.BasePath, n)
+	privSets, pubSets, err := CreateKEMsets(password, false, data.BasePath, testBundleID, n)
 	if err != nil {
 		t.Fatal("CreateKEMsets:", err)
 	}
@@ -178,4 +183,27 @@ func TestCreateKEMsetsBatch(t *testing.T) {
 			t.Fatalf("public KEM set %d is empty", i)
 		}
 	}
+}
+
+
+func BenchmarkCreateBundleAndSets(b *testing.B) {
+	pw := make([]byte, 32)
+	copy(pw, []byte("password"))
+
+	s := time.Now()
+	publicBundle, curveSets, kemSets, err := InitializePQXDH(memguard.NewEnclave(pw), 1, false, data.BasePath, 100)
+	tBundle := time.Since(s)
+	if err != nil {
+		b.Log("fatal,error: ", err)
+		return
+	}
+
+	s = time.Now()
+	_, _ = proto.Marshal(publicBundle)
+	_, _ = messagepack.Marshal(curveSets)
+	_, _ = messagepack.Marshal(kemSets)
+	tMarshal := time.Since(s)
+
+	b.Log("timer bundle creation: ", tBundle)
+	b.Log("timer marshal        : ", tMarshal)
 }

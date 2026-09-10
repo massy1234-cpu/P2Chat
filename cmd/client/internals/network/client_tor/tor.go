@@ -18,42 +18,40 @@ import (
 // create a temporary directory for data
 // start the tor deamon
 // open the control connection on 127.0.0.1
-func TorProcess(dataDir ...string) (torObject *tor.Tor,err error) {
+func TorProcess(dataDir ...string) (torObject *tor.Tor, err error) {
 
-	// TOR network bootstrap
-	ctx, _:= context.WithTimeout(context.Background(), 2*time.Minute)
-
-	dir := filepath.Join(storage.BasePath,"Tor")
+	dir := filepath.Join(storage.BasePath, "Tor")
 	if len(dataDir) > 0 && dataDir[0] != "" {
 		dir = dataDir[0]
 	}
-	
+
 	// specify the path where store data
 	conf := &tor.StartConf{
-		DataDir: dir,
-		TempDataDirBase: filepath.Join(dir, "Tmp"),
+		DataDir:           dir,
+		TempDataDirBase:   filepath.Join(dir, "Tmp"),
 		RetainTempDataDir: false,
-		DebugWriter: os.Stdout, 
+		DebugWriter:       os.Stdout,
 		ExtraArgs: []string{
 			"--ClientRejectInternalAddresses", "0",
 		},
 	}
 
 	// start the bootstrap
-	torObj,err := tor.Start(ctx,conf)
+	torObj, err := tor.Start(context.Background(), conf)
 	if err != nil {
-		return nil, apperr.Wrap("error during opening of a TOR connection",err)
+		return nil, apperr.Wrap("error during opening of a TOR connection", err)
 	}
 
-	err = torObj.EnableNetwork(ctx, true) // true = aspetta il bootstrap completo
+	bootstrapCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	err = torObj.EnableNetwork(bootstrapCtx, true) // true = aspetta il bootstrap completo
 	if err != nil {
-		return nil, apperr.Wrap("error with EnableNetwork Tor deamon",err)
+		return nil, apperr.Wrap("error with EnableNetwork Tor deamon", err)
 	}
 
-	return torObj,nil
+	return torObj, nil
 
 }
-
 
 // connect the tor with the local proxy ( must use once )
 func DialTor(torObject *tor.Tor) (dialer *tor.Dialer, err error) {
@@ -65,43 +63,42 @@ func DialTor(torObject *tor.Tor) (dialer *tor.Dialer, err error) {
 	// connect the Tor service with the local proxy SOCKS5 ( 127.0.0.1:9050 )
 	dialer, err = torObject.Dialer(dialCtx, nil)
 	if err != nil {
-		return nil, apperr.Wrap("error with linked the local proxy ",err)
+		return nil, apperr.Wrap("error with linked the local proxy ", err)
 	}
 
-	return dialer,nil
+	return dialer, nil
 }
-
 
 // initialize the tor process ( proxy + deamon )
 // must call once
-func InitializeTor() (dialer *tor.Dialer,torObj *tor.Tor,err error) {
-	obj,err := TorProcess()
+func InitializeTor() (dialer *tor.Dialer, torObj *tor.Tor, err error) {
+	obj, err := TorProcess()
 	if err != nil {
-		return nil,nil,apperr.Wrap("error in Tor initialization",err)
+		return nil, nil, apperr.Wrap("error in Tor initialization", err)
 	}
 
-	dialer,err = DialTor(obj)
+	dialer, err = DialTor(obj)
 	if err != nil {
 		obj.Close()
-		return nil,nil,apperr.Wrap("error in Tor initialization",err)
+		return nil, nil, apperr.Wrap("error in Tor initialization", err)
 	}
 
-	return dialer,obj,err
+	return dialer, obj, err
 }
 
 // create the connection with the address using the tor network
-func EstablishTor(dialer *tor.Dialer,address string,port int) (connection net.Conn,err error) {
+func EstablishTor(dialer *tor.Dialer, address string, port int) (connection net.Conn, err error) {
 
 	if dialer == nil {
-		return nil,apperr.New("dialer is null, not valid")
+		return nil, apperr.New("dialer is null, not valid")
 	}
 
 	// enstablish the tor connection using the tor nodes
 	address = strings.TrimSpace(address)
-	endpoint := fmt.Sprintf("%s:%d",address,port)
-	conn,err := dialer.Dial("tcp",endpoint)
+	endpoint := fmt.Sprintf("%s:%d", address, port)
+	conn, err := dialer.Dial("tcp", endpoint)
 
-	return conn,err
+	return conn, err
 
 }
 
@@ -113,8 +110,7 @@ func CloseTor(torObj *tor.Tor) error {
 	return torObj.Close()
 }
 
-
-// to use when the tor connection is closed and flag as dirty the middle and 
+// to use when the tor connection is closed and flag as dirty the middle and
 // exit node TOR, this is not a warranty but is high probable that future nodes will change
 func NewCircuit(torObj *tor.Tor) error {
 	if torObj == nil || torObj.Control == nil {

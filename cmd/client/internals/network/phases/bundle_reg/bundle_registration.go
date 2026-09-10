@@ -6,12 +6,12 @@ import (
 	powstruct "P2Chat/cmd/client/internals/proto_generated/PoW/proto_struct_pow"
 	upload "P2Chat/cmd/client/internals/proto_generated/pqxdh/proto_struct_bundle"
 	"P2Chat/pkg/apperr"
-	"crypto/sha256"
 
+	messagepack "github.com/vmihailenco/msgpack/v5"
 	proto "google.golang.org/protobuf/proto"
 )
 
-// local bytecodes dedicated to the bundle handler Local chan
+// bytecodes to inject into the router with PutRouter()
 const (
 	RegistrationToken byte = 0xa1 // the registration token obtained from the token registration phase
 	Nickname          byte = 0xa2 // the nickname chosen by the user
@@ -19,40 +19,40 @@ const (
 	SignedOriginalM   byte = 0xab // originalM signed by both identity keys (orchestrator)
 )
 
-// notification bytecodes emitted on GlobalOut to let the orchestrator know when
-// to inject the next local event
+// notification bytecodes emitted on the session Events chan to let the
+// orchestrator know when to inject the next local event
 const (
-	NotifyTokenConfirmed  byte = 0xb1 // server confirmed the token -> inject nickname
-	NotifyNicknameReady   byte = 0xb2 // nickname chosen (available or not) -> orchestrator may act
-	NotifySigned          byte = 0xb3 // challenge signed -> inject the bundle
-	NotifyBundleUploaded  byte = 0xb4 // bundle accepted by the server
+	NotifyTokenConfirmed byte = 0xb1 // server confirmed the token -> inject nickname
+	NotifyNicknameReady  byte = 0xb2 // nickname chosen (available or not) -> orchestrator may act
+	NotifySigned         byte = 0xb3 // challenge signed -> inject the bundle
+	NotifyBundleUploaded byte = 0xb4 // bundle accepted by the server
 )
 
 // define the bundle registration phase states
 type state uint8
 
 const (
-	stateAwaitToken             state = iota // client waits the RegistrationToken from the Local chan
-	stateAwaitTokenConfirmation             // client waits the TokenConfirmation from the server
-	stateAwaitNickname                      // client waits the Nickname from the Local chan
-	stateAwaitNicknameResponse              // client waits the NicknameResponse from the server
-	stateAwaitOriginalM                     // client waits the OriginalM from the server
-	stateAwaitSigned                        // client waits the signed originalM from the Local chan
-	stateAwaitBundle                        // client waits the Bundle from the Local chan
-	stateAwaitBundleConfirmation            // client waits the BundleConfirmation from the server
-	stateCompleted                          // process is completed
-	stateFailed                             // process is not completed, some error occured
+	stateAwaitToken              state = iota // client waits the RegistrationToken from the Local chan
+	stateAwaitTokenConfirmation               // client waits the TokenConfirmation from the server
+	stateAwaitNickname                        // client waits the Nickname from the Local chan
+	stateAwaitNicknameResponse                // client waits the NicknameResponse from the server
+	stateAwaitOriginalM                       // client waits the OriginalM from the server
+	stateAwaitSigned                          // client waits the signed originalM from the Local chan
+	stateAwaitBundle                          // client waits the Bundle from the Local chan
+	stateAwaitBundleConfirmation              // client waits the BundleConfirmation from the server
+	stateCompleted                            // process is completed
+	stateFailed                               // process is not completed, some error occured
 )
 
 // this struct contains the only informations that must be saved for the bundle registration phase
 type BundleClient struct {
-	state          state
-	tokenV         *powstruct.TokenVerification
-	nickname       string
-	originalM      [32]byte
-	sigMLDSA       []byte
-	sigX25519      []byte
-	payload        upload.BundleUploadPayload
+	state     state
+	tokenV    *powstruct.TokenVerification
+	nickname  string
+	originalM [32]byte
+	sigMLDSA  []byte
+	sigX25519 []byte
+	payload   upload.BundleUploadPayload
 }
 
 func Handler(byteCode byte, msg []byte, state *any) *phases.Result {
@@ -210,7 +210,7 @@ func handleNicknameResponse(result *phases.Result, currentState *BundleClient, b
 }
 
 // handleOriginalM saves the challenge (originalM) issued by the server and
-// forwards it to the orchestrator (GlobalOut) for signing with both identity keys.
+// forwards it to the orchestrator (session Events) for signing with both identity keys.
 func handleOriginalM(result *phases.Result, currentState *BundleClient, byteCode byte, msg []byte) *phases.Result {
 	if byteCode != phases.OriginalM {
 		p2log.Error("bundle received an invalid challenge")
@@ -236,7 +236,7 @@ func handleSigned(result *phases.Result, currentState *BundleClient, byteCode by
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("bundle received an invalid signed challenge"))
 	}
 
-	sigMLDSA, sigX25519, err := unpackSignatures(msg)
+	sigMLDSA, sigX25519, err := UnpackSignatures(msg)
 	if err != nil {
 		currentState.state = stateFailed
 		return phases.FillResult(result, nil, 0, false, true, nil, err)
@@ -268,9 +268,6 @@ func handleBundle(result *phases.Result, currentState *BundleClient, byteCode by
 	currentState.payload.CurvePublicSets = bundle.GetCurvePublicSets()
 	currentState.payload.KemPublicSets = bundle.GetKemPublicSets()
 
-	id := HashPublicIK(bundle.GetPublicBundle())
-
-	currentState.payload.IdUser = id[:]
 	currentState.payload.Nickname = currentState.nickname
 	currentState.payload.PrivateKeySignMLDSA = currentState.sigMLDSA
 	currentState.payload.PrivateKeySignX25519 = currentState.sigX25519
@@ -336,17 +333,30 @@ func decodeBundleConfirmation(payload []byte) (bool, error) {
 	return payload[0] == 1, nil
 }
 
-// unpackSignatures splits the packed signatures produced by the orchestrator
-// into the ML-DSA and X25519 signatures. Packing format: [1B lenMLDSA][MLDSA][X25519].
-func unpackSignatures(payload []byte) (sigMLDSA, sigX25519 []byte, err error) {
-	if len(payload) < 2 {
-		return nil, nil, apperr.New("signed challenge received with invalid size")
+// Signatures carries the two identity-key signatures over originalM, exchanged
+// between the orchestrator and the bundle handler through the Local chan.
+type Signatures struct {
+	MLDSA  []byte `msgpack:"mldsa"`
+	X25519 []byte `msgpack:"x25519"`
+}
+
+// PackSignatures serializes the two signatures so the orchestrator can inject
+// them into the router via the Local chan.
+func PackSignatures(sigMLDSA, sigX25519 []byte) ([]byte, error) {
+	payload, err := messagepack.Marshal(&Signatures{MLDSA: sigMLDSA, X25519: sigX25519})
+	if err != nil {
+		return nil, apperr.Wrap("error serializing signatures", err)
 	}
-	mlDsaLen := int(payload[0])
-	if 1+mlDsaLen+64 > len(payload) {
-		return nil, nil, apperr.New("signed challenge received with invalid size")
+	return payload, nil
+}
+
+// UnpackSignatures deserializes the signatures received on the Local chan.
+func UnpackSignatures(payload []byte) (sigMLDSA, sigX25519 []byte, err error) {
+	var sig Signatures
+	if err := messagepack.Unmarshal(payload, &sig); err != nil {
+		return nil, nil, apperr.Wrap("error deserializing signatures", err)
 	}
-	return payload[1 : 1+mlDsaLen], payload[1+mlDsaLen:], nil
+	return sig.MLDSA, sig.X25519, nil
 }
 
 // decodeBundle unmarshals the bundle upload payload (PublicBundle + sets) received from the Local chan.
@@ -356,23 +366,6 @@ func decodeBundle(bundle []byte) (*upload.BundleUploadPayload, error) {
 		return nil, apperr.Wrap("error unmarshalling bundle payload", err)
 	}
 	return &p, nil
-}
-
-// Get the pqxdh and return the hash of the mldsa and x25519 public keys
-func HashPublicIK(bundle *upload.PublicBundle) [32]byte {
-	p_IK_x25519 := bundle.GetIkX25519()
-	p_IK_mldsa := bundle.GetIkMldsa()
-
-	h1 := sha256.Sum256(p_IK_x25519)
-	h2 := sha256.Sum256(p_IK_mldsa)
-
-	var r []byte
-	r = append(r, h1[:]...)
-	r = append(r, h2[:]...)
-
-	res := sha256.Sum256(r)
-
-	return res
 }
 
 // check the size of the payload in base of the type of the message

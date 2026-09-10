@@ -136,7 +136,7 @@ func CreateBundles(password *memguard.Enclave, level int, HSM bool, ID int) (pub
 		return nil, nil, err
 	}
 
-	ikEnclave, err := FillXeddsa(password, HSM, public, private, ikDir)
+	ikEnclave, err := FillXeddsa(password, level, HSM, public, private, ikDir)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -173,14 +173,24 @@ func CreateBundles(password *memguard.Enclave, level int, HSM bool, ID int) (pub
 // fill the public bundle with MLDSA and store keys in the bundle IK directory
 func FillMLDSA(password *memguard.Enclave, level int, HSM bool, public *bundleproto.PublicBundle, ikDir string) (privateKeyMldsa *memguard.Enclave, err error) {
 
-	privateKeyStruct, publicKeyStruct, privateKeyMldsa, err := mldsa_keys.CreateKeys(level, password, HSM)
+	privateKeyMldsa, rawPub, err := mldsa_keys.CreateKeys()
 	if err != nil {
 		return nil, apperr.Wrap("error during the creation of the bundle for pqxdh (mldsa) ", err)
 	}
 
-	public.IkMldsa = publicKeyStruct.Key
+	privStruct, err := mldsa_keys.EncryptPrivateKey(password, privateKeyMldsa, level, HSM)
+	if err != nil {
+		return nil, apperr.Wrap("error during the encryption of the mldsa bundle key", err)
+	}
 
-	if err := mldsa_keys.StoreKeys(privateKeyStruct, publicKeyStruct, ikDir); err != nil {
+	pubStruct, err := mldsa_keys.NewPublicKey(rawPub)
+	if err != nil {
+		return nil, apperr.Wrap("error during the creation of the public key struct", err)
+	}
+
+	public.IkMldsa = pubStruct.Key
+
+	if err := mldsa_keys.StoreKeys(privStruct, pubStruct, ikDir); err != nil {
 		return nil, apperr.Wrap("store ML-DSA keys in bundle dir", err)
 	}
 
@@ -190,8 +200,7 @@ func FillMLDSA(password *memguard.Enclave, level int, HSM bool, public *bundlepr
 
 // fill the public bundle with X25519 IK and SPK, encrypt private keys in the private bundle.
 // The X25519 IK private key is encrypted and saved on filesystem in the per-bundle IK directory.
-// password is an Argon2-derived AES-256 key — already derived at a higher level
-func FillXeddsa(password *memguard.Enclave, HSM bool, public *bundleproto.PublicBundle, private *structures.PrivateBundle, ikDir string) (ikEnclave *memguard.Enclave, err error) {
+func FillXeddsa(password *memguard.Enclave, level int, HSM bool, public *bundleproto.PublicBundle, private *structures.PrivateBundle, ikDir string) (ikEnclave *memguard.Enclave, err error) {
 
 	ikEnclave, ikPub, err := x25519_keys.CreateKey()
 	if err != nil {
@@ -199,7 +208,7 @@ func FillXeddsa(password *memguard.Enclave, HSM bool, public *bundleproto.Public
 	}
 	public.IkX25519 = ikPub.Bytes()
 
-	ikScheme, err := x25519_keys.EncryptPrivateKey(password, ikEnclave, HSM)
+	ikScheme, err := x25519_keys.EncryptPrivateKey(password, ikEnclave, level, HSM)
 	if err != nil {
 		return nil, apperr.Wrap("encrypt IK X25519", err)
 	}
@@ -219,7 +228,7 @@ func FillXeddsa(password *memguard.Enclave, HSM bool, public *bundleproto.Public
 	}
 	public.Spk = spkPub.Bytes()
 
-	spkScheme, err := x25519_keys.EncryptPrivateKey(password, spkEnclave, HSM)
+	spkScheme, err := x25519_keys.EncryptPrivateKey(password, spkEnclave, level, HSM)
 	if err != nil {
 		return nil, apperr.Wrap("encrypt SPK", err)
 	}
@@ -259,7 +268,7 @@ func fillLastResortPQKEM(password *memguard.Enclave, HSM bool, public *bundlepro
 // i can do a trade-off in this case for create a more compact code and efficent
 // *this function will manage from another that will create a stock of 100 CurveSet*
 // all the sensitive data inside the struct are encrypted inside this function using the 'EncryptPrivateKey' function
-func CreateCurveSet(privateKeyMldsa *memguard.Enclave,privateKeyX25519 *memguard.Enclave, password *memguard.Enclave, HSM bool, identifier int) (privateSet []byte, publicSet []byte, err error) {
+func CreateCurveSet(privateKeyMldsa *memguard.Enclave,privateKeyX25519 *memguard.Enclave, password *memguard.Enclave, level int, HSM bool, identifier int) (privateSet []byte, publicSet []byte, err error) {
 
 	private := &structures.PrivateCurveSet{}
 	public := &bundleproto.CurveSet{}
@@ -274,7 +283,7 @@ func CreateCurveSet(privateKeyMldsa *memguard.Enclave,privateKeyX25519 *memguard
 
 	public.X25519Key = publicKey.Bytes()
 
-	privateEncrypted, err := x25519_keys.EncryptPrivateKey(password, privateEnclaved, HSM)
+	privateEncrypted, err := x25519_keys.EncryptPrivateKey(password, privateEnclaved, level, HSM)
 	if err != nil {
 		return nil,nil,apperr.Wrap("encrypt SPK", err)
 	}
@@ -359,7 +368,7 @@ func CreatePQKEMSet(privateKeyMldsa *memguard.Enclave,privateKeyX25519 *memguard
 // CreateCurveSets creates curve sets in memory.
 // Returns the slice of pairs (serialized to bytes) ready to be saved by the caller.
 // NOTE : the set is divided into public and private part, only the public must be published onto the server, the private must be saved into database
-func CreateCurveSets(password *memguard.Enclave, HSM bool, basePath string, ID int, numSets int) (privateSets [][]byte, publicSets [][]byte, err error) {
+func CreateCurveSets(password *memguard.Enclave, level int, HSM bool, basePath string, ID int, numSets int) (privateSets [][]byte, publicSets [][]byte, err error) {
 
 	privateMLDSA, _, privateX25519, err := LoadIKKeys(password, basePath, ID)
 	if err != nil {
@@ -370,7 +379,7 @@ func CreateCurveSets(password *memguard.Enclave, HSM bool, basePath string, ID i
 	publicSets = make([][]byte, numSets)
 
 	for i := 0; i < numSets; i++ {
-		privateSet, publicSet, err := CreateCurveSet(privateMLDSA, privateX25519, password, HSM, i)
+		privateSet, publicSet, err := CreateCurveSet(privateMLDSA, privateX25519, password, level, HSM, i)
 		if err != nil {
 			return nil, nil, apperr.Wrap("error during the creation of the sets", err)
 		}
@@ -433,7 +442,7 @@ func InitializePQXDH(password *memguard.Enclave, level int, HSM bool, basePath s
 	}
 
 	// create curve and kem sets
-	curvePrivateSet, curvePublicSet, err := CreateCurveSets(password, HSM, basePath, newID, numSets)
+	curvePrivateSet, curvePublicSet, err := CreateCurveSets(password, level, HSM, basePath, newID, numSets)
 	if err != nil {
 		return nil, nil, nil, apperr.Wrap("error during the creation of the curve sets", err)
 	}

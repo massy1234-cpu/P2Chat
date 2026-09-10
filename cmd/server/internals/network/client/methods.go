@@ -1,13 +1,19 @@
 package client
 
 import (
-	"P2Chat/cmd/server/network/connection"
+	"P2Chat/cmd/client/internals/p2log"
+	"P2Chat/cmd/server/internals/network/connection"
+	"context"
+	"crypto/tls"
 	"net"
 	"os"
 	"sync"
 	"time"
+
 	"github.com/hashicorp/yamux"
 )
+
+const MaxSessionNumber = 10
 
 // --- registry methods ---
 
@@ -60,7 +66,7 @@ func (registry *RegistryClients) RemoveClient(ID uint64) {
 	client := value.(*Client)
 	client.Close()
 
-	registry.ClientsNumber.Add(^uint64(0))		// mod = 2^64 - 1 
+	registry.ClientsNumber.Add(^uint64(0)) // mod = 2^64 - 1
 	registry.ReleaseID(ID)
 }
 
@@ -82,18 +88,41 @@ func (registry *RegistryClients) Init() {
 	go registry.RemoveDeadClient()
 }
 
-
-
+// Close closes all the connected clients and stops the dead-client loop. The
+// dead-client loop is stopped only after the clients are removed, so that the
+// blocking DeadClients send inside Client.Close keeps being drained.
+func (registry *RegistryClients) Close() {
+	registry.Once.Do(func() {
+		registry.Clients.Range(func(key any, value any) bool {
+			registry.RemoveClient(key.(uint64))
+			return true
+		})
+		close(registry.Done)
+	})
+}
 
 // --- client methods ---
-
-
-
-
 
 // create a new client from a TLS connection, wrap it in a yamux session and start it
 func NewClient(conn net.Conn, deadClient chan<- uint64) *Client {
 	if conn == nil {
+		return nil
+	}
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		p2log.Error("client connection is not TLS")
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		p2log.Error("client TLS handshake failed: ", err)
+		return nil
+	}
+	state := tlsConn.ConnectionState()
+	binding, err := state.ExportKeyingMaterial("EXPORTER-Channel-Binding", nil, 32)
+	if err != nil {
+		p2log.Error("export client TLS binding: ", err)
 		return nil
 	}
 
@@ -108,13 +137,13 @@ func NewClient(conn net.Conn, deadClient chan<- uint64) *Client {
 	}
 
 	connScheme := &connection.Connection{
+		Binding:        binding,
 		MasterSession:  sess,
 		ActiveSessions: sync.Map{},
 		DeadSessions:   make(chan uint32, 64),
 		Done:           make(chan struct{}),
+		SessionStop:    make(chan struct{}, MaxSessionNumber), // limit is 10 sessions simultaneously
 	}
-
-	connScheme.Init()
 
 	client := &Client{
 		Conn:       connScheme,
@@ -122,14 +151,21 @@ func NewClient(conn net.Conn, deadClient chan<- uint64) *Client {
 		Done:       make(chan struct{}),
 	}
 
+	connScheme.Authed = &client.Authed
+	connScheme.Init()
 	client.Init()
 
 	return client
 }
 
+// start the goroutines of the client
+func (c *Client) Init() {
+	go c.ImDead()
+}
+
 // close the client, the connection and signal the dead client to the registry
 func (c *Client) Close() {
-	c.Once.Do(func(){
+	c.Once.Do(func() {
 		close(c.Done)
 		c.Conn.Close()
 		// blocking send: the ID MUST be registered in the dead clients list
@@ -140,14 +176,9 @@ func (c *Client) Close() {
 // watchdog that close the client if the connection is dead
 func (c *Client) ImDead() {
 	select {
-	case <- c.Conn.Done:
+	case <-c.Conn.Done:
 		c.Close()
-	case <- c.Done:
+	case <-c.Done:
 		return
 	}
-}
-
-// start the goroutines of the client
-func (c *Client) Init() {
-	go c.ImDead()
 }

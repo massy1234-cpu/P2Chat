@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package proto_struct_server;
+option go_package = "P2Chat/cmd/client/internals/proto_generated/server_identification/proto_struct_server";
+
+message IdentificationRequest {
+    bytes nonce = 1;
+}
+
+message ServerID {
+    uint32 version_p2 = 1;
+    bytes id = 2;
+    bytes mldsa_sign = 3;
+    bytes x25519_sign = 4;
+    bytes pub_mldsa = 5;
+    bytes pub_x25519 = 6;
+}

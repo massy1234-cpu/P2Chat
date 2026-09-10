@@ -11,6 +11,7 @@ import (
 	"P2Chat/pkg/apperr"
 	"crypto/rand"
 	"github.com/awnumar/memguard"
+	messagepack "github.com/vmihailenco/msgpack/v5"
 	"time"
 )
 
@@ -85,70 +86,93 @@ func fillPublicKey(algorithm string, rawPublicKey []byte) (*struct_mldsa.PublicK
 }
 
 
-// CreateKeys generates an ML-DSA-87 keypair and encrypts the private key.
-// level must be between 1 and 3. If HSM is true the private key is protected by the
-// hardware security module of the platform (SE on darwin, TPM on linux/windows);
-// otherwise it is protected by Argon2id + AES-256-GCM derived from the password.
-// Returns the protobuf payloads and the raw private key enclave for immediate use
-// (e.g. signing). Persist the payloads with StoreKeys when needed.
-func CreateKeys(level int, password *memguard.Enclave, HSM bool) (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, *memguard.Enclave, error) {
+// CreateKeys generates a raw ML-DSA-87 keypair. No encryption.
+func CreateKeys() (*memguard.Enclave, *mldsa87.PublicKey, error) {
 
-	if level < 1 || level > 3 {
-		return nil, nil, nil, apperr.New("level must be between 1 and 3")
-	}
-
-	// generation of the keys
 	publicKey, privateKeyExposed, err := mldsa87.GenerateKey(nil)
 	if err != nil {
-		return nil, nil, nil, apperr.Wrap("generate ML-DSA keypair", err)
+		return nil, nil, apperr.Wrap("generate ML-DSA keypair", err)
 	}
 	defer privateKeyExposed.Destroy()
 
-	// put the private key inside an Enclave and wipe the bytes after
 	privateKey := memguard.NewEnclave(privateKeyExposed.Bytes())
 
-	// encrypt private key ML-DSA-87 with or without HSM
+	var packed [mldsa87.PublicKeySize]byte
+	publicKey.Pack(&packed)
+
+	var pubCopy mldsa87.PublicKey
+	if err := pubCopy.UnmarshalBinary(packed[:]); err != nil {
+		return nil, nil, apperr.Wrap("copy public key", err)
+	}
+
+	return privateKey, &pubCopy, nil
+
+}
+
+// EncryptPrivateKey encrypts an ML-DSA private key and wraps it in a protobuf struct.
+// level must be between 1 and 3. If useHSM is true the private key is protected by the
+// hardware security module of the platform (SE on darwin, TPM on linux/windows);
+// otherwise it is protected by Argon2id + AES-256-GCM derived from the password.
+func EncryptPrivateKey(password *memguard.Enclave, privateKey *memguard.Enclave, level int, useHSM bool) (*struct_mldsa.PrivateKeyMLDSA, error) {
+
+	if level < 1 || level > 3 {
+		return nil, apperr.New("level must be between 1 and 3")
+	}
+
 	var rawKeyEncrypted, nonce, salt []byte
 	var hsmMethod uint32
 
-	if HSM {
+	if useHSM {
 		salt = make([]byte, 16)
-		if _, err = rand.Read(salt); err != nil {
-			return nil, nil, nil, apperr.Wrap("generate salt", err)
+		if _, err := rand.Read(salt); err != nil {
+			return nil, apperr.Wrap("generate salt", err)
 		}
 
-		plaintext, openErr := privateKey.Open()
-		if openErr != nil {
-			return nil, nil, nil, apperr.Wrap("open private key enclave", openErr)
+		plaintext, err := privateKey.Open()
+		if err != nil {
+			return nil, apperr.Wrap("open private key enclave", err)
 		}
 		defer plaintext.Destroy()
 
 		rawKeyEncrypted, nonce, err = hsm.EncryptHSM(password, plaintext)
 		if err != nil {
-			return nil, nil, nil, apperr.Wrap("HSM encryption failed", err)
+			return nil, apperr.Wrap("HSM encryption failed", err)
 		}
 		hsmMethod = uint32(hsm.WhichOS())
 	} else {
-		passwordBuffer,err := password.Open()
+		passwordBuffer, err := password.Open()
 		if err != nil {
-			return nil,nil, nil, apperr.Wrap("error during opening the password enclave",err)
+			return nil, apperr.Wrap("error during opening the password enclave", err)
 		}
 		defer passwordBuffer.Destroy()
+
 		rawKeyEncrypted, nonce, salt, err = mldsaencryption.EncryptPrivateKey(passwordBuffer, privateKey, level)
 		if err != nil {
-			return nil, nil, nil, apperr.Wrap("protect private key", err)
+			return nil, apperr.Wrap("protect private key", err)
 		}
 	}
 
-	// serialize the key
-	var packedPublic [mldsa87.PublicKeySize]byte
-	publicKey.Pack(&packedPublic)
+	return fillPrivateKey(level, "ML-DSA-87", rawKeyEncrypted, nonce, salt, hsmMethod)
 
-	privateKeyStruct, publicKeyStruct, err := fillKeyPair(level, "ML-DSA-87", rawKeyEncrypted, packedPublic[:], nonce, salt, hsmMethod)
+}
+
+// NewPublicKey wraps raw ML-DSA public key bytes in a protobuf struct.
+func NewPublicKey(rawPublicKey *mldsa87.PublicKey) (*struct_mldsa.PublicKeyMLDSA, error) {
+
+	var packed [mldsa87.PublicKeySize]byte
+	rawPublicKey.Pack(&packed)
+	return fillPublicKey("ML-DSA-87", packed[:])
+
+}
+
+// SerializePrivateKey marshals the private key struct to msgpack.
+func SerializePrivateKey(privateKey *struct_mldsa.PrivateKeyMLDSA) ([]byte, error) {
+
+	serialized, err := messagepack.Marshal(privateKey)
 	if err != nil {
-		return nil, nil, nil, apperr.Wrap("build generated key payloads", err)
+		return nil, apperr.Wrap("marshal ML-DSA private key", err)
 	}
 
-	return privateKeyStruct, publicKeyStruct, privateKey, nil
+	return serialized, nil
 
 }

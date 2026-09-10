@@ -12,6 +12,25 @@ const (
 	RegistrationError byte = 0x07
 )
 
+// ---server identification---
+const (
+	ServerIdentificationRequest  byte = 0x08
+	ServerIdentificationResponse byte = 0x09
+)
+
+// login bytecodes
+const (
+	LoginAccessRequest byte = 0x0a
+	LoginPowChallenge  byte = 0x0b
+	LoginPowResponse   byte = 0x0c
+	LoginNonce         byte = 0x0d
+	LoginProof         byte = 0x0e
+	LoginToken         byte = 0x0f
+	LoginTokenRequest  byte = 0x10
+	LoginTokenAccepted byte = 0x11
+	LoginError         byte = 0x12
+)
+
 // bundle upload bytecodes (network, shared)
 const (
 	UploadBundleRequest byte = 0xa4

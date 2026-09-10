@@ -3,8 +3,8 @@ package session
 import (
 	"P2Chat/cmd/client/internals/network"
 	"P2Chat/cmd/client/internals/p2log"
-	"P2Chat/cmd/server/network/phases"
-	"P2Chat/cmd/server/network/transmission"
+	"P2Chat/cmd/server/internals/network/phases"
+	"P2Chat/cmd/server/internals/network/transmission"
 	"P2Chat/pkg/apperr"
 	"fmt"
 	"time"
@@ -137,6 +137,8 @@ func (s *SingleSession) GoodClose() {
 		s.Stream.SetReadDeadline(time.Now())
 		s.Flush(15 * time.Second)
 		close(s.Done)
+		s.Stream.Close()
+		select { case s.DeadSessions <- s.ID: default: }
 	})
 }
 
@@ -169,8 +171,8 @@ func (s *SingleSession) Router() error {
 	var result *phases.Result
 
 	// the timer is created and is stopped
-	timer := time.NewTimer(time.Hour)
-	timer.Stop()
+	timer := time.NewTimer(30*time.Second)
+	defer timer.Stop()
 
 	for {
 		select {

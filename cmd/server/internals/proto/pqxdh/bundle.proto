@@ -1,0 +1,46 @@
+// protoc --go_out=. --go_opt=module=P2Chat cmd/server/internals/proto/pqxdh/bundle.proto
+
+syntax = "proto3";
+
+package proto_server_bundle;
+
+option go_package = "P2Chat/cmd/server/internals/proto_generated/pqxdh/proto_struct_bundle";		// specify where put the generated file
+
+// public bundle published on the server (only public/wire data)
+message PublicBundle {
+	int32 id = 1;
+	bytes ik_mldsa = 2;
+	bytes ik_mldsa_signed = 3;
+	bytes ik_x25519 = 4;
+	bytes ik_x25519_signed = 5;
+	bytes spk = 6;
+	bytes spk_signed = 7;
+	bytes last_resort_pqkem = 8;
+	bytes last_resort_pqkem_signed = 9;
+}
+
+// one-time public curve set
+message CurveSet {
+	int32 identifier = 1;
+	bytes x25519_key = 2;
+	bytes signature_mldsa = 3;
+	bytes signature_x25519 = 4;
+}
+
+// one-time public PQKEM set
+message PqkemSet {
+	int32 identifier = 1;
+	bytes pqkem_key = 2;
+	bytes signature_mldsa = 3;
+	bytes signature_x25519 = 4;
+}
+
+// envelope used for the bundle upload request (travels to the server)
+message BundleUploadPayload {
+	string nickname = 2;
+	PublicBundle public_bundle = 3;
+	repeated bytes curve_public_sets = 4;
+	repeated bytes kem_public_sets = 5;
+	bytes PrivateKeySignMLDSA = 6;
+	bytes PrivateKeySignX25519 = 7;
+}

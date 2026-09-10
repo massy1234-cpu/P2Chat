@@ -14,7 +14,7 @@ type SingleSession struct {
 	Incoming     chan []byte			// Listener
 	Outgoing     chan []byte			// Writer
 	Local		 chan []byte			// for router
-	GlobalOut    chan<- []byte			// for application modify
+	Events       chan []byte			// for the orchestrator, per-session, created by the connection
 	DeadSessions chan<- uint32			// for allert the connection struct and delete the session
 	Once         sync.Once
 	Done         chan struct{}

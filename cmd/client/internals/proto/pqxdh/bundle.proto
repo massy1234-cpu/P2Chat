@@ -37,7 +37,6 @@ message PqkemSet {
 
 // envelope used for the bundle upload request (travels to the server)
 message BundleUploadPayload {
-	bytes id_user = 1;
 	string nickname = 2;
 	PublicBundle public_bundle = 3;
 	repeated bytes curve_public_sets = 4;

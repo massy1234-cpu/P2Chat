@@ -16,7 +16,7 @@ const MaxMessageSize = 64 * 1024
 // read a message from the connection, it removes the padding and verify the checksum, the header is read first
 func ReadMessage(conn net.Conn) (data []byte, err error) {
 
-	conn.SetReadDeadline(time.Now().Add(30 * time.Minute))
+	conn.SetReadDeadline(time.Now().Add(10 * time.Minute))
 
 	var header [38]byte
 

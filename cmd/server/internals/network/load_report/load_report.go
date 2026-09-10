@@ -1,23 +1,26 @@
 package loadreport
 
 import (
-	pow "P2Chat/cmd/server/network/PoW"
+	pow "P2Chat/cmd/server/internals/network/PoW"
 	"P2Chat/pkg/apperr"
 	"sync/atomic"
 )
 
 var numberOfClients *atomic.Uint64 = nil
 
-// connect the atomic counter of the clients with the load report, call this only once at the start
+// Init wires the load report to the registry's live client counter. Must be
+// called once at startup. Calling it twice replaces the binding (useful for
+// tests).
 func Init(atomic *atomic.Uint64) {
 	numberOfClients = atomic
 }
 
-// i estimate the levels for my server (very cheap server with low ram 8GB)
-// if the counter is not initialized it returns an error, the caller must abort
+// LoadReport picks a difficulty level for the PoW based on the number of
+// currently connected clients. Returns an error if Init was never called so
+// that callers abort instead of silently using a default.
 func LoadReport() (pow.Level, error) {
 	if numberOfClients == nil {
-		return pow.Level5, apperr.New("load report not initialized")
+		return 0, apperr.New("load report not initialized: call loadreport.Init first")
 	}
 
 	clients := numberOfClients.Load()

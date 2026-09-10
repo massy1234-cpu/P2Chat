@@ -2536,15 +2536,92 @@ The client maintains a `RegistrationClient` with states:
 
 - **`load_report`** has been made a pure function without circular dependencies: `Init(*atomic.Uint64)` connects the client counter, `LoadReport() (pow.Level, error)` maps `clientsNumber → Level` PoW (thresholds 50/150/300/500). The correct count of connected clients to initialize the atomic is still missing.
 - **Server database BadgerDB** (`cmd/server/database`): `Init`, `GC` (interval that scales with load via `getTimeFromLoad`), `IsInitialized`, `CloseDB`. The GC adapts the VLog GC interval to the current PoW level (from 300s to 15s).
-- **Blind signature** server: `InitBlindSignature()` generates (`GenerateKeyPair`) and stores in a thread-safe way the blind BLS key pair in the package `network/blind_signature` (private key in `memguard.Enclave`, public key in G2). `SerializeAndSave(token)` hashes and saves the token in the DB (`TokenDeduplication`) to prevent its reuse.
+- **Blind signature** server (`network/blind_signature`): la coppia blind BLS è gestita dall'`atomic.Pointer[KeysBlindSignature]` `currentKeys` (privata in `memguard.Enclave`, pubblica in G2), inizializzata da `InitBlindSignature()`. `SignBlind(blindedPoint)` prende solo il punto e usa lo stato corrente (hash del pk corrente via `pkHash`); `Verify` fa il pairing check.
+  - **Rotazione**: `RotateKey()` salva la chiave ritirata **in chiaro** su DB (`StoreBlindKey(pkHash, sk)` — chiave scaduta, non va cifrata), poi genera una nuova coppia. `GetPublicKeyByHash` cerca prima la chiave corrente, poi le ritirate su DB (`GetBlindKey` + `publicKeyFromPrivateBytes`, Y = x·G2) per la verifica di token vecchi.
+  - `SerializeAndSave(token)` hashes e salva il token nel DB (`TokenDeduplication`) per impedirne il riuso.
 
 ### Complete registration flow (implemented)
 
-1. the client opens a new yamux stream (`Connection.Registration`) and sends `RegisterTokenReq` (0x01, empty payload)
-2. the server (Dispatcher → registration handler) responds with `PowToken` (0x02, protobuf challenge)
-3. the client solves the PoW and sends `ChallengeResponse` (0x03, nonce) + `SignatureRequest` (0x04, M')
-4. the server verifies the challenge (MAC + zero-bits) and signs M' blindly → `TokenEmission` (0x05, σ')
-5. the client removes the noise from σ' and obtains the final token
+La registrazione è divisa in **due fasi su stream yamux separati**: *token registration* e *bundle upload*.
+
+**Token registration** (`Connection.TokenRegistration`, handler `token_registration`):
+1. il client apre un nuovo stream yamux e invia `RegisterTokenReq` (0x01, payload vuoto)
+2. il server (Dispatcher → registration handler) risponde con `PowToken` (0x02, challenge protobuf)
+3. il client risolve il PoW e invia in un colpo solo `ChallengeResponse` (0x03, nonce) + `SignatureRequest` (0x04, M')
+4. il server verifica la challenge (MAC + zero-bits) e firma M' alla cieca → `TokenEmission` (0x05, σ')
+5. il client rimuove il rumore da σ' e ottiene il token finale, poi lo serializza in un `TokenVerification` e lo emette su **`GlobalOut`** per la fase successiva (consumato dall'orchestratore)
+
+**Bundle upload** (`Connection.BundleUpload`, handler `bundlereg` — flusso client completo, lato server in costruzione):
+- il client riceve il token dal `Local` chan (bytecode locale `RegistrationToken` 0xa1, iniettato dall'orchestratore via `PutRouter`) → invia `UploadBundleRequest` (0xa4) col `TokenVerification`
+- attende `TokenConfirmation` (0xa5) → riceve il nickname dal `Local` (0xa2) → invia `NicknameRequest` (0xa6) → attende `NicknameResponse` (0xa7)
+- se il nickname è disponibile riceve il bundle dal `Local` (0xa3), compone `BundleUploadPayload` (id_user = hash IK, nickname, public bundle, curve/KEM public sets) → invia `BundleUpload` (0xa8) → attende `BundleConfirmation` (0xa9)
+- `Connection.BundleUpload` **non invia alcun messaggio all'apertura**: aspetta il token dal `Local` chan (la vecchia istruzione che mandava `RegisterTokenReq` è stata rimossa)
+
+### Login implementation (2026-09-11)
+
+The implemented order follows the latest client flow: TLS/yamux → server identification → access PoW → registered-bundle proof → authenticated connection and Login Token. The earlier proposal below is retained as design history; it placed the PoW before identification instead.
+
+Client and server use `network/phases/login`, state-specific `handle*` functions and the existing PoW/identity-signature libraries. Login bytecodes are `0x0a` access request, `0x0b` PoW challenge, `0x0c` solution, `0x0d` server nonce, `0x0e` dual identity proof, `0x0f` blind token emission, `0x10` reconnect token, `0x11` accepted reconnect and `0x12` token rejection/fallback. Messages are protobuf (`proto/login/login.proto`).
+
+On every new connection the client verifies the server's nonce/TLS-exporter proof, including for known IPs. Unknown identities are automatically trusted and logged only after successful cryptographic verification. A changed address with the same verified identity updates the saved address. A different verified identity on an already pinned endpoint is rejected, recorded in the blacklist and never overwrites that endpoint's pin. An invalid signature alone does not blacklist the claimed identity, to avoid poisoning an existing pin.
+
+Client BoltDB stores serialized key:value records:
+
+- `server:identities`: serverID → msgpack identity/public keys (without transient signatures).
+- `server:endpoints`: configured host:port → serverID.
+- `server:observed-ip`: serverID → msgpack endpoint and IP. IP is populated only for numeric configured addresses; Tor-resolved hostnames/onion addresses do not expose a destination IP to the client.
+- `server:blacklist`: serverID → msgpack reason, endpoint and timestamp.
+- `server:login-bundle`: serverID → msgpack local key-directory number and registered cryptographic BundleID. This is saved after confirmed registration or a successful login with explicitly selected existing keys.
+
+Full login uses the existing Level5 access PoW with a ten-minute deadline (the expected solving time depends on hardware and chance). A fresh nonce then binds both ML-DSA and X25519/XEdDSA signatures to the protocol domain, version, server timestamp, serverID, TLS binding, BundleID and blinded token request. Verification uses only the public bundle already stored under BundleID in Badger. Missing bundles, incorrect passwords and invalid signatures abort; they do not silently trigger a new registration.
+
+Login Token signing uses a dedicated blind BLS key, independent of registration. The key lives in memory for up to 24 hours; server restart invalidates outstanding tokens. The client unblinds and verifies the signature, then stores the token only in a memguard enclave. `Connection.Login` returns it and the CLI retains it in `ConnectionManager.LoginToken` for future reconnect orchestration.
+
+For quick login, the token replaces the PoW. The server identification and dual identity proof remain, so a copied token is not sufficient to impersonate a bundle. A quick login does not issue a replacement token. Badger stores `login:tokens:<keyHash><SHA-256(message)>` → msgpack remaining uses, expiry, last use and BundleID. The first successful redemption creates the record with two uses left; the next two reduce it to zero. The record remains at zero until the signing epoch expires to prevent reuse resetting the counter; Badger can then expire the record because the token is no longer accepted. The read/decrement/write is atomic and serialized against concurrent redemptions. Invalid, expired or exhausted tokens trigger a new full login; a valid account proof is required before a token use is consumed.
+
+The server's `Client.Authed` is an `atomic.Bool`, shared with its connection: only successful full/quick login sets it to true, and connection closure resets it. Future features check `client.Authed.Load()`. The authenticated connection also holds BundleID, login time, proof type and last observed phase activity. `ActiveConnections(BundleID)` counts the user's active authenticated connections; closing one removes only that connection. The dispatcher permits identification, registration and login before authentication and requires the auth flag for other registered phases. At most one login runs per connection and at most four expensive login proof/PoW verifications run concurrently.
+
+CLI usage from the project root (password is read without echo; currently exactly 32 bytes):
+
+```sh
+go run ./cmd/client -server 151.64.120.32 -port 9000 -nickname alice
+go run ./cmd/client -server 151.64.120.32 -port 9000
+go run ./cmd/client -server 151.64.120.32 -port 9000 -bundle 3
+```
+
+The first command registers when no local association exists, then logs in. Later runs use the saved association. `-bundle` explicitly selects previously registered identity-key files, using their original password. Automatic reconnect scheduling is still future work; calling `Login` on a new connection with the returned token already supports the fast path. TLS test configuration remains unchanged. The PoW is after identification, so this flow does not protect the identification response or TCP/TLS handshake from flooding.
+
+Tests cover both phase handlers, rejection of invalid signatures/bindings/PoW, three-use exhaustion, concurrent token redemption, persistence of spent counters across DB reopen, automatic pinning/address updates, and quick login over TLS/yamux with multi-connection presence cleanup. Tests use a low PoW preset to avoid spending minutes per test; production login defaults to Level5.
+
+### Earlier access login and DDoS filtering proposal
+
+> **Architecture planned, not implemented yet.** The separate `PassToken` phase has been discarded. Access will instead be granted by a PoW-gated login bound to the current TLS connection.
+
+The current unauthenticated login phase would otherwise allow an arbitrary client to reach the server without proving either a computational cost or ownership of a registered bundle. The planned sequence is:
+
+1. The client opens the TLS/yamux connection and requests an **access PoW** without sending a user identity or bundle ID.
+2. The server issues a high-difficulty, MAC-authenticated PoW challenge. The challenge should be stateless or have strictly bounded short-lived state.
+3. The client solves the PoW and sends the solution. The server rejects invalid solutions before ML-DSA signing, bundle lookups, or other costly operations.
+4. After a valid PoW, the server performs **server identification**: it returns its persistent identity keys, server ID, and signatures bound to the client nonce and to the TLS exporter binding.
+5. The client verifies and pins/trusts the server identity before revealing its own bundle ID or producing a login proof.
+6. The server sends a fresh login nonce. The client replies with its `BundleID` and a proof of possession made with the identity key(s) of the already registered public bundle.
+7. The server retrieves the public keys from its stored bundle for that `BundleID`, verifies the proof, and marks the current connection as authenticated.
+
+The login proof must be domain-separated and bound to the exact context, for example:
+
+```text
+"P2Chat/login/v1" || serverID || TLSBinding || loginNonce || bundleID
+```
+
+The server must verify this signature only against the public identity keys stored in the registered bundle; it must not accept verification keys supplied by the client in the login request.
+
+Authentication is connection-scoped rather than bearer-token-scoped. The server keeps an in-memory authentication context associated with the active TLS/yamux connection, containing at least `PoWVerified`, `Authenticated`, `BundleID`, login time, and the TLS binding. It is deleted when the connection closes or expires. A new connection must solve a new PoW and complete a new login, so access cannot be transferred by copying a token to another device or TLS connection.
+
+For presence, the server will maintain an in-memory `ActiveUsers` registry keyed by authenticated `BundleID`, with the set of active connection IDs and `lastSeen`. A user is offline only when its last authenticated connection is removed. This registry is not persisted: a server restart terminates all TLS connections and therefore resets presence naturally.
+
+Server trust on the client must be keyed primarily by the service endpoint/onion address and the cryptographic server identity, not by the observed IP address. An IP can change legitimately and is especially unsuitable as a trust anchor over Tor. A known endpoint presenting a different server identity is blocked by default; a previously unknown endpoint/identity requires explicit client-side trust/pinning. A confirmed malicious identity may be placed in the local client blacklist.
+
+This design mitigates application-layer resource exhaustion, but does not itself prevent TCP/TLS handshake floods. The server still needs short TLS/phase deadlines, global connection and signature-work limits, and network-level rate limiting or onion-service exposure.
 
 
 ## Protocol message types
@@ -2559,6 +2636,14 @@ The bytecodes are now defined in the `phases` packages (`bytecodes.go`) on both 
 | `0x03` | CHALLENGE_RESPONSE | Client → Server | 8B | Nonce (big-endian) that solves the PoW challenge. |
 | `0x04` | SIGNATURE_REQUEST | Client → Server | 48B | Blind point M' (compressed affine G1) to sign. |
 | `0x05` | TOKEN_EMISSION | Server → Client | 48B | Blind signature σ' (compressed affine G1); the client removes the noise and obtains σ. |
+| `0xa4` | UPLOAD_BUNDLE_REQUEST | Client → Server | ≥1B | Avvia il bundle upload: payload = `TokenVerification` serializzato. |
+| `0xa5` | TOKEN_CONFIRMATION | Server → Client | 1B | Conferma validità del token (1 = valido). |
+| `0xa6` | NICKNAME_REQUEST | Client → Server | ≥1B | Richiesta disponibilità nickname. |
+| `0xa7` | NICKNAME_RESPONSE | Server → Client | 1B | Disponibilità nickname (1 = disponibile). |
+| `0xa8` | BUNDLE_UPLOAD | Client → Server | ≥1B | Payload `BundleUploadPayload` (id_user, nickname, public bundle, sets). |
+| `0xa9` | BUNDLE_CONFIRMATION | Server → Client | 1B | Conferma accettazione bundle (1 = ok). |
+
+> I bytecode locali del bundle handler (`Local` chan, non di rete) sono `RegistrationToken` 0xa1, `Nickname` 0xa2, `Bundle` 0xa3.
 
 
 ### Good and Force Close
@@ -2582,3 +2667,56 @@ so i separate the Close functino in `GoodClose()` and `ForceClose()` where the f
 now the phase doesnt create any error 
 
 PS i did this modify also in the server 
+
+
+### Parallelism and Benchmark about the bundle creation
+
+i created a test `BenchmarkCreateBundleAndSets()` that measure how much time my computer (macbook pro M4) needs to create the whole bundle and all the sets, the time suprise me, infact took only about 350ms
+```
+BenchmarkCreateBundleAndSets
+    bundle_test.go:206: timer bundle creation:  389.588084ms
+    bundle_test.go:207: timer marshal        :  209.791µs
+    bundle_test.go:206: timer bundle creation:  368.264625ms
+    bundle_test.go:207: timer marshal        :  174.375µs
+    bundle_test.go:206: timer bundle creation:  338.60425ms
+    bundle_test.go:207: timer marshal        :  171.25µs
+    bundle_test.go:206: timer bundle creation:  331.387458ms
+    bundle_test.go:207: timer marshal        :  210.875µs
+    bundle_test.go:206: timer bundle creation:  349.668209ms
+    bundle_test.go:207: timer marshal        :  185.75µs
+    bundle_test.go:206: timer bundle creation:  340.247833ms
+    bundle_test.go:207: timer marshal        :  186.834µs
+    bundle_test.go:206: timer bundle creation:  340.911708ms
+    bundle_test.go:207: timer marshal        :  156.417µs
+    bundle_test.go:206: timer bundle creation:  405.883125ms
+    bundle_test.go:207: timer marshal        :  133.75µs
+    bundle_test.go:206: timer bundle creation:  338.898083ms
+    bundle_test.go:207: timer marshal        :  139.667µs
+    bundle_test.go:206: timer bundle creation:  331.474834ms
+    bundle_test.go:207: timer marshal        :  185.916µs
+    bundle_test.go:206: timer bundle creation:  334.876708ms
+    bundle_test.go:207: timer marshal        :  242.167µs
+    bundle_test.go:206: timer bundle creation:  325.108167ms
+    bundle_test.go:207: timer marshal        :  194.291µs
+    bundle_test.go:206: timer bundle creation:  320.954958ms
+    bundle_test.go:207: timer marshal        :  184.75µs
+    bundle_test.go:206: timer bundle creation:  322.752333ms
+    bundle_test.go:207: timer marshal        :  197.5µs
+    bundle_test.go:206: timer bundle creation:  328.939666ms
+    bundle_test.go:207: timer marshal        :  193.917µs
+    bundle_test.go:206: timer bundle creation:  338.078791ms
+    bundle_test.go:207: timer marshal        :  179.042µs
+    bundle_test.go:206: timer bundle creation:  337.66725ms
+    bundle_test.go:207: timer marshal        :  207.542µs
+    bundle_test.go:206: timer bundle creation:  326.526583ms
+    bundle_test.go:207: timer marshal        :  176.416µs
+    bundle_test.go:206: timer bundle creation:  327.778959ms
+    bundle_test.go:207: timer marshal        :  267.166µs
+```
+
+this is the benchmark repeated `b.N` times (for more accuracy, automatic in GO)
+
+this make me think about the real gain of paralelization and real benefits for the application
+the idea was infact start (in goroutiness) the bundle creation before the initialization of another session with yamux with the server for seding the bundle
+
+this result make me thought about the benefits and my conclusions was that 0.35 ms is so a short time and so an implementation for create a parallelis for bundle sending and bundle creation could be overkill but i will implement a solution which can still support and implement parallisation for future feature that i will implement and that will benefit of this implementation

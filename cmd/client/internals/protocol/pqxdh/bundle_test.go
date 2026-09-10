@@ -87,7 +87,7 @@ func TestCreateCurveSetSingle(t *testing.T) {
 		t.Fatal("loadIKKeys:", err)
 	}
 
-	privSet, pubSet, err := CreateCurveSet(privateMLDSA, privateX25519, password, false, 0)
+	privSet, pubSet, err := CreateCurveSet(privateMLDSA, privateX25519, password, 1, false, 0)
 	if err != nil {
 		t.Fatal("CreateCurveSet:", err)
 	}
@@ -135,7 +135,7 @@ func TestCreateCurveSetsBatch(t *testing.T) {
 	}
 
 	n := 5
-	privSets, pubSets, err := CreateCurveSets(password, false, data.BasePath, testBundleID, n)
+	privSets, pubSets, err := CreateCurveSets(password, 1, false, data.BasePath, testBundleID, n)
 	if err != nil {
 		t.Fatal("CreateCurveSets:", err)
 	}

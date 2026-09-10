@@ -1,27 +1,29 @@
 package connection
 
 import (
-	"sync"
+	"github.com/awnumar/memguard"
 	"github.com/cretz/bine/tor"
 	"github.com/hashicorp/yamux"
+	"sync"
 )
 
 type Connection struct {
+	Endpoint       string
+	ServerID       []byte
 	MasterSession  *yamux.Session
 	ActiveSessions sync.Map
 	DeadSessions   chan uint32
 	nextID         uint32
 	freeIDs        []uint32
 	mu             sync.Mutex
-	GlobalOut      chan []byte
 	Once           sync.Once
 	Done           chan struct{}
 }
 
 type ConnectionManager struct {
-	Conn      *Connection
-	Tor       *tor.Tor
-	GlobalOut chan []byte
-	Once      sync.Once
-	Done      chan struct{}
+	LoginToken *memguard.Enclave
+	Conn       *Connection
+	Tor        *tor.Tor
+	Once       sync.Once
+	Done       chan struct{}
 }

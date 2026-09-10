@@ -3,10 +3,12 @@ package token_registration
 import (
 	"P2Chat/cmd/client/internals/p2log"
 	challengeStruct "P2Chat/cmd/client/internals/proto_generated/PoW/proto_struct_pow"
-	pow "P2Chat/cmd/server/network/PoW"
-	blindsignature "P2Chat/cmd/server/network/blind_signature"
-	loadreport "P2Chat/cmd/server/network/load_report"
-	"P2Chat/cmd/server/network/phases"
+	pow "P2Chat/cmd/server/internals/network/PoW"
+	blindsignature "P2Chat/cmd/server/internals/network/blind_signature"
+	"P2Chat/cmd/server/internals/network/dispatcher"
+	loadreport "P2Chat/cmd/server/internals/network/load_report"
+	"P2Chat/cmd/server/internals/network/phases"
+	"P2Chat/cmd/server/internals/proto_generated/PoW/proto_struct_pow"
 	"P2Chat/pkg/apperr"
 	"crypto/rand"
 	"encoding/binary"
@@ -16,6 +18,11 @@ import (
 	bls "github.com/consensys/gnark-crypto/ecc/bls12-381" // contains the point on the curve
 	"google.golang.org/protobuf/proto"
 )
+
+// register the registration phase handler for the RegisterTokenReq bytecode
+func init() {
+	dispatcher.RegistryByteCode(phases.RegisterTokenReq, Handler)
+}
 
 type state uint8
 
@@ -33,130 +40,49 @@ type RegistrationServer struct {
 	secret     	[]byte
 	challenge  	*challengeStruct.Challenge
 	level      	pow.Level
-	privateKey 	*blindsignature.PrivateKey
+	blindKeys 	*blindsignature.KeysBlindSignature
 	PowPassed	bool
-}
-
-// GetPhaseState converts the universal session state to this phase state.
-func GetPhaseState[T any](phaseState any) *T {
-	value, ok := phaseState.(*T)
-	if !ok {
-		return nil
-	}
-	return value
 }
 
 // Handler validates each registration message and returns the next protocol action.
 func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 	result := &phases.Result{}
-	if phaseState == nil {
-		return phases.FillResult(result, nil, 0, false, true, apperr.New("registration state is nil"))
+
+	currentState, errResult := phases.GetPhase[RegistrationServer](byteCode, msg, phaseState, CheckSize)
+	if errResult != nil {
+		return errResult
 	}
 
-	if !CheckSize(byteCode, len(msg)) {
-		p2log.Error("registration received a payload with invalid size")
-		return phases.FillResult(result, nil, 0, false, true, apperr.New("registration received a payload with invalid size"))
-	}
-
-	if *phaseState == nil {
+	// not initialized yet -> create the right struct for this phase
+	if currentState == nil {
 		level, err := loadreport.LoadReport()
 		if err != nil {
 			return phases.FillResult(result, nil, 0, false, true, err)
 		}
 
-		privateKey := blindsignature.GetCurrentPrivateKey()
-		if privateKey == nil {
+		keys := blindsignature.GetCurrentKeys()
+		if keys == nil {
 			return phases.FillResult(result, nil, 0, false, true, apperr.New("blind signature private key is nil"))
 		}
 
-		*phaseState = &RegistrationServer{
+		currentState = &RegistrationServer{
 			state:      stateAwaitRequest,
 			level:      level,
-			privateKey: privateKey,
-			PowPassed: false,
+			blindKeys: keys,
+			PowPassed:  false,
 		}
-	}
-
-	currentState := GetPhaseState[RegistrationServer](*phaseState)
-	if currentState == nil {
-		return phases.FillResult(result, nil, 0, false, true, apperr.New("registration phase received an invalid state"))
+		*phaseState = currentState
 	}
 
 	switch currentState.state {
 	case stateAwaitRequest:
-		// token request
-		if byteCode != phases.RegisterTokenReq {
-			currentState.state = stateFailed
-			return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid registration token request"))
-		}
-		p2log.Debug("server registration: received RegisterTokenReq, emitting PoW challenge")
-
-		secret := make([]byte, 64)
-		if _, err := rand.Read(secret); err != nil {
-			currentState.state = stateFailed
-			return phases.FillResult(result, nil, 0, false, true, apperr.Wrap("error generating registration secret", err))
-		}
-
-		challenge, reply, err := issueChallenge(secret, currentState.level)
-		if err != nil {
-			currentState.state = stateFailed
-			return phases.FillResult(result, nil, 0, false, true, err)
-		}
-
-		currentState.secret = secret
-		currentState.challenge = challenge
-		currentState.state = stateAwaitNonce
-		p2log.Info("server registration: PoW challenge emitted, level: ", currentState.level)
-		return phases.FillResult(result, [][]byte{reply}, currentState.level.MaxWaitTime(), false, false, nil)
+		return handleRequest(result, currentState, byteCode, msg)
 
 	case stateAwaitNonce:
-		// server receive the nonce 
-		if byteCode != phases.ChallengeResponse || currentState.challenge == nil {
-			currentState.state = stateFailed
-			return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid challenge response"))
-		}
-
-		nonce, err := receiveNonce(msg)
-		if err != nil {
-			currentState.state = stateFailed
-			return phases.FillResult(result, nil, 0, false, true, err)
-		}
-		p2log.Debug("server registration: received nonce: ", nonce)
-
-		if !pow.Verify(currentState.secret, currentState.challenge, nonce) {
-			currentState.state = stateFailed
-			p2log.Error("server registration: PoW verification failed")
-			return phases.FillResult(result, nil, 0, false, true, apperr.New("challenge not solved"))
-		}
-		p2log.Info("server registration: PoW verified")
-
-		currentState.state = stateAwaitSignature
-		currentState.PowPassed = true
-		return phases.FillResult(result, nil, time.Minute, false, false, nil)
+		return handleNonce(result, currentState, byteCode, msg)
 
 	case stateAwaitSignature:
-		// server wait the M for the signature = token emission
-		if byteCode != phases.SignatureRequest {
-			currentState.state = stateFailed
-			return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid blind signature request"))
-		}
-		p2log.Debug("server registration: received SignatureRequest, generating blind signature")
-
-		if currentState.PowPassed != true {
-			p2log.Error("client did not passed the PoW")
-			currentState.state = stateFailed
-			return phases.FillResult(result, nil, 0, false, true, fmt.Errorf("the client didnt passed the Pow"))
-		}
-
-		reply, err := SignObfuscated(msg, currentState.privateKey)
-		if err != nil {
-			currentState.state = stateFailed
-			return phases.FillResult(result, nil, 0, false, true, err)
-		}
-
-		currentState.state = stateCompleted
-		p2log.Info("server registration: blind signature sent, token emission complete")
-		return phases.FillResult(result, [][]byte{reply}, 0, true, false, nil)
+		return handleSignature(result, currentState, byteCode, msg)
 
 	case stateCompleted:
 		p2log.Warning("server registration: message received after completion")
@@ -168,6 +94,92 @@ func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 	}
 
 	return phases.FillResult(result, nil, 0, false, true, apperr.New("registration reached an invalid state"))
+}
+
+// handleRequest receives the RegisterTokenReq and emits a PoW challenge bound
+// to a per-session secret.
+func handleRequest(result *phases.Result, currentState *RegistrationServer, byteCode byte, msg []byte) *phases.Result {
+	if byteCode != phases.RegisterTokenReq {
+		currentState.state = stateFailed
+		return registrationError(result, apperr.New("invalid registration token request"))
+	}
+	p2log.Debug("server registration: received RegisterTokenReq, emitting PoW challenge")
+
+	secret := make([]byte, 64)
+	if _, err := rand.Read(secret); err != nil {
+		currentState.state = stateFailed
+		return registrationError(result, apperr.Wrap("error generating registration secret", err))
+	}
+
+	challenge, reply, err := issueChallenge(secret, currentState.level)
+	if err != nil {
+		currentState.state = stateFailed
+		return registrationError(result, err)
+	}
+
+	currentState.secret = secret
+	currentState.challenge = challenge
+	currentState.state = stateAwaitNonce
+	p2log.Info("server registration: PoW challenge emitted, level: ", currentState.level)
+	return phases.FillResult(result, [][]byte{reply}, currentState.level.MaxWaitTime(), false, false, nil)
+}
+
+// handleNonce verifies the PoW solution and notifies the client.
+func handleNonce(result *phases.Result, currentState *RegistrationServer, byteCode byte, msg []byte) *phases.Result {
+	if byteCode != phases.ChallengeResponse || currentState.challenge == nil {
+		currentState.state = stateFailed
+		return registrationError(result, apperr.New("invalid challenge response"))
+	}
+
+	nonce, err := receiveNonce(msg)
+	if err != nil {
+		currentState.state = stateFailed
+		return registrationError(result, err)
+	}
+	p2log.Debug("server registration: received nonce: ", nonce)
+
+	if !pow.Verify(currentState.secret, currentState.challenge, nonce) {
+		currentState.state = stateFailed
+		return registrationError(result, apperr.New("challenge not solved"))
+	}
+	p2log.Info("server registration: PoW verified")
+
+	currentState.state = stateAwaitSignature
+	currentState.PowPassed = true
+	p2log.Debug("server registration: notifying the client that the PoW is verified")
+	return phases.FillResult(result, [][]byte{[]byte{phases.PoWVerified}}, time.Minute, false, false, nil)
+}
+
+// handleSignature signs the blind point M' and emits the token.
+func handleSignature(result *phases.Result, currentState *RegistrationServer, byteCode byte, msg []byte) *phases.Result {
+	if byteCode != phases.SignatureRequest {
+		currentState.state = stateFailed
+		return registrationError(result, apperr.New("invalid blind signature request"))
+	}
+	p2log.Debug("server registration: received SignatureRequest, generating blind signature")
+
+	if currentState.PowPassed != true {
+		p2log.Error("client did not passed the PoW")
+		currentState.state = stateFailed
+		return registrationError(result, fmt.Errorf("the client didnt passed the Pow"))
+	}
+
+	sk := currentState.blindKeys.Sk
+	reply, err := SignObfuscated(msg, sk)
+	if err != nil {
+		currentState.state = stateFailed
+		return registrationError(result, err)
+	}
+
+	currentState.state = stateCompleted
+	p2log.Info("server registration: blind signature sent, token emission complete")
+	return phases.FillResult(result, [][]byte{reply}, 0, true, false, nil)
+}
+
+// registrationError notifies the client of the failure and closes the stream.
+func registrationError(result *phases.Result, err error) *phases.Result {
+	p2log.Error("server registration failed: ", err)
+	return phases.FillResult(result, [][]byte{{phases.RegistrationError}}, 0, false, true, err)
 }
 
 // issueChallenge creates and serializes the challenge reply for the router.
@@ -204,13 +216,24 @@ func SignObfuscated(payload []byte, privateKey *blindsignature.PrivateKey) ([]by
 		return nil, apperr.Wrap("error with the byte conversion to raw to G1Affine", err)
 	}
 
-	signedPoint := privateKey.SignBlind(&M_obfuscated)
+	signedPoint,hash := privateKey.SignBlind(&M_obfuscated)
 	if signedPoint == nil {
 		return nil, apperr.New("blind signature failed: private key unlock error")
 	}
 	signatureSerialized := signedPoint.Bytes()
-	return append([]byte{phases.TokenEmission}, signatureSerialized[:]...), nil
-}
+
+	token := &proto_struct_pow.Signature{
+		Obfuscated: signatureSerialized[:],
+		HashPk: hash[:],
+	}
+
+	tokenSerialized,err := proto.Marshal(token)
+	if err != nil {
+		return nil, apperr.New("marshal error in token emission")
+	}
+
+	return append([]byte{phases.TokenEmission}, tokenSerialized[:]...), nil
+} 
 
 // check the size of the payload in base of the type of the message
 func CheckSize(tag byte, payloadLen int) bool {
@@ -227,6 +250,10 @@ func CheckSize(tag byte, payloadLen int) bool {
 		return payloadLen == 48
 	case phases.TokenEmission:
 		return payloadLen == 48
+	case phases.PoWVerified:
+		return payloadLen == 0
+	case phases.RegistrationError:
+		return payloadLen == 0
 	default:
 		return false
 	}

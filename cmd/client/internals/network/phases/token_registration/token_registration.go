@@ -134,7 +134,7 @@ func handleChallenge(result *phases.Result, currentState *RegistrationClient, by
 }
 
 // handleToken unblinds the received signature and emits the resulting token
-// on GlobalOut for the next phase.
+// on the session Events chan for the next phase.
 func handleToken(result *phases.Result, currentState *RegistrationClient, byteCode byte, msg []byte) *phases.Result {
 	if byteCode == phases.PoWVerified {
 		p2log.Debug("registration PoW verified by the server")
@@ -185,14 +185,14 @@ func handleToken(result *phases.Result, currentState *RegistrationClient, byteCo
 
 	p2log.Info("registration phase completed, token obtained")
 
-	tokenOnGlobalOut := &proto_struct_pow.TokenVerification{
+	tokenOnEvents := &proto_struct_pow.TokenVerification{
 		Token:     tokenSerialized[:],
 		M:         currentState.blindState.Msg,
 		Challenge: currentState.challenge,
 		Signature: currentState.signature,
 	}
 
-	b, e := proto.Marshal(tokenOnGlobalOut)
+	b, e := proto.Marshal(tokenOnEvents)
 	if e != nil {
 		p2log.Error("erron in serialization of token")
 		return phases.FillResult(result, nil, 0, true, false, nil, apperr.New("erron in serialization of token"))

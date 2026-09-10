@@ -1,0 +1,21 @@
+// protoc --go_out=. --go_opt=module=P2Chat cmd/client/internals/proto/x25519/x25519_proto.proto
+
+syntax = "proto3";
+
+package proto_struct_x25519;
+
+import "cmd/client/internals/proto/argon/argon_params.proto";
+
+option go_package = "P2Chat/cmd/client/internals/proto_generated/x25519/proto_struct_x25519";
+
+// struct for the encrypted X25519 private key
+message PrivateKeyX25519 {
+    bytes p2chat_version = 1;
+    string algorithm = 2;
+    int64 timestamp = 3;
+    bytes nonce = 4;
+    bytes key = 5;
+    proto.ArgonParams argon_params = 6;
+    bytes checksum = 7;
+    uint32 hsm_method = 8;  // 0 = none, 1 = SE, 2 = TPM
+}

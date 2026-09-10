@@ -21,52 +21,71 @@ const fileDir = "certificate"
 
 
 // create a certificate self-hosted
-func CreateCertificateSelf(store bool) (certDer []byte,enclave *memguard.Enclave, err error) {
-	public,private,err := ed25519.GenerateKey(rand.Reader)
+func CreateCertificateSelf(store bool) (certDer []byte, enclave *memguard.Enclave, err error) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return nil, nil, apperr.Wrap("error during creation of self-hosted certificate",err)
+		return nil, nil, apperr.Wrap("error during creation of self-hosted certificate", err)
 	}
 
 	keyBytes, err := x509.MarshalPKCS8PrivateKey(private)
+	if err != nil {
+		return nil, nil, apperr.Wrap("marshal PKCS8 private key", err)
+	}
 
 	enclave = memguard.NewEnclave(keyBytes)
 	memguard.WipeBytes(keyBytes)
 
-
 	template := &x509.Certificate{
-        SerialNumber: big.NewInt(1),
-        Subject: pkix.Name{CommonName: "P2Chat Server"},
-        NotBefore: time.Now(),
-        NotAfter:  time.Now().Add(365 * 24 * time.Hour),
-        KeyUsage: x509.KeyUsageDigitalSignature,						// define some use case 
-        ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},	// more detailed use cases
-    }
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "P2Chat Server"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature, // define some use case
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, // more detailed use cases
+	}
 
 	// certDer are the raw bytes and create the certificate, use the public key, the structure and the private key
 	// for the signature
-	certDer,err = x509.CreateCertificate(rand.Reader,template,template,public,private)
+	certDer, err = x509.CreateCertificate(rand.Reader, template, template, public, private)
 	if err != nil {
-		return nil,nil,apperr.Wrap("error during creation of the x509 certificate",err)
+		return nil, nil, apperr.Wrap("error during creation of the x509 certificate", err)
 	}
 
 	if store {
-		dir := filepath.Join(storage.BasePath,fileDir)
-		os.MkdirAll(dir,0700)
+		dir := filepath.Join(storage.BasePath, fileDir)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return nil, nil, apperr.Wrap("create certificate directory", err)
+		}
 
 		// save the certificate
-		file, _ := os.Create(filepath.Join(dir,"cert.pem"))
-		pem.Encode(file, &pem.Block{Type: "CERTIFICATE", Bytes: certDer})
+		file, err := os.Create(filepath.Join(dir, "cert.pem"))
+		if err != nil {
+			return nil, nil, apperr.Wrap("create cert.pem", err)
+		}
+		if err := pem.Encode(file, &pem.Block{Type: "CERTIFICATE", Bytes: certDer}); err != nil {
+			file.Close()
+			return nil, nil, apperr.Wrap("encode cert.pem", err)
+		}
 		file.Close()
 
 		// save the private key
-		opened,_ := enclave.Open()
+		opened, err := enclave.Open()
+		if err != nil {
+			return nil, nil, apperr.Wrap("open enclave for key.pem", err)
+		}
 		defer opened.Destroy()
-		keyFile, _ := os.Create(filepath.Join(dir,"key.pem"))
-		pem.Encode(keyFile, &pem.Block{Type: "PRIVATE KEY", Bytes: opened.Bytes()})
+		keyFile, err := os.Create(filepath.Join(dir, "key.pem"))
+		if err != nil {
+			return nil, nil, apperr.Wrap("create key.pem", err)
+		}
+		if err := pem.Encode(keyFile, &pem.Block{Type: "PRIVATE KEY", Bytes: opened.Bytes()}); err != nil {
+			keyFile.Close()
+			return nil, nil, apperr.Wrap("encode key.pem", err)
+		}
 		keyFile.Close()
 	}
 
-	return certDer,enclave,nil
+	return certDer, enclave, nil
 }
 
 

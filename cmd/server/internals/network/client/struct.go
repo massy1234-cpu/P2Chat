@@ -1,7 +1,7 @@
 package client
 
 import (
-	"P2Chat/cmd/server/network/connection"
+	"P2Chat/cmd/server/internals/network/connection"
 	"sync"
 	"sync/atomic"
 )
@@ -19,8 +19,7 @@ type RegistryClients struct {
 
 type Client struct {
 	ID     			uint64
-	Authed 			bool
-	ID_bundle		[]byte
+	Authed 			atomic.Bool
 	Conn 			*connection.Connection
 	DeadClient		chan<- uint64
 	Done			chan struct{}

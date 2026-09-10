@@ -273,7 +273,6 @@ func (x *PqkemSet) GetSignatureX25519() []byte {
 // envelope used for the bundle upload request (travels to the server)
 type BundleUploadPayload struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
-	IdUser               []byte                 `protobuf:"bytes,1,opt,name=id_user,json=idUser,proto3" json:"id_user,omitempty"`
 	Nickname             string                 `protobuf:"bytes,2,opt,name=nickname,proto3" json:"nickname,omitempty"`
 	PublicBundle         *PublicBundle          `protobuf:"bytes,3,opt,name=public_bundle,json=publicBundle,proto3" json:"public_bundle,omitempty"`
 	CurvePublicSets      [][]byte               `protobuf:"bytes,4,rep,name=curve_public_sets,json=curvePublicSets,proto3" json:"curve_public_sets,omitempty"`
@@ -312,13 +311,6 @@ func (x *BundleUploadPayload) ProtoReflect() protoreflect.Message {
 // Deprecated: Use BundleUploadPayload.ProtoReflect.Descriptor instead.
 func (*BundleUploadPayload) Descriptor() ([]byte, []int) {
 	return file_cmd_client_internals_proto_pqxdh_bundle_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *BundleUploadPayload) GetIdUser() []byte {
-	if x != nil {
-		return x.IdUser
-	}
-	return nil
 }
 
 func (x *BundleUploadPayload) GetNickname() string {
@@ -393,9 +385,8 @@ const file_cmd_client_internals_proto_pqxdh_bundle_proto_rawDesc = "" +
 	"identifier\x12\x1b\n" +
 	"\tpqkem_key\x18\x02 \x01(\fR\bpqkemKey\x12'\n" +
 	"\x0fsignature_mldsa\x18\x03 \x01(\fR\x0esignatureMldsa\x12)\n" +
-	"\x10signature_x25519\x18\x04 \x01(\fR\x0fsignatureX25519\"\xcc\x02\n" +
-	"\x13BundleUploadPayload\x12\x17\n" +
-	"\aid_user\x18\x01 \x01(\fR\x06idUser\x12\x1a\n" +
+	"\x10signature_x25519\x18\x04 \x01(\fR\x0fsignatureX25519\"\xb3\x02\n" +
+	"\x13BundleUploadPayload\x12\x1a\n" +
 	"\bnickname\x18\x02 \x01(\tR\bnickname\x12F\n" +
 	"\rpublic_bundle\x18\x03 \x01(\v2!.proto_struct_bundle.PublicBundleR\fpublicBundle\x12*\n" +
 	"\x11curve_public_sets\x18\x04 \x03(\fR\x0fcurvePublicSets\x12&\n" +

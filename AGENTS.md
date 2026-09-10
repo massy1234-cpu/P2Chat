@@ -34,10 +34,13 @@ P2Chat/
 │   │   │   ├── struct.go              # Connection + ConnectionManager (GlobalOut, Done)
 │   │   │   └── methods.go             # NextID/ReleaseID, NewSession, Registration, Close
 │   │   ├── session/
-│   │   │   ├── struct.go              # SingleSession (Incoming/Outgoing/GlobalOut/DummyBase)
-│   │   │   └── methods.go             # Init, Listener (estrae Tag 1B), Writer, dummyRequests
+│   │   │   ├── struct.go              # SingleSession (Incoming/Outgoing/Local/GlobalOut/DummyBase)
+│   │   │   └── methods.go             # Init, Listener (estrae Tag 1B), Writer, dummyRequests, Router (select Incoming/Local), process() helper
 │   │   ├── phases/
-│   │   │   └── registration.go        # RequestTokenRegistration (0x01) — lato client
+│   │   │   ├── bytecodes.go           # Tag wire 0x00-0x05 (+ riservato locale es. 0xF0)
+│   │   │   ├── striptag.go            # phases.Result / FillResult / StripTag
+│   │   │   ├── token_registration/    # TokenRegistration (PoW + Blind BLS) — lato client
+│   │   │   └── bundle_reg/            # BundleUpload (stati: creation/send/confirmationAwait) — in costruzione
 │   │   ├── PoW/
 │   │   │   └── PoW.go                 # Argon2id PoW solver: Level 1-5, Solve, CountZeroBits — usa proto_struct_pow.Challenge
 │   │   ├── wrapper/
@@ -86,7 +89,8 @@ P2Chat/
 ├── docs/recap.md                      # Full design doc (2226 lines)
 ├── go.mod / go.sum                    # Module P2Chat, go 1.25.8
 ├── Makefile                           # proto + run targets
-└── docker-compose.yml                 # server + client containers
+├── docker-compose.yml                 # server + client containers
+└── P2Chat-UI/                         # Frontend Tauri v2 + React (vedi sezione dedicata)
 ```
 
 ## Commands
@@ -96,6 +100,12 @@ P2Chat/
 - `go test ./cmd/client/internals/...` — run all tests from module root
 - `go test -v -run <TestName> ./path/to/package/` — focused test
 - `go build ./cmd/client` — build da project root
+
+### Frontend (P2Chat-UI)
+
+- `npm run dev` — Vite dev server (avvia da `P2Chat-UI/`)
+- `npm run build` — type-check (`tsc`) + build (`vite build`); usare dopo ogni modifica
+- Stack: Tauri v2 · React 19 · Vite · Tailwind 4 (`@tailwindcss/vite`) · TypeScript
 
 ## OS-specific packages (build tags)
 
@@ -170,6 +180,7 @@ correttamente. Segui la procedura sopra per build + .app + codesign.
 - **Argon2id levels:** 1=low (fast), 2=medium, 3=high (slow, high memory). Don't invert them.
 - **Watchdog goroutine** runs at startup (`p2chat_errors.Watchdog()`). Purges mlock'd memory on SIGINT/SIGTERM/SIGSEGV/SIGBUS.
 - **SHA-256 checksums** on protobuf payloads via `SetChecksum()`/`VerifyChecksum()`.
+- **Session idle-timeout**: a meno che un caso specifico richieda un valore diverso, ogni stato di attesa di una fase deve settare un **`NextDeadline` di 30s** nel `FillResult`. Senza questo, una sessione half-open (es. ferma a `stateAwaitNickname`/`stateAwaitOriginalM`) tiene stato lato server in RAM indefinitamente → esaurimento risorse (vettore DoS). Solo il PoW può giustificare timeout più lunghi (`MaxWaitTime`), in quanto è un costo intenzionale.
 
 ## Key file locations on disk
 
@@ -208,10 +219,16 @@ All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/d
 - `EncryptPrivateKey` + `SerializePrivateKey` pattern used across X25519, ML-KEM, and ML-DSA.
 - ML-DSA key store usa un parametro `bool` per decidere se salvare su disco — da sostituire con un tipo dedicato (es. `StorePolicy` enum) quando si sistema la funzione.
 - PoW è duplicato in due package `pow` (client `internals/network/PoW` e server `network/PoW`): core condiviso (presets, `argonHash`, `CountZeroBits`) identico; il server aggiunge `Issue`/`Verify`+MAC. Da valutare un package condiviso.
-- Il server NON compila durante il refactor registrazione: `cmd/server/network/phases/dispatcher.go` chiama `RequestTokenRegistration(session, level)` con 2 arg ma la firma è `(session, level, privateKey *blindsignature.PrivateKey)`. Il dispatcher è cablato come `SessionHandler` (2 arg) e non riceve la chiave blind signature a lungo termine. `cmd/server/main.go` è commentato (main mancante).
-- `cmd/client/main.go` è temporaneamente vuoto.
+- **Incoerenza `InitializePQXDH` `basePath`**: `CreateBundles`/`bundleIKDir` scrivono le IK in `data.BasePath` (globale), mentre `CreateCurveSets`/`CreateKEMsets`/`loadIKKeys` usano il `basePath` passato. Col temp dir i due non combaciano → pipeline rotto. Nei test passa perché usano `data.BasePath` da entrambe le parti. **Da sistemare**: far usare a `bundleIKDir`/`CreateBundles` il `basePath` passato.
+- **Benchmark PQXDH**: la password in `InitializePQXDH` deve essere 32 byte (`EncryptPrivateKey` X25519 richiede chiave da 32B), altrimenti il benchmark passa *dal ramo di errore* silenziosamente (usa `b.Log`+`return`, non `b.FailNow`). Creazione bundle+200 set ≈ 340ms. `CreateBundles` scrive in `data/` reale (comportamento di produzione).
+- **XEdDSA**: `x25519_keys.Sign` (`go.step.sm/crypto/x25519`) produce firme Ed25519 standard (verificabili con `PublicKey.ToEd25519()` + `ed25519.Verify`). `PrivateKey.ToEd25519()` NON esiste in v0.84.1. È comunque costruzione XEdDSA (chiave Ed25519 derivata da X25519), NON conforme al protocollo standard X3DH/PQXDH che userebbe Ed25519 separato. Scelta di progetto, lasciata invariata.
+- **Bucket DB sets**: `SaveSets` ora usa bucket distinti `bundle:curve:<ID>` e `bundle:kem:<ID>` (fix collisione). Il lato di lettura futuro dei set deve usare gli stessi nomi.
+- `cmd/client/main.go`: watchdog + `InitializeServerConn` + avvia `TokenRegistration()`. Il token ottenuto è ancora scartato.
+- `cmd/client/internals/network/phases/bundle_reg/bundle_registration.go`: skeleton senza Handler funzionante (stub che fa no-op). Da completare.
 
 ## Progress recap
+
+Current development focus (2026-09-07): server identification is in progress. The server creates persistent identity keys so the client can recognize which server it is communicating with and load the information associated with that server. This is the current implementation stage, not a completed feature.
 
 | Area | Status | Details |
 |------|--------|---------|
@@ -242,8 +259,8 @@ All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/d
 | `Init()` pattern | ✅ Done | `SingleSession.Init()`, `Connection.Init()` avviano goroutine in unica chiamata |
 | `Connection` struct (client) | ✅ Done | yamux-based, SingleSession + Connection con Done pattern |
 | `Wrapper` (yamux) | ✅ Done | yamux.Client + ConnectionManager |
-| `Tor bootstrap` + dialer | ✅ Done | `InitializeTor` con cleanup, `CloseTor` |
-| Bootstrap network refactor | ✅ Done | Client socket separati per ruolo: `client_tls` (TLSonTor), `client_tor` (InitializeTor/EstablishTor), `bootstrap` (InitializeServerConn → TOR→TLS→Wrapper). `Wrapper` ora restituisce anche `error` (yamux + ConnectionManager) e `InitializeServerConn` propaga ogni errore con `apperr.Wrap` |
+| `Tor bootstrap` + dialer | ✅ Done | `InitializeTor` with cleanup and `CloseTor`. `TorProcess` starts Tor with `context.Background()`; the 2-minute timeout applies only to `EnableNetwork`, so cancelling the bootstrap context no longer kills the Tor process. |
+| Bootstrap network refactor | ✅ Done | Client socket separati per ruolo: `client_tls` (TLSonTor), `client_tor` (InitializeTor/EstablishTor), `bootstrap` (InitializeServerConn → TOR→TLS→Wrapper). After the TLS handshake, bootstrap derives the 32-byte `tls-exporter` binding and returns it to the client orchestrator. |
 | Dummy requests | ✅ Done | Timer random 0.4-1.4s, tag `0x00`, size `DummyBase ± 250`, rand.Read, `crypto/rand` |
 | Padding messaggi | ✅ Done | `CreatePadding()` in WriteMessage, `crypto/rand`, checksum solo su dati veri |
 | Debug logging | ✅ Done | p2log su session lifecycle + send/receive + connection events |
@@ -258,11 +275,19 @@ All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/d
 | Dispatch / Reader Manager | 🔶 WIP | Server: `phases.Dispatcher` cablata in `Connection.Listener` + `Session.Dispatcher()` (goroutine non ancora avviata in `Init`) |
 | Messaggio format | ✅ Done | 1B tag + msgpack payload + padding trasparente |
 | Riconnessione automatica | ❌ Da fare | Riaprire TLS + Connection se cade |
-| Registrazione (PoW + challenge-response ML-DSA) | 🔶 WIP | PoW core pronto; manca wiring nel flusso (challenge→solve→UserID+PublicBundle+ML-DSA sign) |
+| Registrazione client | ✅ Done | Flusso client: server identification → token registration → bundle upload. Il server calcola il BundleID dalle chiavi pubbliche ricevute e memorizza il bundle pubblico. |
 | Autenticazione server con IK ML-DSA | ❌ Da fare | Firma messaggi con identity key |
-| Invio public bundle + public sets al server | ❌ Da fare | Pubblicare `PublicBundle`, curve/KEM public sets |
+| Invio public bundle + public sets al server | ✅ Done | Il client pubblica bundle e set pubblici; il server calcola il BundleID, verifica le firme e salva l'associazione nickname → BundleID, bundle e set one-time. |
 | Test | ❌ Da fare | Test su connection, dispatch, transmission |
 | Main di prova | ❌ Da fare | main.go che mette alla prova tutto |
+| Dispatcher registry (server) | ✅ Done | `dispatcher/registry_handler map[byte]Handler` + `RegistryByteCode` + `Dispatcher` lookup. Ogni fase si auto-registra via `init()` (es. `token_registration` → `RegisterTokenReq`). Aggiungere una fase = importare il package |
+| Client package rename | ✅ Done | `phases/registration` → `phases/token_registration` (allineato al server). Rimossi struct morti `RegistrationState`/`BundleState` |
+| PQXDH fix: firma SPK + last-resort | ✅ Done | `CreateBundles` ora firma `SPK_signed` e `Last_resort_PQKEM_signed` con la IK ML-DSA (prima erano vuoti → prekeys non autenticabili) |
+| PQXDH fix: collisione bucket sets | ✅ Done | `SaveSets` usa bucket distinti `bundle:curve:<ID>` / `bundle:kem:<ID>` (prima curve e KEM si sovrascrivevano) |
+| PQXDH fix: ID passato esplicito | ✅ Done | `loadIKKeys`/`CreateCurveSets`/`CreateKEMsets` ora ricevono `ID` (rimossa ricalibrazione interna `GetBundleID`); `InitializePQXDH` passa `newID` |
+| DB guard `IsInitialized()` | ✅ Done | `SaveSets`/`SavePrivateBundle` verificano `IsInitialized()` prima di usare `DB` (evita panic se il DB è `nil`) |
+| Router eventi locali (client) | ✅ Done | Aggiunta `Local chan []byte` a `SingleSession`; Router fa `select` su `Incoming`+`Local` e chiama `process(timer, bytecode, payload)` riusato da entrambi. Un solo Handler/Result/phaseState |
+| `Connection.TokenRegistration()` | ✅ Done | Rinominata da `Registration()`; chiamata da `main.go` |
 
 ## Agent rules
 
@@ -439,6 +464,16 @@ Connection:
 | `0x0B` | CHAT_MESSAGE | Client | Client (P2P) | Ratchet header + ciphertext |
 | `0x0C` | IP_SHARE | Client | Client | IP cifrato |
 
+### Design mailbox / first contact (metadata leak) — vedi `docs/recap.md` ("MailBox idea", "MailBox zero and one", "Refresh of friendship secret", "Comunication")
+
+- **First contact = unico collo di bottiglia**: il primo scambio usa **2 mailbox dedicate e uniche** (una per senso) derivate dal **nickname/user_ID**:
+  - **MailBox zero** → inviare la richiesta di friendship
+  - **MailBox one** → rispondere alla richiesta
+  Solo qui il server può correlare i due endpoint del dialogo (il primo messaggio PQXDH via mailbox).
+- **Dopo il primo contatto**: i due utenti condividono un **shared secret** (derivato da PQXDH) e tramite un ratchet lo ruotano a ogni messaggio per organizzare **quale mailbox usare**. Le mailbox successive sono quindi **casuali, derivate dal segreto condiviso, NON dall'identità**: il server non può più collegare un `MAILBOX_PUT`/`MAILBOX_GET` a un utente specifico.
+- **Friendship secret**: rinfrescato a ogni sessione; la sessione è derivata dal bundle, quindi i due utenti hanno session secret + old friendship secret, e con `HMAC(friendship secret | session secret)` verificano e rinfrescano il segreto (recap.md:2250-2255).
+- **TAG rotanti**: ogni messaggio ha un TAG che ruota a ogni messaggio, così scaricando la mailbox non serve decifrare tutto ma solo i messaggi col proprio TAG, senza esporre pattern (recap.md:2137-2138).
+
 ### Next steps (ordine logico)
 
 1. `transmission/msg.go` — ReadMsg + WriteMsg
@@ -462,13 +497,16 @@ Connection:
 | `Connection.Listener` (accept stream) | ✅ Done | `connection_methods.go`: accetta stream yamux → NewSession + cabla `sess.Handler = phases.Dispatcher` |
 | `Client` + `RegistryClients` | ✅ Done | `client/`: ID pool, `DeadClients`, `RemoveDeadClient` loop, `Client.Close()` + `ImDead` watchdog |
 | `Connection` chiusura | ✅ Done | `DeadSessions` chan + `CheckDeadSessions` + `CheckConnection` (CloseChan) + `Close`/`IsClosed` |
-| `phases/dispatcher.go` + `token_registration.go` | 🔶 WIP | Dispatcher (switch 0x01) attivo; `RequestTokenRegistration` integra PoW (issueChallenge→receiveNonce→Verify) + Blind BLS (`ReceiveAndSign`→`sendBlindSignature`); build rotto per signature Handler (Dispatcher 2 arg vs `RequestTokenRegistration` 3 arg — manca `privateKey`) |
+| `dispatcher` + `token_registration` | ✅ Done | Dispatcher a registry (`map[byte]Handler` + `RegistryByteCode` + `Dispatcher` lookup); `token_registration` si auto-registra via `init()` per `RegisterTokenReq`. `RequestTokenRegistration` integra PoW (issueChallenge→receiveNonce→Verify) + Blind BLS (`ReceiveAndSign`→`sendBlindSignature`); `load_status.LoadReport` + `blindsignature.GetCurrentPrivateKey()` risolti dentro l'Handler |
 | `pinned_keys/initialization.go` | ✅ Done | ML-DSA-87 keys per EKM layer |
+| Server identity keys | 🔶 WIP | `idserver.Init(level, password, HSM)` loads and decrypts an existing identity or creates, serializes, saves, and activates a new ML-DSA + X25519 identity. The server main reads the password without terminal echo and seals it in a memguard Enclave. |
+| Server identification phase | ✅ Done | Client sends a 32-byte nonce; server replies with protobuf `ServerID`, public ML-DSA/X25519 keys, and signatures over version + nonce + TLS binding. Client verifies ID and both signatures before MessagePack storage, logging new versus known IDs. Client orchestration order: identification → token registration → bundle upload. |
 | `network/tls/tls.go` | 🗑️ Obsoleto | Duplicato non integrato (package name conflitto) |
-| Database server (BadgerDB) | ❌ Da fare | Menzionato in recap.md |
+| Database server (BadgerDB) | 🔶 WIP | Persistenza bundle completata: `nickname:<nickname>` → BundleID, `BundleID` → bundle protobuf serializzato, `BundleID:curve:<setID>` e `BundleID:kem:<setID>` → set pubblici. Su collisione o errore di salvataggio il server rifiuta il bundle e pulisce le associazioni create. |
 | Blind signature (Blind BLS) | ❌ Da fare | Scelto al posto di blind Schnorr/Ristretto255 (vulnerabile a ROS attack: one-more-signature forgery via nonce reuse in sessioni parallele). BLS (Boldyreva): sessioni indipendenti, nessuno stato/concorrenza condivisa, firme corte, prestazioni ottimali, sicuro sotto One-More-BDH |
 | Mailbox system | ❌ Da fare | Cifratura + deposito offline |
-| Bundle store + distribution | ❌ Da fare | Ricevere, memorizzare bundle pubblici |
+| Bundle store | ✅ Done | Il server riceve, verifica e memorizza bundle pubblici e set one-time; il BundleID viene calcolato dal server, non fornito dal client. |
+| Ricerca e distribuzione bundle | ❌ Da fare | Risolvere un nickname, recuperare BundleID, bundle e set one-time disponibili, quindi consegnarli al richiedente. |
 | EKM layer integration | ❌ Da fare | Firma ML-DSA transcript hash |
 | Autenticazione client IK ML-DSA | ❌ Da fare | Verifica firma messaggi |
 | PoW / Rate limiting | 🔶 WIP | `network/PoW`: `Issue`/`Verify` (HMAC-MAC) pronti; `load_status.LoadReport` da collegare al Dispatcher (import cycle) |
@@ -483,10 +521,15 @@ Connection:
 - Avviare `Session.Dispatcher()` goroutine in `Init()`
 - Il client chiama `RequestTokenRegistration(sess)`: restituisce il token non blindato (`blindstate.Unblind`) ma oggi è scartato con `_`
 
-### Da finire: processo di registrazione completo
-- **Server: ricordare i token emessi** per la registrazione (il server deve tenere traccia dei token blind signature validi emessi, per verificare che il client sia autorizzato a registrarsi/uploadare il bundle)
-- **Client: uploadare il suo bundle** dopo l'ottenimento del token (invio `PublicBundle`/public sets al server una volta autenticato)
-- Collegare token emesso → autorizzazione a completare la registrazione con UserID + PublicBundle + ML-DSA sign
+### Ricerca utente e avvio prima comunicazione P2P
+- Creare una fase in cui il client richiede un nickname e il server risolve `nickname:<nickname>` → BundleID.
+- Il server recupera e restituisce il bundle pubblico e i set one-time disponibili associati al BundleID.
+- Il client verifica il bundle ricevuto, esegue PQXDH e deriva il segreto condiviso.
+- Derivare le due mailbox iniziali: MailBox zero per la friendship request e MailBox one per la risposta. Il server conserva e inoltra esclusivamente ciphertext opachi.
+
+### Bundle upload
+- **Fix `InitializePQXDH` `basePath`**: far usare a `bundleIKDir`/`CreateBundles` il `basePath` passato (oggi scrivono in `data.BasePath` globale, incoerente con `loadIKKeys`). Vedi Known quirks.
+- Completato: il server calcola il BundleID dalle chiavi pubbliche, verifica il bundle, controlla collisioni tramite `GetValue`, salva bundle e set in BadgerDB e pulisce tutte le associazioni se il salvataggio fallisce.
 
 ### Dispatch / Reader Manager
 - Server: `phases.Dispatcher` con 3 arg (level) vs `Session.Handler` 2 arg → mismatch. Far risolvere `level` dentro `Dispatcher` (da registry via load_status) e spezzare import cycle
@@ -494,12 +537,13 @@ Connection:
 - Client: da fare (ciclo su Incoming, smista per tag: 0x00→scarta, 0x01→Registration, ...)
 
 ### Client logic
-- Iniziare logica inizializzazione client (connessione → registrazione → publish bundle)
-- Simulare connessione post-implementazione
+- Main orchestration implemented: connection → TLS binding → server identification → token registration → bundle upload.
+- Simulate a full connection against the server after server identity initialization is exercised with a real password.
 
 ### Server
+- **Server identification follow-up**: define the first-contact trust policy (currently the client verifies cryptographic consistency and logs whether an ID is new or known; it does not yet pin an expected ID to an endpoint), then add Merkle log and gossip.
 - **Bootstrap server** (speculare al client): `bootstrap.StartServer(addr, port, ctx)` crea `client.NewRegistry()` + certificato + `server_tls.Listen`, lancia in goroutine `AcceptLoop(ctx, ln, registry)` (loop accept → `client.NewClient(conn, registry.DeadClients)` → `registry.AddClient(c)`), ritorna `RegistryClients`. Variante B: inizializzazione nel main. `AcceptLoop` resta pubblico per ciclo di vita gestito dal chiamante
-- Implementare BadgerDB per storage utenti/bundle
+- Estendere BadgerDB con la lettura atomica e la rimozione controllata dei set one-time quando verranno consegnati a un client.
 - Integrare EKM layer con ML-DSA pinned keys
 - Buildare Dockerfile server
 - Eliminare `network/tls/tls.go` duplicato
@@ -525,3 +569,58 @@ Connection:
 - **Modifiche minime.** Attieniti strettamente a ciò che chiede l'utente. Non creare funzioni helper, refactoring o nuova infrastruttura. Usa solo funzioni esistenti.
 - **Stesso stile del codice esistente.** `module.action` naming, error wrapping con `apperr.Wrap`/`apperr.New`, `memguard` per segreti, nessun commento superfluo, formatting compatto.
 - **Non riscrivere file interi** — fai edit mirati.
+
+## P2Chat-UI (frontend Tauri v2 + React)
+
+### Scopo e stato
+Grafica **completa e statica** (stile Apple chiaro, minimale), pura — **nessuna logica/backend collegata ancora**. L'utente collegherà JS/WebSocket al backend Go in un secondo momento. Attualmente i dati sono statici (`data/*.ts`) e le interazioni sono solo demo (invio chat simula una risposta).
+
+### Struttura (in `P2Chat-UI/`)
+
+```
+src/
+├── main.tsx / App.tsx            # View: dashboard|setup|chat|security|log + sidebar collassabile
+├── index.css                     # @theme tokens + animazioni + scrollbar + reduced-motion
+├── components/
+│   ├── ui.tsx                    # Primitives: Card, Button, ProgressDots, IconRow, icone SVG
+│   ├── DashboardScreen.tsx       # Home (hero gradient, metriche, protection stack, activity)
+│   ├── SetupScreen.tsx           # Wizard Connect→Account→Ready (unifica vecchi Connect/Register)
+│   ├── ChatScreen.tsx            # Lista contatti + thread + composer animato + scheda contatto
+│   ├── ContactCard.tsx           # Scheda contatto (fingerprint, bundle, QR deterministico)
+│   ├── SecurityScreen.tsx        # HSM select, Argon2id levels, PQ keys
+│   └── LogScreen.tsx             # Log live (DEBUG/INFO/WARNING/ERROR)
+└── data/                         # chat.ts, security.ts, pow.ts, phases.ts (dati statici)
+```
+
+### Palette (light Apple)
+- bg `#eef0f5` · sidebar `#f2f3f7` · card `#ffffff` · border `#e5e7ee`
+- primary blu `#2f6fed` (dark `#1e56d6`) · success verde `#16a34a` · text `#1b1f27` / `#6b7280` / `#8a93a4`
+- Gradienti primari: `bg-gradient-to-br from-primary to-primary-dark`
+- Easing animazioni: `cubic-bezier(0.22,1,0.36,1)` (Apple)
+
+### Convenzioni UI
+- **Niente separatori** tra lista contatti e chat (stesso `bg-sidebar`); non-letti a destra del contatto; New Chat fisso in alto.
+- Scheda contatto si apre **solo dal click sul contatto nell'header** della chat (non dalla lista) → overlay laterale da destra con backdrop `bg-black/40 backdrop-blur-md`; click fuori la chiude.
+- Sidebar collassabile (240px→68px): da compressa **tutte le icone centrate** sullo stesso asse.
+- Animazioni messaggio: `bubble-in-right` (me) / `bubble-in-left` (them), `typing-bounce` dots, `card-in`/`card-fade` per la scheda, `view-in` al cambio schermata, `dash-rotate` nello step Account.
+- Bottoni primari sempre a **gradiente + ombra colorata + `active:scale`**; send **disabled** quando il campo è vuoto.
+- Accessibilità: `:focus-visible` globale e `@media (prefers-reduced-motion: reduce)` disattiva animazioni.
+- Font: SF Pro (system) per il testo, `SF Mono`/`ui-monospace` per dati tecnici/fingerprint.
+
+### UI — progress recap
+| Area | Status | Note |
+|------|--------|------|
+| Refactor stile Apple chiaro | ✅ | `index.css` tokens + `ui.tsx` primitives |
+| Dashboard | ✅ | Hero gradient, metriche, protection stack (sostituisce finto "score 97"), quick actions, activity |
+| Setup wizard | ✅ | Connect→Account (animazione tratteggio→verde)→Ready; logo solo in sidebar |
+| Chat + invio animato | ✅ | Composer con attach/send gradient, bubble in/out, typing indicator, read-receipt ✓✓, auto-scroll |
+| Scheda contatto | ✅ | Overlay laterale + backdrop blur, QR deterministico, Share (primary) / Remove (rose) |
+| Security | ✅ | HSM/Argon select con checkmark + hover lift |
+| Log | ✅ | Indicatore "LIVE" pulsante |
+| Sidebar collassabile | ✅ | Icons centrate quando compressa, active pill gradient |
+| Backend collegamento | ❌ Da fare | WebSocket/Tauri → backend Go (client, PoW, PQXDH) |
+
+### UI — prossimi passi
+- Collegare la UI al backend Go: registrazione (Setup → PoW + challenge-response ML-DSA), publish bundle, autenticazione, chat reale via socket.
+- Dati statici in `data/*.ts` → sostituire con payload reali.
+- Test Tauri (`src-tauri/`) end-to-end.

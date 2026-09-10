@@ -28,9 +28,19 @@ func TestStoreKeys(t *testing.T) {
 	//test with some pre-created key for import cycle error
 	//the test want only to verificate that the write and read of the keys is correcly set
 
-	privateKey, publicKey, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password")), false)
+	rawPriv, rawPub, err := CreateKeys()
 	if err != nil {
 		t.Fatal("error during key creation", err)
+	}
+
+	privateKey, err := EncryptPrivateKey(lockToEnc(t, encryption.Encaps("password")), rawPriv, 3, false)
+	if err != nil {
+		t.Fatal("error during key encryption", err)
+	}
+
+	publicKey, err := NewPublicKey(rawPub)
+	if err != nil {
+		t.Fatal("error during public key creation", err)
 	}
 
 	if err := privateKey.SetChecksum(); err != nil {
@@ -81,43 +91,37 @@ func TestStoreKeys(t *testing.T) {
 }
 
 // Test if the signature of a pair of ml-dsa87 key works.
-// The test call the method CreateKey()
 func TestSignature(t *testing.T) {
 
-	privateKeyStruct, publicKeyStruct, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password1")), false)
+	rawPriv, rawPub, err := CreateKeys()
+	if err != nil {
+		t.Fatal("error during key creation", err)
+	}
 
 	// signature will contain the sign of the key and ctx is an another control that during the Verify() must coincide
 	msg := []byte("message to verify")
 	signature := make([]byte, mldsa87.SignatureSize)
 	ctx := []byte("test")
 
-	rawPublicKey, rawPrivateKey, err := DecodePairKeys(publicKeyStruct, privateKeyStruct, lockToEnc(t, encryption.Encaps("password1")))
-	if err != nil {
-		t.Fatal("error during decoding keys from struct", err)
-	}
-
 	var rawKey mldsa87.PrivateKey
 
-	// open the enclave and save protected buffer
-	buffer, err := rawPrivateKey.Open()
+	buffer, err := rawPriv.Open()
 	if err != nil {
 		t.Fatal("error during open Enclave")
 	}
 	defer buffer.Destroy()
 
-	// i create the raw private key inside rawKey for use the signature function
 	err = rawKey.UnmarshalBinaryFromLockedBuffer(buffer)
 	if err != nil {
 		t.Fatal("error during private key unmarshal from protected buffer", err)
 	}
 	err = mldsa87.SignTo(&rawKey, msg, ctx, true, signature) //randomized add entropy to the sign
 
-	// if signature succeeded, then i try to do the opposite operation
 	if err != nil {
 		t.Fatal("error during Signature of the message", err)
 	}
 
-	verify := mldsa87.Verify(rawPublicKey, msg, ctx, signature)
+	verify := mldsa87.Verify(rawPub, msg, ctx, signature)
 	if verify == false {
 		t.Fatal("error verify of the message", err)
 	}
@@ -127,9 +131,19 @@ func TestSignature(t *testing.T) {
 func TestCreateKeysFields(t *testing.T) {
 	const level = 3
 
-	privateKeyStruct, publicKeyStruct, _, err := CreateKeys(level, lockToEnc(t, encryption.Encaps("password1")), false)
+	rawPriv, rawPub, err := CreateKeys()
 	if err != nil {
 		t.Fatal("error during key creation", err)
+	}
+
+	privateKeyStruct, err := EncryptPrivateKey(lockToEnc(t, encryption.Encaps("password1")), rawPriv, level, false)
+	if err != nil {
+		t.Fatal("error during key encryption", err)
+	}
+
+	publicKeyStruct, err := NewPublicKey(rawPub)
+	if err != nil {
+		t.Fatal("error during public key creation", err)
 	}
 
 	if privateKeyStruct == nil {
@@ -227,9 +241,14 @@ func TestDecodePublicKeyMLDSAErrors(t *testing.T) {
 }
 
 func TestDecodePrivateKeyMLDSAWrongPassword(t *testing.T) {
-	privateKeyStruct, _, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password1")), false)
+	rawPriv, _, err := CreateKeys()
 	if err != nil {
 		t.Fatal("error during key creation", err)
+	}
+
+	privateKeyStruct, err := EncryptPrivateKey(lockToEnc(t, encryption.Encaps("password1")), rawPriv, 3, false)
+	if err != nil {
+		t.Fatal("error during key encryption", err)
 	}
 
 	_, err = DecodePrivateKey(lockToEnc(t, encryption.Encaps("wrong-password")), privateKeyStruct)
@@ -239,9 +258,14 @@ func TestDecodePrivateKeyMLDSAWrongPassword(t *testing.T) {
 }
 
 func TestDecodePrivateKeyMLDSAInvalidKeyField(t *testing.T) {
-	privateKeyStruct, _, _, err := CreateKeys(3, lockToEnc(t, encryption.Encaps("password1")), false)
+	rawPriv, _, err := CreateKeys()
 	if err != nil {
 		t.Fatal("error during key creation", err)
+	}
+
+	privateKeyStruct, err := EncryptPrivateKey(lockToEnc(t, encryption.Encaps("password1")), rawPriv, 3, false)
+	if err != nil {
+		t.Fatal("error during key encryption", err)
 	}
 
 	corruptedPrivateKey := &struct_mldsa.PrivateKeyMLDSA{

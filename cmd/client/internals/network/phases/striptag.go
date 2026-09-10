@@ -11,7 +11,7 @@ type Result struct {
 	Completed    bool
 	CloseStream  bool
 	Err          error
-	GlobalOut    [][]byte
+	Events       [][]byte
 }
 
 var defaultTime time.Duration = time.Second * 30
@@ -23,14 +23,15 @@ func StripTag(msg []byte, expected byte) ([]byte, bool) {
 	return msg[1:], true
 }
 
-func FillResult(result *Result, replies [][]byte, nextDeadline time.Duration, completed bool, closeStream bool,globalOut [][]byte, err error) *Result {
+func FillResult(result *Result, replies [][]byte, nextDeadline time.Duration, completed bool, closeStream bool, events [][]byte, err error) *Result {
 	result.Replies = replies
 	if nextDeadline == 0 {
-		result.NextDeadline = defaultTime
+		nextDeadline = defaultTime
 	}
+	result.NextDeadline = nextDeadline
 	result.Completed = completed
 	result.CloseStream = closeStream
-	result.GlobalOut = globalOut
+	result.Events = events
 	result.Err = err
 
 	return result
@@ -44,7 +45,7 @@ func GetPhase[T any](byteCode byte, msg []byte, phaseState *any, checkSize func(
 	result := &Result{}
 
 	if phaseState == nil {
-		return nil, FillResult(result, nil, 0, false, true, nil,apperr.New("phase state is nil"))
+		return nil, FillResult(result, nil, 0, false, true, nil, apperr.New("phase state is nil"))
 	}
 
 	// check if the message lenght match with the bytecode
@@ -58,7 +59,7 @@ func GetPhase[T any](byteCode byte, msg []byte, phaseState *any, checkSize func(
 
 	currentState, ok := (*phaseState).(*T)
 	if !ok || currentState == nil {
-		return nil, FillResult(result, nil, 0, false, true, nil,apperr.New("phase received an invalid state"))
+		return nil, FillResult(result, nil, 0, false, true, nil, apperr.New("phase received an invalid state"))
 	}
 
 	return currentState, nil

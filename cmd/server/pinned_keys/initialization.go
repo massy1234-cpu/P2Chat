@@ -26,9 +26,19 @@ func Initialize(level int, password *memguard.Enclave, store bool, HSM bool) err
 	// if the pinned key are NOT present the app create it 
 	// NB: the user that want to use this APP have to find a method to distrubuite the public MLDSA
 	// between users ( for now, i will implement an alternative to this method ) 
-	privateKeyStruct, publicKeyStruct, _, err := mldsa_keys.CreateKeys(level, password, HSM)
+	rawPriv, rawPub, err := mldsa_keys.CreateKeys()
 	if err != nil {
 		return apperr.Wrap("create ML-DSA keys", err)
+	}
+
+	privateKeyStruct, err := mldsa_keys.EncryptPrivateKey(password, rawPriv, level, HSM)
+	if err != nil {
+		return apperr.Wrap("encrypt ML-DSA private key", err)
+	}
+
+	publicKeyStruct, err := mldsa_keys.NewPublicKey(rawPub)
+	if err != nil {
+		return apperr.Wrap("create ML-DSA public key", err)
 	}
 
 	if store {

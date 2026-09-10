@@ -2,7 +2,7 @@ package bootstrap
 
 import (
 	"P2Chat/cmd/client/internals/p2log"
-	"P2Chat/cmd/server/network/client"
+	"P2Chat/cmd/server/internals/network/client"
 	"P2Chat/pkg/apperr"
 	"net"
 )
@@ -18,8 +18,10 @@ func ListenClients(listenHandle net.Listener, registry *client.RegistryClients) 
 	for {
 		conn, err := listenHandle.Accept()
 		if err != nil {
-			p2log.Error("Incoming connection error: ", err)
-			continue
+			// on shutdown the listener is closed: stop the accept loop instead
+			// of busy-looping on the error
+			p2log.Debug("listener closed, stop accepting clients")
+			return nil
 		}
 
 		clientScheme := client.NewClient(conn, registry.DeadClients)

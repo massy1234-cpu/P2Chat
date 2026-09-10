@@ -13,7 +13,7 @@ require (
 	go.etcd.io/bbolt v1.5.0
 	go.step.sm/crypto v0.84.1
 	golang.org/x/crypto v0.53.0
-	golang.org/x/sys v0.46.0
+	golang.org/x/sys v0.47.0
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -34,4 +34,5 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/term v0.45.0 // indirect
 )

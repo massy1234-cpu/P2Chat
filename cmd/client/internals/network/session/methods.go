@@ -2,19 +2,23 @@ package session
 
 import (
 	"P2Chat/cmd/client/internals/network"
+	"P2Chat/cmd/client/internals/network/phases"
 	"P2Chat/cmd/client/internals/network/transmission"
 	"P2Chat/cmd/client/internals/p2log"
 	"P2Chat/pkg/apperr"
 	"crypto/rand"
 	"fmt"
+	"io"
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/hashicorp/yamux"
+	"github.com/awnumar/memguard"
 )
 
 // create a new session with an unique ID and the stream, register it in the connection
-func NewSession(ID uint32, stream *yamux.Stream, globalOut chan<- []byte, deadSessions chan<- uint32) *SingleSession {
+func NewSession(ID uint32, stream *yamux.Stream, deadSessions chan<- uint32) *SingleSession {
 	return &SingleSession{
 		ID:           ID,
 		Tag:          "",
@@ -22,7 +26,7 @@ func NewSession(ID uint32, stream *yamux.Stream, globalOut chan<- []byte, deadSe
 		Incoming:     make(chan []byte, 128),
 		Outgoing:     make(chan []byte, 128),
 		Local:        make(chan []byte, 64),
-		GlobalOut:    globalOut,
+		Events:       make(chan []byte, 64),
 		DeadSessions: deadSessions,
 		Done:         make(chan struct{}),
 		phaseState: nil,
@@ -52,6 +56,10 @@ func (session *SingleSession) Listener() {
 				return
 			default:
 			}
+			if errors.Is(err, io.EOF) {
+				close(session.Incoming)
+				return
+			}
 			p2log.Error("error: session listener closed, ID:", session.ID, err)
 			session.ForceClose()
 			return
@@ -80,16 +88,35 @@ func (session *SingleSession) Writer() {
 			if len(msg) == 0 {
 				continue
 			}
+			
+			// store the dimension for create dynamics dummy requests and obfuscate correctly
 			if msg[0] != 0x00 {
 				session.DummyBase.Store(int64(len(msg)))
 			}
 
+			// random delay before sending the message 
 			delay()
+			select { case <-session.Done: return; default: }
+			if msg[0] == 0x00 {
+				select { case <-session.StopDummy: continue; default: }
+			}
+
+			var err error 
 			p2log.Debug("session sending tag:", string(msg[0]), "len:", len(msg))
-			err := transmission.WriteMessage(session.Stream, msg)
+		 	for i := range 3 {
+				err = transmission.WriteMessage(session.Stream, msg)
+				if err != nil {
+					p2log.Warning("error during sending the message, retry..., attemp: ",i)
+					delay()
+				}else{
+					break
+				}
+			}
+
+			// message sending error persist
+			if msg[0] == phases.LoginTokenRequest { memguard.WipeBytes(msg[1:]) }
 			if err != nil {
-				session.PutOutgoing(msg)
-				p2log.Error("error writing message", err)
+				p2log.Error("failed with message sending, close session...,error: ",err)
 				session.ForceClose()
 				return
 			}
@@ -108,13 +135,14 @@ func (session *SingleSession) Writer() {
 // Router is the only process that can read from Incoming
 // have the role to route the process
 func (session *SingleSession) Router() error {
+	defer close(session.Events)
 	if session.Handler == nil {
 		return apperr.New("Handler is nil")
 	}
 
 	// the timer is created and is stopped
 	timer := time.NewTimer(time.Hour)
-	timer.Stop()
+		timer.Stop()
 
 	for {
 		select {
@@ -126,7 +154,8 @@ func (session *SingleSession) Router() error {
 			session.ForceClose()
 			return apperr.New("error timeout")
 
-		case msg := <- session.Incoming:
+		case msg, ok := <- session.Incoming:
+			if !ok { session.ForceClose(); return apperr.New("peer closed the session") }
 			if len(msg) < 1 {
 				session.ForceClose()
 				return apperr.New("router session ID: " + fmt.Sprint(session.ID) + " closed")
@@ -184,18 +213,15 @@ func (session *SingleSession) process(timer *time.Timer, bytecode byte, slice []
 		session.PutOutgoing(value)
 	}
 
-	// forward the user notification to the application, without blocking if the session is closed
-	for _, value := range result.GlobalOut {
+	// forward the user notification to the orchestrator, without blocking if the session is closed
+	for _, value := range result.Events {
 		select {
-		case session.GlobalOut <- value:
+		case session.Events <- value:
 		case <-session.Done:
 		}
 	}
 
 	if result.Completed {
-		for i := range result.Replies {
-			session.PutOutgoing(result.Replies[i])
-		}
 		
 		// close the connection after a random time
 		timeRandom := network.CryptoInt(500) + 200
@@ -245,18 +271,14 @@ func (session *SingleSession) PutOutgoing(data []byte) {
 
 // ForceClose abruptly terminates the session on error: it closes the stream and
 // signals the shutdown to every goroutine. It only touches the session, never the
-// connection or the shared GlobalOut channel.
+// connection or a shared channel.
 func (session *SingleSession) ForceClose() {
 	session.Once.Do(func() {
 		p2log.Warning("force closing session, ID:", session.ID)
 		session.Stream.Close()
 		close(session.Done)
 
-		// notify the connection that this session is dead, without blocking
-		select {
-		case session.DeadSessions <- session.ID:
-		default:
-		}
+		session.DeadSessions <- session.ID		// block until the DeadSession chan became free to insert the message
 	})
 }
 
@@ -268,6 +290,8 @@ func (session *SingleSession) GoodClose() {
 		close(session.StopDummy)
 		session.Flush(15 * time.Second)
 		close(session.Done)
+		session.Stream.Close()
+		session.DeadSessions <- session.ID
 	})
 }
 

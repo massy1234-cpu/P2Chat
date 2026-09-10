@@ -1,7 +1,7 @@
 package session
 
 import (
-	"P2Chat/cmd/server/network/phases"
+	"P2Chat/cmd/server/internals/network/phases"
 	"github.com/hashicorp/yamux"
 	"sync"
 	"sync/atomic"

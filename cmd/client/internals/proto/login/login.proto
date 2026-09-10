@@ -1,0 +1,34 @@
+syntax = "proto3";
+package proto_struct_login;
+option go_package = "P2Chat/cmd/client/internals/proto_generated/login/proto_struct_login";
+
+message LoginProof {
+    bytes bundle_id = 1;
+    uint32 version = 2;
+    int64 timestamp = 3;
+    bytes mldsa_signature = 4;
+    bytes x25519_signature = 5;
+    bytes blinded = 6;
+}
+
+message LoginNonce {
+    bytes nonce = 1;
+    int64 timestamp = 2;
+    uint32 version = 3;
+}
+
+message LoginToken {
+    bytes message = 1;
+    bytes signature = 2;
+    bytes key_hash = 3;
+    int64 expires_at = 4;
+    bytes server_id = 5;
+}
+
+message LoginResult {
+    bytes blind_signature = 1;
+    bytes public_key = 2;
+    bytes key_hash = 3;
+    int64 expires_at = 4;
+    uint32 remaining_uses = 5;
+}

@@ -2,9 +2,14 @@ package connection
 
 import (
 	"P2Chat/cmd/client/internals/p2log"
-	"P2Chat/cmd/server/network/dispatcher"
-	"P2Chat/cmd/server/network/phases"
-	"P2Chat/cmd/server/network/session"
+	"P2Chat/cmd/server/internals/network/dispatcher"
+	"P2Chat/cmd/server/internals/network/phases"
+	"P2Chat/cmd/server/internals/network/phases/login"
+	"P2Chat/cmd/server/internals/network/phases/server_identification"
+	"P2Chat/cmd/server/internals/network/session"
+	"P2Chat/pkg/apperr"
+	"sync/atomic"
+	"time"
 )
 
 // return the next available ID for a session, reuse the freed IDs if any
@@ -31,28 +36,70 @@ func (c *Connection) ReleaseID(number uint32) {
 // accept the streams from the master session and create a new session with the dispatcher for each one
 func (c *Connection) Listener() {
 	for {
-		stream, err := c.MasterSession.AcceptStream()
-		if err != nil {
-			p2log.Debug("connection listener stopped, master session closed")
+		select {
+		// (+1)
+		case c.SessionStop <- struct{}{}:
+			stream, err := c.MasterSession.AcceptStream()
+			if err != nil {
+				p2log.Debug("connection listener stopped, master session closed")
+				<-c.SessionStop
+				return
+			}
+			ID := c.NextID()
+			sess := session.NewSession(ID, stream, c.DeadSessions)
+			p2log.Debug("server connection accepted a new stream, ID:", ID)
+			c.AssignHandler(sess, ID)
+		case <-c.Done:
 			return
 		}
-		ID := c.NextID()
-		sess := session.NewSession(ID, stream, c.DeadSessions)
-		p2log.Debug("server connection accepted a new stream, ID:", ID)
-		c.AssignHandler(sess, ID)
 	}
 }
 
 // AssignHandler attaches the generic dispatcher before the session starts.
 func (c *Connection) AssignHandler(sess *session.SingleSession, ID uint32) {
 	sess.Handler = func(byteCode byte, msg []byte, state *any) *phases.Result {
+		if user := c.Auth.Load(); user != nil {
+			user.LastSeen.Store(time.Now().Unix())
+		}
+		switch byteCode {
+		case phases.ServerIdentificationRequest, phases.RegisterTokenReq, phases.UploadBundleRequest:
+		case phases.LoginAccessRequest, phases.LoginTokenRequest:
+			if !c.Identified.Load() || c.Auth.Load() != nil || !c.LoginInProgress.CompareAndSwap(nil, sess) {
+				return phases.FillResult(&phases.Result{}, nil, 0, false, true, apperr.New("login unavailable on this connection"))
+			}
+			go func() { <-sess.Done; c.LoginInProgress.CompareAndSwap(sess, nil) }()
+			*state = &login.LoginServer{Binding: c.Binding, Authenticate: c.Authenticate}
+		default:
+			if c.Authed == nil || !c.Authed.Load() {
+				return phases.FillResult(&phases.Result{}, nil, 0, false, true, apperr.New("authentication required"))
+			}
+		}
 		handler, err := dispatcher.Dispatcher(byteCode)
 		if err != nil {
 			return phases.FillResult(&phases.Result{}, nil, 0, false, true, err)
 		}
 
-		sess.Handler = handler
-		return handler(byteCode, msg, state)
+		sess.Handler = func(tag byte, payload []byte, phaseState *any) *phases.Result {
+			result := handler(tag, payload, phaseState)
+			if byteCode == phases.LoginAccessRequest || byteCode == phases.LoginTokenRequest {
+				if result.Completed || result.Err != nil || result.CloseStream {
+					c.LoginInProgress.CompareAndSwap(sess, nil)
+				}
+			}
+			return result
+		}
+		if byteCode == phases.ServerIdentificationRequest {
+			*state = &server_identification.IdentificationServer{Binding: c.Binding}
+			sess.Handler = func(tag byte, payload []byte, state *any) *phases.Result {
+				result := handler(tag, payload, state)
+				if result.Err == nil && result.Completed {
+					c.Identified.Store(true)
+				}
+				return result
+			}
+			return sess.Handler(byteCode, msg, state)
+		}
+		return sess.Handler(byteCode, msg, state)
 	}
 
 	c.ActiveSessions.Store(ID, sess)
@@ -67,6 +114,9 @@ func (c *Connection) ReleaseSession(sess *session.SingleSession) {
 	}
 	c.ReleaseID(sess.ID)
 	sess.ForceClose()
+
+	// (-1)
+	<-c.SessionStop
 }
 
 // close all the active sessions of the connection
@@ -79,6 +129,9 @@ func (c *Connection) CloseAllSessions() {
 
 // start the goroutines of the connection
 func (c *Connection) Init() {
+	if c.Authed == nil {
+		c.Authed = &atomic.Bool{}
+	}
 	go c.Listener()
 	go c.CheckDeadSessions()
 	go c.CheckConnection()
@@ -113,6 +166,7 @@ func (c *Connection) CheckConnection() {
 func (c *Connection) Close() {
 	c.Once.Do(func() {
 		close(c.Done)
+		c.ClearAuthentication()
 		c.MasterSession.Close()
 		c.CloseAllSessions()
 	})

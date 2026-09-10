@@ -2,6 +2,7 @@ package pow
 
 import (
 	proto_struct_pow "P2Chat/cmd/client/internals/proto_generated/PoW/proto_struct_pow"
+	"context"
 	"encoding/binary"
 	"errors"
 	"golang.org/x/crypto/argon2"
@@ -11,7 +12,6 @@ var (
 	ErrNonceExhausted = errors.New("pow: nessuna soluzione trovata entro il limite")
 	ErrInvalidLevel   = errors.New("pow: level non valido, deve essere 1-5")
 )
-
 
 type Level uint8
 
@@ -47,9 +47,9 @@ func (l Level) params() (levelParams, error) {
 }
 
 const (
-	argonThreads = 1	// no parallelism 
-	argonKeyLen  = 32	// same lenght always
-	maxAttempts  = 1 << 24	// covers the worst case (Level5, 24 zero bits)
+	argonThreads = 1       // no parallelism
+	argonKeyLen  = 32      // same lenght always
+	maxAttempts  = 1 << 24 // covers the worst case (Level5, 24 zero bits)
 )
 
 // create the argon2 hash from the challenge and the nonce
@@ -73,17 +73,27 @@ func CountZeroBits(hash []byte) uint8 {
 			pos--
 		}
 	}
-	
+
 	return count
 }
 
-// solve the challenge searching the nonce that create a correct 
+// solve the challenge searching the nonce that create a correct
 func Solve(c *proto_struct_pow.Challenge) (uint64, error) {
+	return SolveContext(context.Background(), c)
+}
+
+func SolveContext(ctx context.Context, c *proto_struct_pow.Challenge) (uint64, error) {
+	if c == nil || c.Level < 1 || c.Level > 5 || len(c.Salt) != 16 {
+		return 0, ErrInvalidLevel
+	}
 	p, err := Level(c.Level).params()
 	if err != nil {
 		return 0, err
 	}
 	for nonce := uint64(0); nonce < maxAttempts; nonce++ {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		if CountZeroBits(argonHash(c, nonce, p)) >= p.difficulty {
 			return nonce, nil
 		}

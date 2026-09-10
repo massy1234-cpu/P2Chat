@@ -1,0 +1,28 @@
+// protoc --go_out=. --go_opt=module=P2Chat cmd/server/internals/proto/PoW/pow_challenge.proto
+
+syntax = "proto3";
+
+package proto_server_pow;
+
+option go_package = "P2Chat/cmd/server/internals/proto_generated/PoW/proto_struct_pow";	// specify where put the generated file
+
+// challenge issued by the server, solved by the client, verified back on the server
+message Challenge {
+	int64		timestamp = 1;
+	bytes		salt = 2;
+	uint32		level = 3;
+	bytes		mac = 4;
+}
+
+// is the struct used for the token verification execute from the server
+message TokenVerification {
+	bytes 		token = 1;
+	bytes 		m = 2;
+	Challenge 	challenge = 3;
+	Signature 	signature = 4;
+}
+
+message Signature {
+	bytes		Obfuscated = 1;
+	bytes		hashPk = 2;
+}

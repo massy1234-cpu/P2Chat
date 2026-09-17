@@ -11,7 +11,7 @@ import (
 )
 
 func init() {
-	dispatcher.RegistryByteCode(phases.ServerIdentificationRequest, Handler)
+	dispatcher.RegistryByteCode(phases.ServerIdentityRequest, Handler)
 }
 
 type IdentificationServer struct {
@@ -58,9 +58,9 @@ func handleRequest(result *phases.Result, currentState *IdentificationServer, ms
 		return phases.FillResult(result, nil, 0, false, true, apperr.Wrap("serialize server identification", err))
 	}
 	currentState.completed = true
-	return phases.FillResult(result, [][]byte{append([]byte{phases.ServerIdentificationResponse}, serialized...)}, 0, true, false, nil)
+	return phases.FillResult(result, [][]byte{append([]byte{phases.ServerIdentityResponse}, serialized...)}, 0, true, false, nil)
 }
 
 func CheckSize(tag byte, payloadLen int) bool {
-	return tag == phases.ServerIdentificationRequest && payloadLen >= 34 && payloadLen <= 128
+	return tag == phases.ServerIdentityRequest && payloadLen >= 34 && payloadLen <= 128
 }

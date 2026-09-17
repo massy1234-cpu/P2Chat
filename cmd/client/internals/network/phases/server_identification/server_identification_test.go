@@ -68,12 +68,12 @@ func TestIdentificationVerification(t *testing.T) {
 				t.Fatal(err)
 			}
 			var phaseState any = &IdentificationClient{Binding: clientBinding}
-			start := Handler(phases.ServerIdentificationRequest, nil, &phaseState)
-			if start.Err != nil || len(start.Replies) != 1 || start.NextDeadline != 30*time.Second {
+			start := Handler(phases.ServerIdentityRequest, nil, &phaseState)
+			if start.Err != nil || len(start.IntoWire) != 1 || start.NextDeadline != 30*time.Second {
 				t.Fatalf("invalid start: %+v", start)
 			}
 			request := &serverproto.IdentificationRequest{}
-			if err := proto.Unmarshal(start.Replies[0][1:], request); err != nil {
+			if err := proto.Unmarshal(start.IntoWire[0][1:], request); err != nil {
 				t.Fatal(err)
 			}
 			if len(request.Nonce) != 32 {
@@ -118,10 +118,13 @@ func TestIdentificationVerification(t *testing.T) {
 			if name == "truncated" {
 				payload = payload[:len(payload)-1]
 			}
-			result := Handler(phases.ServerIdentificationResponse, payload, &phaseState)
+			result := Handler(phases.ServerIdentityResponse, payload, &phaseState)
 			if name != "valid" {
 				if result.Err == nil || !result.CloseStream {
 					t.Fatal("invalid response accepted")
+				}
+				if phaseState.(*IdentificationClient).state != stateFailed {
+					t.Fatal("failed identification was not marked as failed")
 				}
 				if err := db.View(func(tx *bbolt.Tx) error {
 					if tx.Bucket([]byte("server:identities")) != nil {
@@ -148,7 +151,7 @@ func TestIdentificationVerification(t *testing.T) {
 			if exists, err := database.SaveServerID(&stored); err != nil || !exists {
 				t.Fatalf("existing identity not detected: %v", err)
 			}
-			if replay := Handler(phases.ServerIdentificationResponse, payload, &phaseState); replay.Err == nil {
+			if replay := Handler(phases.ServerIdentityResponse, payload, &phaseState); replay.Err == nil {
 				t.Fatal("completed phase accepted replay")
 			}
 		})

@@ -6,7 +6,7 @@ import (
 )
 
 type Result struct {
-	Replies      [][]byte
+	IntoWire     [][]byte
 	NextDeadline time.Duration
 	Completed    bool
 	CloseStream  bool
@@ -23,8 +23,8 @@ func StripTag(msg []byte, expected byte) ([]byte, bool) {
 	return msg[1:], true
 }
 
-func FillResult(result *Result, replies [][]byte, nextDeadline time.Duration, completed bool, closeStream bool, events [][]byte, err error) *Result {
-	result.Replies = replies
+func FillResult(result *Result, intoWire [][]byte, nextDeadline time.Duration, completed bool, closeStream bool, events [][]byte, err error) *Result {
+	result.IntoWire = intoWire
 	if nextDeadline == 0 {
 		nextDeadline = defaultTime
 	}

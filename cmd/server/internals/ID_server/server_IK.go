@@ -5,6 +5,7 @@ import (
 	mldsa_keys "P2Chat/cmd/client/internals/keys/mldsa"
 	"P2Chat/cmd/client/internals/keys/x25519"
 	"P2Chat/cmd/server/database"
+	identityproto "P2Chat/cmd/server/internals/proto_generated/identity/proto_server_identity"
 	"P2Chat/pkg/apperr"
 	"crypto/ecdh"
 
@@ -73,7 +74,7 @@ func GetCurrentID() *CurrentID {
 }
 
 // SerializeID get the CurrentIK struct and serialize it
-func SerializeID(id *CurrentID, level int, password *memguard.Enclave, HSM bool) (*database.ProtoCurrentIK, error) {
+func SerializeID(id *CurrentID, level int, password *memguard.Enclave, HSM bool) (*identityproto.StoredServerIdentity, error) {
 	mldsaProto, err := mldsa_keys.EncryptPrivateKey(password, id.MLDSAPrivateKey, level, HSM)
 	if err != nil {
 		return nil, apperr.Wrap("error during mldsa key serialization", err)
@@ -87,11 +88,11 @@ func SerializeID(id *CurrentID, level int, password *memguard.Enclave, HSM bool)
 	mldsaPublic := id.PubMLDSA.Bytes()
 	x25519Public := id.PubX25519.Bytes()
 
-	scheme := &database.ProtoCurrentIK{
-		MLDSAProtoSerialized:  mldsaProto,
-		X25519ProtoSerialized: x25519Proto,
-		PubMLDSA:              mldsaPublic,
-		PubX25519:             x25519Public,
+	scheme := &identityproto.StoredServerIdentity{
+		MldsaPrivate:  mldsaProto,
+		X25519Private: x25519Proto,
+		PubMldsa:      mldsaPublic,
+		PubX25519:     x25519Public,
 	}
 
 	return scheme, nil
@@ -99,13 +100,13 @@ func SerializeID(id *CurrentID, level int, password *memguard.Enclave, HSM bool)
 
 // DeserializeIK converts the serialized proto IK back into the CurrentIK struct,
 // restoring the private keys into memguard enclaves ready to be used.
-func DeserializeIK(s *database.ProtoCurrentIK, password *memguard.Enclave) (*CurrentID, error) {
-	mldsaEnclaved, err := mldsa_keys.DecodePrivateKey(password, s.MLDSAProtoSerialized)
+func DeserializeIK(s *identityproto.StoredServerIdentity, password *memguard.Enclave) (*CurrentID, error) {
+	mldsaEnclaved, err := mldsa_keys.DecodePrivateKey(password, s.MldsaPrivate)
 	if err != nil {
 		return nil, apperr.Wrap("decode ML-DSA server private key", err)
 	}
 
-	x25519Serialized, err := proto.Marshal(s.X25519ProtoSerialized)
+	x25519Serialized, err := proto.Marshal(s.X25519Private)
 	if err != nil {
 		return nil, apperr.Wrap("marshal X25519 server private key", err)
 	}
@@ -115,7 +116,7 @@ func DeserializeIK(s *database.ProtoCurrentIK, password *memguard.Enclave) (*Cur
 	}
 
 	var mldsaPublic mldsa87.PublicKey
-	if err := mldsaPublic.UnmarshalBinary(s.PubMLDSA); err != nil {
+	if err := mldsaPublic.UnmarshalBinary(s.PubMldsa); err != nil {
 		return nil, apperr.Wrap("decode ML-DSA server public key", err)
 	}
 

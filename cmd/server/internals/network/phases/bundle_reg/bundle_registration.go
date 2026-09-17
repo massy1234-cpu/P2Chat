@@ -22,7 +22,7 @@ import (
 
 // register the bundle registration phase handler for the UploadBundleRequest bytecode
 func init() {
-	dispatcher.RegistryByteCode(phases.UploadBundleRequest, Handler)
+	dispatcher.RegistryByteCode(phases.BundleRegistrationStart, Handler)
 }
 
 type state uint8
@@ -43,7 +43,7 @@ type BundleServer struct {
 	nicknameVer bool
 	idUser      [32]byte
 	originalM   [32]byte
-	payload     upload.BundleUploadPayload
+	payload     upload.UserBundle
 }
 
 func Handler(byteCode byte, msg []byte, state *any) *phases.Result {
@@ -85,7 +85,7 @@ func Handler(byteCode byte, msg []byte, state *any) *phases.Result {
 // handleTokenCheck validates the registration token carried by the
 // UploadBundleRequest, ensuring it is a valid, non-reused blind signature.
 func handleTokenCheck(result *phases.Result, currentState *BundleServer, byteCode byte, msg []byte) *phases.Result {
-	if byteCode != phases.UploadBundleRequest {
+	if byteCode != phases.BundleRegistrationStart {
 		p2log.Error("invalid bundle upload request")
 		currentState.state = stateFailed
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid bundle upload request"))
@@ -151,14 +151,14 @@ func handleTokenCheck(result *phases.Result, currentState *BundleServer, byteCod
 
 	// confirm the token to the client and wait for the nickname request
 	currentState.state = stateAwaitNickname
-	return phases.FillResult(result, [][]byte{append([]byte{phases.TokenConfirmation}, 1)}, 0, false, false, nil)
+	return phases.FillResult(result, [][]byte{append([]byte{phases.BundleRegistrationTokenAccepted}, 1)}, 0, false, false, nil)
 }
 
 // handleNickname reserves the requested nickname atomically; if available it
 // issues originalM and moves on to the bundle wait, otherwise it asks for a
 // new nickname.
 func handleNickname(result *phases.Result, currentState *BundleServer, byteCode byte, msg []byte) *phases.Result {
-	if byteCode != phases.NicknameRequest {
+	if byteCode != phases.BundleNicknameRequest {
 		p2log.Error("invalid nickname request")
 		currentState.state = stateFailed
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid nickname request"))
@@ -182,7 +182,7 @@ func handleNickname(result *phases.Result, currentState *BundleServer, byteCode 
 	// nickname taken -> ask for a new one, stay in the same state
 	if taken {
 		p2log.Info("nickname not available: ", nickname)
-		return phases.FillResult(result, [][]byte{append([]byte{phases.NicknameResponse}, 0)}, 0, false, false, nil)
+		return phases.FillResult(result, [][]byte{append([]byte{phases.BundleNicknameAvailability}, 0)}, 0, false, false, nil)
 	}
 
 	// nickname available and reserved -> send originalM and wait for the bundle
@@ -196,8 +196,8 @@ func handleNickname(result *phases.Result, currentState *BundleServer, byteCode 
 	p2log.Info("nickname available: ", nickname, ", originalM issued")
 
 	return phases.FillResult(result, [][]byte{
-		append([]byte{phases.NicknameResponse}, 1),
-		append([]byte{phases.OriginalM}, originalM[:]...),
+		append([]byte{phases.BundleNicknameAvailability}, 1),
+		append([]byte{phases.BundleProofChallenge}, originalM[:]...),
 	}, 0, false, false, nil)
 }
 
@@ -252,17 +252,17 @@ func handleBundle(result *phases.Result, currentState *BundleServer, byteCode by
 	}
 
 	currentState.state = stateCompleted
-	return phases.FillResult(result, [][]byte{append([]byte{phases.BundleConfirmation}, 1)}, 0, true, false, nil)
+	return phases.FillResult(result, [][]byte{append([]byte{phases.BundleUploadAccepted}, 1)}, 0, true, false, nil)
 }
 
 // bundleReject releases the reserved nickname, marks the state as failed and
-// replies to the client with a negative BundleConfirmation.
+// sends a negative BundleConfirmation to the client.
 func bundleReject(result *phases.Result, currentState *BundleServer, err error) *phases.Result {
 	if delErr := database.DeleteNickname(currentState.nickname); delErr != nil {
 		p2log.Error("error deleting the reserved nickname: ", delErr)
 	}
 	currentState.state = stateFailed
-	return phases.FillResult(result, [][]byte{append([]byte{phases.BundleConfirmation}, 0)}, 0, false, true, err)
+	return phases.FillResult(result, [][]byte{append([]byte{phases.BundleUploadAccepted}, 0)}, 0, false, true, err)
 }
 
 // generateOriginalM returns 32 random bytes used as the challenge the client
@@ -279,21 +279,21 @@ func generateOriginalM() ([32]byte, error) {
 // check the size of the payload in base of the type of the message
 func CheckSize(tag byte, payloadLen int) bool {
 	switch tag {
-	case phases.Dummy:
+	case phases.DummyMessage:
 		return payloadLen >= 1
-	case phases.UploadBundleRequest:
+	case phases.BundleRegistrationStart:
 		return payloadLen >= 1
-	case phases.TokenConfirmation:
+	case phases.BundleRegistrationTokenAccepted:
 		return payloadLen == 1
-	case phases.NicknameRequest:
+	case phases.BundleNicknameRequest:
 		return payloadLen >= 1
-	case phases.NicknameResponse:
+	case phases.BundleNicknameAvailability:
 		return payloadLen == 1
-	case phases.OriginalM:
+	case phases.BundleProofChallenge:
 		return payloadLen == 32
 	case phases.BundleUpload:
 		return payloadLen >= 1
-	case phases.BundleConfirmation:
+	case phases.BundleUploadAccepted:
 		return payloadLen == 1
 	default:
 		return false
@@ -315,8 +315,8 @@ func decodeNickname(payload []byte) (string, error) {
 }
 
 // decodeBundle unmarshals the bundle upload payload (PublicBundle + sets).
-func decodeBundle(payload []byte) (*upload.BundleUploadPayload, error) {
-	var p upload.BundleUploadPayload
+func decodeBundle(payload []byte) (*upload.UserBundle, error) {
+	var p upload.UserBundle
 	if err := proto.Unmarshal(payload, &p); err != nil {
 		return nil, apperr.Wrap("error unmarshalling bundle payload", err)
 	}

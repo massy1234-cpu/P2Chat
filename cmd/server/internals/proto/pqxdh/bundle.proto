@@ -36,11 +36,7 @@ message PqkemSet {
 }
 
 // envelope used for the bundle upload request (travels to the server)
-message BundleUploadPayload {
-	string nickname = 2;
-	PublicBundle public_bundle = 3;
-	repeated bytes curve_public_sets = 4;
-	repeated bytes kem_public_sets = 5;
-	bytes PrivateKeySignMLDSA = 6;
-	bytes PrivateKeySignX25519 = 7;
+message UserBundle {
+	bytes nickname = 1;
+	PublicBundle public_bundle = 2;
 }

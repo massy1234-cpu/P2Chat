@@ -1,7 +1,6 @@
 package database
 
 import (
-	"P2Chat/cmd/client/internals/p2log"
 	"P2Chat/pkg/apperr"
 	"errors"
 
@@ -12,14 +11,16 @@ import (
 // nickname was free and is now reserved. The check+reserve is atomic (single
 // Update transaction), so two concurrent reservations cannot both succeed.
 func CheckAndReserve(nickname string) (bool, error) {
-	b := []byte("nickname:" + nickname)
 	if !IsInitialized() {
-		p2log.Error("cannot check nickname, database NOT initialized")
-		return false, apperr.New("cannot check nickname, database NOT initialized")
+		return false, apperr.New("database not initialized")
 	}
+	if nickname == "" {
+		return false, apperr.New("nickname is empty")
+	}
+	b := []byte("nickname:" + nickname)
 
 	var taken bool
-	
+
 	err := db_manager.Update(func(txn *badger.Txn) error {
 		_, err := txn.Get(b)
 
@@ -46,6 +47,9 @@ func DeleteNickname(nickname string) error {
 	if !IsInitialized() {
 		return apperr.New("database not initialized")
 	}
+	if nickname == "" {
+		return apperr.New("nickname is empty")
+	}
 	b := []byte("nickname:" + nickname)
 	err := db_manager.Update(func(txn *badger.Txn) error {
 		return txn.Delete(b)
@@ -57,6 +61,9 @@ func DeleteNickname(nickname string) error {
 func AssignID(nickname string, ID []byte) error {
 	if !IsInitialized() {
 		return apperr.New("database not initialized")
+	}
+	if nickname == "" || len(ID) != 32 {
+		return apperr.New("invalid nickname association")
 	}
 	b := []byte("nickname:" + nickname)
 	err := db_manager.Update(func(txn *badger.Txn) error {

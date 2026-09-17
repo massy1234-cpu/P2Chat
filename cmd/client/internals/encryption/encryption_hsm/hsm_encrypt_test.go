@@ -1,11 +1,40 @@
 package HSM
 
 import (
+	"bytes"
 	"encoding/base64"
 	"testing"
 
 	"github.com/awnumar/memguard"
 )
+
+func TestEncryptDecryptSoftwareRoundTrip(t *testing.T) {
+	password := memguard.NewEnclave([]byte("test-password"))
+	secret := []byte("private-key-material")
+	plaintext := memguard.NewEnclave(append([]byte(nil), secret...))
+
+	ciphertext, nonce, salt, method, err := Encrypt(password, plaintext, 1, false)
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	if method != 0 || len(nonce) == 0 || len(salt) != 32 {
+		t.Fatalf("unexpected metadata: method=%d nonce=%d salt=%d", method, len(nonce), len(salt))
+	}
+
+	decrypted, err := Decrypt(password, ciphertext, nonce, salt, 1, method)
+	if err != nil {
+		t.Fatalf("Decrypt: %v", err)
+	}
+	decryptedBuffer, err := decrypted.Open()
+	if err != nil {
+		t.Fatalf("open decrypted enclave: %v", err)
+	}
+	defer decryptedBuffer.Destroy()
+
+	if !bytes.Equal(decryptedBuffer.Bytes(), secret) {
+		t.Fatal("decrypted plaintext does not match")
+	}
+}
 
 func TestWhichOS(t *testing.T) {
 	method := WhichOS()

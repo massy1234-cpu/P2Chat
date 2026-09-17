@@ -26,8 +26,8 @@ import (
 )
 
 func init() {
-	dispatcher.RegistryByteCode(phases.LoginAccessRequest, Handler)
-	dispatcher.RegistryByteCode(phases.LoginTokenRequest, Handler)
+	dispatcher.RegistryByteCode(phases.LoginStart, Handler)
+	dispatcher.RegistryByteCode(phases.LoginTokenRedemption, Handler)
 }
 
 type state uint8
@@ -79,7 +79,7 @@ func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 }
 
 func handleRequest(result *phases.Result, currentState *LoginServer, byteCode byte, msg []byte) *phases.Result {
-	if byteCode == phases.LoginTokenRequest {
+	if byteCode == phases.LoginTokenRedemption {
 		select {
 		case verificationSlots <- struct{}{}:
 			defer func() { <-verificationSlots }()
@@ -95,12 +95,12 @@ func handleRequest(result *phases.Result, currentState *LoginServer, byteCode by
 		if err := verifyToken(token); err != nil {
 			// A stale token falls back to a fresh full login on a new stream.
 			currentState.state = stateCompleted
-			return phases.FillResult(result, [][]byte{{phases.LoginError}}, 0, true, false, nil)
+			return phases.FillResult(result, [][]byte{{phases.LoginRejected}}, 0, true, false, nil)
 		}
 		currentState.token = memguard.NewEnclave(msg)
 		return sendNonce(result, currentState)
 	}
-	if byteCode != phases.LoginAccessRequest {
+	if byteCode != phases.LoginStart {
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid login start"))
 	}
 	level := currentState.Level
@@ -120,7 +120,7 @@ func handleRequest(result *phases.Result, currentState *LoginServer, byteCode by
 	currentState.challenge = challenge
 	currentState.deadline = time.Now().Add(level.MaxWaitTime())
 	currentState.state = stateAwaitPoW
-	return phases.FillResult(result, [][]byte{append([]byte{phases.LoginPowChallenge}, serialized...)}, level.MaxWaitTime(), false, false, nil)
+	return phases.FillResult(result, [][]byte{append([]byte{phases.LoginPoWChallenge}, serialized...)}, level.MaxWaitTime(), false, false, nil)
 }
 
 func handlePoW(result *phases.Result, currentState *LoginServer, byteCode byte, msg []byte) *phases.Result {
@@ -130,7 +130,7 @@ func handlePoW(result *phases.Result, currentState *LoginServer, byteCode byte, 
 	default:
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("login verification busy"))
 	}
-	if byteCode != phases.LoginPowResponse || currentState.challenge == nil || currentState.secret == nil {
+	if byteCode != phases.LoginPoWSolution || currentState.challenge == nil || currentState.secret == nil {
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid login PoW response"))
 	}
 	secret, err := currentState.secret.Open()
@@ -164,7 +164,7 @@ func sendNonce(result *phases.Result, currentState *LoginServer) *phases.Result 
 	currentState.nonce = nonce
 	currentState.state = stateAwaitProof
 	currentState.deadline = time.Now().Add(30 * time.Second)
-	return phases.FillResult(result, [][]byte{append([]byte{phases.LoginNonce}, serialized...)}, 30*time.Second, false, false, nil)
+	return phases.FillResult(result, [][]byte{append([]byte{phases.LoginChallengeNonce}, serialized...)}, 30*time.Second, false, false, nil)
 }
 
 func handleProof(result *phases.Result, currentState *LoginServer, byteCode byte, msg []byte) *phases.Result {
@@ -174,7 +174,7 @@ func handleProof(result *phases.Result, currentState *LoginServer, byteCode byte
 	default:
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("login verification busy"))
 	}
-	if byteCode != phases.LoginProof {
+	if byteCode != phases.LoginIdentityProof {
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid login proof tag"))
 	}
 	proof := &loginproto.LoginProof{}
@@ -191,7 +191,7 @@ func handleProof(result *phases.Result, currentState *LoginServer, byteCode byte
 	if err != nil {
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("registered bundle not found"))
 	}
-	bundle := &bundleproto.BundleUploadPayload{}
+	bundle := &bundleproto.UserBundle{}
 	if err := proto.Unmarshal(stored, bundle); err != nil {
 		return phases.FillResult(result, nil, 0, false, true, err)
 	}
@@ -204,7 +204,7 @@ func handleProof(result *phases.Result, currentState *LoginServer, byteCode byte
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid login identity signatures"))
 	}
 	reply := &loginproto.LoginResult{}
-	tag := phases.LoginTokenAccepted
+	tag := phases.LoginTokenRedeemed
 	if currentState.token != nil {
 		opened, err := currentState.token.Open()
 		if err != nil {
@@ -217,11 +217,11 @@ func handleProof(result *phases.Result, currentState *LoginServer, byteCode byte
 		}
 		defer memguard.WipeBytes(token.Message)
 		if err := verifyToken(token); err != nil {
-			return phases.FillResult(result, [][]byte{{phases.LoginError}}, 0, true, false, nil)
+			return phases.FillResult(result, [][]byte{{phases.LoginRejected}}, 0, true, false, nil)
 		}
 		remaining, err := database.ConsumeLoginToken(token.KeyHash, token.Message, proof.BundleId, token.ExpiresAt)
 		if err != nil {
-			return phases.FillResult(result, [][]byte{{phases.LoginError}}, 0, true, false, nil)
+			return phases.FillResult(result, [][]byte{{phases.LoginRejected}}, 0, true, false, nil)
 		}
 		reply.RemainingUses = remaining
 	} else {
@@ -240,7 +240,7 @@ func handleProof(result *phases.Result, currentState *LoginServer, byteCode byte
 		sig := signed.Bytes()
 		pk := keys.Keys.Pk.Y.Bytes()
 		reply = &loginproto.LoginResult{BlindSignature: sig[:], PublicKey: pk[:], KeyHash: keys.Hash[:], ExpiresAt: keys.ExpiresAt, RemainingUses: 3}
-		tag = phases.LoginToken
+		tag = phases.LoginTokenIssued
 	}
 	serialized, err := proto.Marshal(reply)
 	if err != nil {
@@ -277,13 +277,13 @@ func verifyToken(token *loginproto.LoginToken) error {
 
 func CheckSize(tag byte, size int) bool {
 	switch tag {
-	case phases.LoginAccessRequest:
+	case phases.LoginStart:
 		return size == 0
-	case phases.LoginPowResponse:
+	case phases.LoginPoWSolution:
 		return size == 8
-	case phases.LoginProof:
+	case phases.LoginIdentityProof:
 		return size > 0 && size <= 8192
-	case phases.LoginTokenRequest:
+	case phases.LoginTokenRedemption:
 		return size > 0 && size <= 512
 	default:
 		return false

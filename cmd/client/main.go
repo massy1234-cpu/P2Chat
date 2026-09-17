@@ -5,18 +5,26 @@ import (
 	"P2Chat/cmd/client/internals/keys/mldsa"
 	"P2Chat/cmd/client/internals/keys/x25519"
 	"P2Chat/cmd/client/internals/network/bootstrap"
+	"P2Chat/cmd/client/internals/network/connection"
+	"P2Chat/cmd/client/internals/network/phases"
 	bundlereg "P2Chat/cmd/client/internals/network/phases/bundle_reg"
+	getuserbundle "P2Chat/cmd/client/internals/network/phases/get_user_bundle"
+	"P2Chat/cmd/client/internals/network/phases/login"
 	"P2Chat/cmd/client/internals/network/session"
 	"P2Chat/cmd/client/internals/p2chat_errors"
 	"P2Chat/cmd/client/internals/p2log"
 	"P2Chat/cmd/client/internals/proto_generated/pqxdh/proto_struct_bundle"
 	"P2Chat/cmd/client/internals/protocol/pqxdh"
 	"P2Chat/cmd/client/internals/storage"
+	serverbundle "P2Chat/cmd/server/internals/proto_generated/pqxdh/proto_struct_bundle"
 	"P2Chat/pkg/apperr"
+	"bufio"
+	"context"
 	"crypto/sha256"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/awnumar/memguard"
@@ -30,6 +38,7 @@ func main() {
 	address := flag.String("server", "151.64.120.32", "server address")
 	port := flag.Int("port", 9000, "server port")
 	nickname := flag.String("nickname", "", "nickname for a new registration")
+	requestedNickname := flag.String("get-nickname", "", "nickname whose bundle to retrieve and optionally store")
 	localBundle := flag.Int("bundle", -1, "existing local bundle number to log in with")
 	flag.Parse()
 	if err := database.Init(); err != nil {
@@ -72,13 +81,17 @@ func main() {
 		knownBundle = &database.LoginBundle{LocalID: *localBundle}
 	}
 	if knownBundle != nil {
-		loginToken, err := connManager.Conn.Login(binding, knownBundle, password, nil)
+		loginToken, err := runLogin(connManager, binding, knownBundle, password)
 		if err != nil {
 			p2log.Error("login failed: ", err)
 			return
 		}
 		p2log.Info("authenticated connection ready; login token available: ", loginToken != nil)
 		connManager.LoginToken = loginToken
+		if err := requestAndStoreUserBundle(connManager.Conn, *requestedNickname); err != nil {
+			p2log.Error("user bundle request failed: ", err)
+			return
+		}
 		<-connManager.Done
 		return
 	}
@@ -153,7 +166,7 @@ func main() {
 		p2log.Error("bundle signing not acknowledged, aborting")
 		return
 	}
-	uploadPayload := &proto_struct_bundle.BundleUploadPayload{
+	uploadPayload := &proto_struct_bundle.UserBundle{
 		PublicBundle:    publicBundle,
 		CurvePublicSets: curveSets,
 		KemPublicSets:   kemSets,
@@ -178,14 +191,182 @@ func main() {
 		p2log.Error("save registered login bundle: ", err)
 		return
 	}
-	loginToken, err := connManager.Conn.Login(binding, registered, password, nil)
+	loginToken, err := runLogin(connManager, binding, registered, password)
 	if err != nil {
 		p2log.Error("login failed: ", err)
 		return
 	}
 	p2log.Info("authenticated connection ready; login token available: ", loginToken != nil)
 	connManager.LoginToken = loginToken
+	if err := requestAndStoreUserBundle(connManager.Conn, *requestedNickname); err != nil {
+		p2log.Error("user bundle request failed: ", err)
+		return
+	}
 	<-connManager.Done
+}
+
+// requestAndStoreUserBundle keeps bundle acquisition in the main orchestrator:
+// it checks availability, asks the user for consent, downloads the bundle, and
+// stores it under the authenticated server identity.
+func requestAndStoreUserBundle(conn *connection.Connection, nickname string) error {
+	if nickname == "" {
+		return nil
+	}
+
+	availabilitySess, availabilityEvents, err := conn.CheckBundleAvailability()
+	if err != nil {
+		return err
+	}
+	availabilitySess.PutRouter(getuserbundle.AvailabilityNickname, []byte(nickname))
+	availability := readData(availabilityEvents)
+	if len(availability) != 2 || availability[0] != phases.BundleAvailabilityResponse {
+		return apperr.New("invalid bundle availability response")
+	}
+	if availability[1] == 0 {
+		p2log.Info("nickname not found on this server: ", nickname)
+		return nil
+	}
+
+	if !confirmBundleStorage(nickname) {
+		p2log.Info("user bundle download declined: ", nickname)
+		return nil
+	}
+
+	bundleSess, bundleEvents, err := conn.GetUserBundle()
+	if err != nil {
+		return err
+	}
+	bundleSess.PutRouter(getuserbundle.AcquisitionNickname, []byte(nickname))
+	serialized := readData(bundleEvents)
+	if serialized == nil {
+		return apperr.New("user bundle was not received")
+	}
+
+	bundle := &serverbundle.UserBundle{}
+	if err := proto.Unmarshal(serialized, bundle); err != nil {
+		return apperr.Wrap("decode received user bundle", err)
+	}
+	if err := database.SaveUserBundle(bundle, conn.ServerID); err != nil {
+		return apperr.Wrap("save received user bundle", err)
+	}
+	p2log.Info("user bundle saved for nickname: ", nickname)
+	return nil
+}
+
+func confirmBundleStorage(nickname string) bool {
+	fmt.Printf("Download and save the bundle for %q? [y/N]: ", nickname)
+	answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes")
+}
+
+// runLogin orchestrates login events; identification is completed separately.
+func runLogin(manager *connection.ConnectionManager, binding []byte, bundle *database.LoginBundle, password *memguard.Enclave) (*memguard.Enclave, error) {
+	keys, err := login.LoadIdentity(bundle, password)
+	if err != nil {
+		return nil, err
+	}
+	token := manager.LoginToken
+	for attempt := 0; attempt < 2; attempt++ {
+		parameters, err := login.EncodeParameters(binding, manager.Conn.ServerID, keys.BundleID, token != nil)
+		if err != nil {
+			return nil, err
+		}
+		sess, events, err := manager.Conn.Login()
+		if err != nil {
+			return nil, err
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			select {
+			case <-sess.Done:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		next, retry, err := waitLogin(ctx, manager, sess, events, keys, parameters, token)
+		cancel()
+		if err != nil {
+			sess.ForceClose()
+			return nil, err
+		}
+		if retry {
+			token = nil
+			manager.LoginToken = nil
+			continue
+		}
+		registered := &database.LoginBundle{LocalID: bundle.LocalID, BundleID: keys.BundleID}
+		if err := database.SaveLoginBundle(manager.Conn.ServerID, registered); err != nil {
+			return nil, err
+		}
+		return next, nil
+	}
+	return nil, apperr.New("login token rejected")
+}
+
+func waitLogin(ctx context.Context, manager *connection.ConnectionManager, sess *session.SingleSession, events <-chan []byte, keys *login.Credentials, parameters []byte, token *memguard.Enclave) (*memguard.Enclave, bool, error) {
+	timer := time.NewTimer(11 * time.Minute)
+	defer timer.Stop()
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok || len(event) == 0 {
+				return nil, false, apperr.New("login failed; check phase logs")
+			}
+			switch event[0] {
+			case login.NotifyReady:
+				sess.PutRouter(login.Parameters, parameters)
+			case login.NotifyPassToken:
+				if token == nil {
+					return nil, false, apperr.New("missing login token")
+				}
+				opened, err := token.Open()
+				if err != nil {
+					return nil, false, err
+				}
+				sess.PutRouter(login.PassToken, opened.Bytes())
+				opened.Destroy()
+			case login.NotifySolvePoW:
+				solution, err := login.SolveChallenge(ctx, event[1:])
+				if err != nil {
+					return nil, false, err
+				}
+				sess.PutRouter(login.PoWSolution, solution)
+			case login.NotifySignProof:
+				proof, err := login.SignProof(keys, event[1:])
+				if err != nil {
+					return nil, false, err
+				}
+				sess.PutRouter(login.SignedProof, proof)
+			case login.NotifyCompleted:
+				if len(event) < 2 {
+					return nil, false, apperr.New("invalid login completion")
+				}
+				if len(event) > 2 {
+					next := memguard.NewEnclave(event[2:])
+					memguard.WipeBytes(event)
+					return next, false, nil
+				}
+				if event[1] == 0 {
+					return nil, false, nil
+				}
+				return token, false, nil
+			case login.NotifyTokenRejected:
+				if token == nil {
+					return nil, false, apperr.New("full login rejected")
+				}
+				return nil, true, nil
+			default:
+				return nil, false, apperr.New("unexpected login event")
+			}
+		case <-timer.C:
+			return nil, false, apperr.New("login timed out")
+		case <-manager.Done:
+			return nil, false, apperr.New("connection lost during login")
+		}
+	}
 }
 
 // readPassword reads the bundle password without terminal echo and seals it.

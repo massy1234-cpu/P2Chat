@@ -27,13 +27,13 @@ const (
 
 // this struct contains the only informations that must be saved for the token registration request phase
 type RegistrationClient struct {
-	state       state
-	blindState  *blindsignature.BlindState
-	challenge   *challengeStruct.Challenge
-	token       *bls.G1Affine
-	signature   *proto_struct_pow.Signature
-	nonce       uint64
-	obfuscated  *bls.G1Affine
+	state      state
+	blindState *blindsignature.BlindState
+	challenge  *challengeStruct.Challenge
+	token      *bls.G1Affine
+	signature  *proto_struct_pow.Signature
+	nonce      uint64
+	obfuscated *bls.G1Affine
 }
 
 func Handler(byteCode byte, msg []byte, state *any) *phases.Result {
@@ -74,13 +74,13 @@ func Handler(byteCode byte, msg []byte, state *any) *phases.Result {
 // handleChallenge decodes the PoW challenge, solves it, creates the blind
 // request and sends nonce + M' to the server in one shot.
 func handleChallenge(result *phases.Result, currentState *RegistrationClient, byteCode byte, msg []byte) *phases.Result {
-	if byteCode == phases.RegistrationError {
+	if byteCode == phases.RegistrationRejected {
 		p2log.Error("registration failed on the server side")
 		currentState.state = stateFailed
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("registration failed on the server side"))
 	}
 
-	if byteCode != phases.PowToken {
+	if byteCode != phases.RegistrationPoWChallenge {
 		p2log.Error("registration received an invalid challenge")
 		currentState.state = stateFailed
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("registration received an invalid challenge"))
@@ -94,7 +94,7 @@ func handleChallenge(result *phases.Result, currentState *RegistrationClient, by
 		return phases.FillResult(result, nil, 0, false, true, nil, err)
 	}
 	p2log.Info("registration received PoW challenge, level: ", challenge.GetLevel())
-	
+
 	currentState.challenge = challenge
 
 	nonce, err := solveChallenge(challenge)
@@ -113,12 +113,12 @@ func handleChallenge(result *phases.Result, currentState *RegistrationClient, by
 	p2log.Debug("registration blind signature request created")
 
 	nonceReply := make([]byte, 9)
-	nonceReply[0] = phases.ChallengeResponse
+	nonceReply[0] = phases.RegistrationPoWSolution
 	binary.BigEndian.PutUint64(nonceReply[1:], nonce)
 
 	serialized := obfuscated.Bytes()
 	signatureReply := make([]byte, 49)
-	signatureReply[0] = phases.SignatureRequest
+	signatureReply[0] = phases.RegistrationBlindSignatureRequest
 	copy(signatureReply[1:], serialized[:])
 
 	currentState.blindState = blindState
@@ -136,18 +136,18 @@ func handleChallenge(result *phases.Result, currentState *RegistrationClient, by
 // handleToken unblinds the received signature and emits the resulting token
 // on the session Events chan for the next phase.
 func handleToken(result *phases.Result, currentState *RegistrationClient, byteCode byte, msg []byte) *phases.Result {
-	if byteCode == phases.PoWVerified {
+	if byteCode == phases.RegistrationPoWAccepted {
 		p2log.Debug("registration PoW verified by the server")
 		return phases.FillResult(result, nil, 0, false, false, nil, nil)
 	}
 
-	if byteCode == phases.RegistrationError {
+	if byteCode == phases.RegistrationRejected {
 		p2log.Error("registration failed on the server side")
 		currentState.state = stateFailed
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("registration failed on the server side"))
 	}
 
-	if byteCode != phases.TokenEmission {
+	if byteCode != phases.RegistrationTokenIssued {
 		p2log.Error("registration received an invalid token emission")
 		currentState.state = stateFailed
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("registration received an invalid token emission"))
@@ -195,7 +195,8 @@ func handleToken(result *phases.Result, currentState *RegistrationClient, byteCo
 	b, e := proto.Marshal(tokenOnEvents)
 	if e != nil {
 		p2log.Error("erron in serialization of token")
-		return phases.FillResult(result, nil, 0, true, false, nil, apperr.New("erron in serialization of token"))
+		currentState.state = stateFailed
+		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("erron in serialization of token"))
 	}
 
 	return phases.FillResult(result, nil, 0, true, false, [][]byte{b}, nil)
@@ -203,7 +204,7 @@ func handleToken(result *phases.Result, currentState *RegistrationClient, byteCo
 
 // requestChallenge decodes the payload already received by the router.
 func decodeChallenge(payload []byte) (*challengeStruct.Challenge, error) {
-	if !CheckSize(phases.PowToken, len(payload)) {
+	if !CheckSize(phases.RegistrationPoWChallenge, len(payload)) {
 		return nil, apperr.New("challenge received with invalid size")
 	}
 
@@ -240,21 +241,21 @@ func GetTokenObfuscated(payload []byte) (*proto_struct_pow.Signature, error) {
 // every phase has a CheckSize but is different for the bytecodes checked
 func CheckSize(tag byte, payloadLen int) bool {
 	switch tag {
-	case phases.Dummy:
+	case phases.DummyMessage:
 		return payloadLen >= 1
-	case phases.RegisterTokenReq:
+	case phases.RegistrationStart:
 		return payloadLen == 0
-	case phases.PowToken:
+	case phases.RegistrationPoWChallenge:
 		return payloadLen >= 56 && payloadLen <= 65
-	case phases.ChallengeResponse:
+	case phases.RegistrationPoWSolution:
 		return payloadLen == 8
-	case phases.SignatureRequest:
+	case phases.RegistrationBlindSignatureRequest:
 		return payloadLen == 48
-	case phases.TokenEmission:
+	case phases.RegistrationTokenIssued:
 		return payloadLen >= 1
-	case phases.PoWVerified:
+	case phases.RegistrationPoWAccepted:
 		return payloadLen == 0
-	case phases.RegistrationError:
+	case phases.RegistrationRejected:
 		return payloadLen == 0
 	default:
 		return false

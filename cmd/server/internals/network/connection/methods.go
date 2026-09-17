@@ -4,6 +4,7 @@ import (
 	"P2Chat/cmd/client/internals/p2log"
 	"P2Chat/cmd/server/internals/network/dispatcher"
 	"P2Chat/cmd/server/internals/network/phases"
+	getuserbundle "P2Chat/cmd/server/internals/network/phases/get_user_bundle"
 	"P2Chat/cmd/server/internals/network/phases/login"
 	"P2Chat/cmd/server/internals/network/phases/server_identification"
 	"P2Chat/cmd/server/internals/network/session"
@@ -62,8 +63,12 @@ func (c *Connection) AssignHandler(sess *session.SingleSession, ID uint32) {
 			user.LastSeen.Store(time.Now().Unix())
 		}
 		switch byteCode {
-		case phases.ServerIdentificationRequest, phases.RegisterTokenReq, phases.UploadBundleRequest:
-		case phases.LoginAccessRequest, phases.LoginTokenRequest:
+		case phases.ServerIdentityRequest, phases.RegistrationStart, phases.BundleRegistrationStart:
+		case phases.BundleAcquisitionRequest:
+			*state = getuserbundle.NewBundleSearched(c.Authed != nil && c.Authed.Load())
+		case phases.BundleAvailabilityRequest:
+			*state = getuserbundle.NewBundleAvailability(c.Authed != nil && c.Authed.Load())
+		case phases.LoginStart, phases.LoginTokenRedemption:
 			if !c.Identified.Load() || c.Auth.Load() != nil || !c.LoginInProgress.CompareAndSwap(nil, sess) {
 				return phases.FillResult(&phases.Result{}, nil, 0, false, true, apperr.New("login unavailable on this connection"))
 			}
@@ -81,14 +86,14 @@ func (c *Connection) AssignHandler(sess *session.SingleSession, ID uint32) {
 
 		sess.Handler = func(tag byte, payload []byte, phaseState *any) *phases.Result {
 			result := handler(tag, payload, phaseState)
-			if byteCode == phases.LoginAccessRequest || byteCode == phases.LoginTokenRequest {
+			if byteCode == phases.LoginStart || byteCode == phases.LoginTokenRedemption {
 				if result.Completed || result.Err != nil || result.CloseStream {
 					c.LoginInProgress.CompareAndSwap(sess, nil)
 				}
 			}
 			return result
 		}
-		if byteCode == phases.ServerIdentificationRequest {
+		if byteCode == phases.ServerIdentityRequest {
 			*state = &server_identification.IdentificationServer{Binding: c.Binding}
 			sess.Handler = func(tag byte, payload []byte, state *any) *phases.Result {
 				result := handler(tag, payload, state)

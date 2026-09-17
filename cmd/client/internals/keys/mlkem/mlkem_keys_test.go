@@ -113,7 +113,7 @@ func TestSerializePrivateKeyRoundTrip(t *testing.T) {
 		t.Fatalf("CreateKey: %v", err)
 	}
 
-	scheme, err := EncryptPrivateKey(password, enclave, false)
+	scheme, err := EncryptPrivateKey(password, enclave, 1, false)
 	if err != nil {
 		t.Fatalf("EncryptPrivateKey: %v", err)
 	}

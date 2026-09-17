@@ -23,7 +23,46 @@ func Init() error {
 		return apperr.Wrap("open database", err)
 	}
 	DB = db
+
+	err = CreateBuckets()
+	if err != nil {
+		CloseDB()
+		return err
+	}
 	return nil
+}
+
+func CreateBuckets() error {
+	err := DB.Update(func(tx *bbolt.Tx) error {
+		_,err := tx.CreateBucketIfNotExists([]byte("server:identities"))
+		if err != nil {
+			return err
+		}
+		
+		_,err = tx.CreateBucketIfNotExists([]byte("server:endpoints"))
+		if err != nil {
+			return err
+		}
+		
+		_,err = tx.CreateBucketIfNotExists([]byte("server:observed-ip"))
+		if err != nil {
+			return err
+		}
+		
+		_,err = tx.CreateBucketIfNotExists([]byte("server:blacklist"))
+		if err != nil {
+			return err
+		}
+
+		_,err = tx.CreateBucketIfNotExists([]byte("id_server+nickname:bundlebytes"))
+		if err != nil {
+			return err
+		}
+
+		return err
+	})
+
+	return err
 }
 
 func IsInitialized() bool {

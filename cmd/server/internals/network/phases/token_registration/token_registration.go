@@ -21,27 +21,27 @@ import (
 
 // register the registration phase handler for the RegisterTokenReq bytecode
 func init() {
-	dispatcher.RegistryByteCode(phases.RegisterTokenReq, Handler)
+	dispatcher.RegistryByteCode(phases.RegistrationStart, Handler)
 }
 
 type state uint8
 
 const (
-	stateAwaitRequest state = iota		// server wait the token registration request
-	stateAwaitNonce						// the server had send the PoW and now is waiting the nonce (solution)
-	stateAwaitSignature					// the server had convalidated the nonce and now wait the M' for signature (token registration emission)
+	stateAwaitRequest   state = iota // server wait the token registration request
+	stateAwaitNonce                  // the server had send the PoW and now is waiting the nonce (solution)
+	stateAwaitSignature              // the server had convalidated the nonce and now wait the M' for signature (token registration emission)
 	stateCompleted
 	stateFailed
 )
 
 // RegistrationServer keeps the data required by one token registration flow.
 type RegistrationServer struct {
-	state      	state
-	secret     	[]byte
-	challenge  	*challengeStruct.Challenge
-	level      	pow.Level
-	blindKeys 	*blindsignature.KeysBlindSignature
-	PowPassed	bool
+	state     state
+	secret    []byte
+	challenge *challengeStruct.Challenge
+	level     pow.Level
+	blindKeys *blindsignature.KeysBlindSignature
+	PowPassed bool
 }
 
 // Handler validates each registration message and returns the next protocol action.
@@ -66,10 +66,10 @@ func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 		}
 
 		currentState = &RegistrationServer{
-			state:      stateAwaitRequest,
-			level:      level,
+			state:     stateAwaitRequest,
+			level:     level,
 			blindKeys: keys,
-			PowPassed:  false,
+			PowPassed: false,
 		}
 		*phaseState = currentState
 	}
@@ -99,7 +99,7 @@ func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 // handleRequest receives the RegisterTokenReq and emits a PoW challenge bound
 // to a per-session secret.
 func handleRequest(result *phases.Result, currentState *RegistrationServer, byteCode byte, msg []byte) *phases.Result {
-	if byteCode != phases.RegisterTokenReq {
+	if byteCode != phases.RegistrationStart {
 		currentState.state = stateFailed
 		return registrationError(result, apperr.New("invalid registration token request"))
 	}
@@ -126,7 +126,7 @@ func handleRequest(result *phases.Result, currentState *RegistrationServer, byte
 
 // handleNonce verifies the PoW solution and notifies the client.
 func handleNonce(result *phases.Result, currentState *RegistrationServer, byteCode byte, msg []byte) *phases.Result {
-	if byteCode != phases.ChallengeResponse || currentState.challenge == nil {
+	if byteCode != phases.RegistrationPoWSolution || currentState.challenge == nil {
 		currentState.state = stateFailed
 		return registrationError(result, apperr.New("invalid challenge response"))
 	}
@@ -147,12 +147,12 @@ func handleNonce(result *phases.Result, currentState *RegistrationServer, byteCo
 	currentState.state = stateAwaitSignature
 	currentState.PowPassed = true
 	p2log.Debug("server registration: notifying the client that the PoW is verified")
-	return phases.FillResult(result, [][]byte{[]byte{phases.PoWVerified}}, time.Minute, false, false, nil)
+	return phases.FillResult(result, [][]byte{[]byte{phases.RegistrationPoWAccepted}}, time.Minute, false, false, nil)
 }
 
 // handleSignature signs the blind point M' and emits the token.
 func handleSignature(result *phases.Result, currentState *RegistrationServer, byteCode byte, msg []byte) *phases.Result {
-	if byteCode != phases.SignatureRequest {
+	if byteCode != phases.RegistrationBlindSignatureRequest {
 		currentState.state = stateFailed
 		return registrationError(result, apperr.New("invalid blind signature request"))
 	}
@@ -179,7 +179,7 @@ func handleSignature(result *phases.Result, currentState *RegistrationServer, by
 // registrationError notifies the client of the failure and closes the stream.
 func registrationError(result *phases.Result, err error) *phases.Result {
 	p2log.Error("server registration failed: ", err)
-	return phases.FillResult(result, [][]byte{{phases.RegistrationError}}, 0, false, true, err)
+	return phases.FillResult(result, [][]byte{{phases.RegistrationRejected}}, 0, false, true, err)
 }
 
 // issueChallenge creates and serializes the challenge reply for the router.
@@ -194,7 +194,7 @@ func issueChallenge(secret []byte, level pow.Level) (*challengeStruct.Challenge,
 		return nil, nil, apperr.Wrap("error serializing challenge", err)
 	}
 
-	data := append([]byte{phases.PowToken}, challengeSerialized...)
+	data := append([]byte{phases.RegistrationPoWChallenge}, challengeSerialized...)
 	return challenge, data, nil
 }
 
@@ -216,7 +216,7 @@ func SignObfuscated(payload []byte, privateKey *blindsignature.PrivateKey) ([]by
 		return nil, apperr.Wrap("error with the byte conversion to raw to G1Affine", err)
 	}
 
-	signedPoint,hash := privateKey.SignBlind(&M_obfuscated)
+	signedPoint, hash := privateKey.SignBlind(&M_obfuscated)
 	if signedPoint == nil {
 		return nil, apperr.New("blind signature failed: private key unlock error")
 	}
@@ -224,35 +224,35 @@ func SignObfuscated(payload []byte, privateKey *blindsignature.PrivateKey) ([]by
 
 	token := &proto_struct_pow.Signature{
 		Obfuscated: signatureSerialized[:],
-		HashPk: hash[:],
+		HashPk:     hash[:],
 	}
 
-	tokenSerialized,err := proto.Marshal(token)
+	tokenSerialized, err := proto.Marshal(token)
 	if err != nil {
 		return nil, apperr.New("marshal error in token emission")
 	}
 
-	return append([]byte{phases.TokenEmission}, tokenSerialized[:]...), nil
-} 
+	return append([]byte{phases.RegistrationTokenIssued}, tokenSerialized[:]...), nil
+}
 
 // check the size of the payload in base of the type of the message
 func CheckSize(tag byte, payloadLen int) bool {
 	switch tag {
-	case phases.Dummy:
+	case phases.DummyMessage:
 		return payloadLen >= 1
-	case phases.RegisterTokenReq:
+	case phases.RegistrationStart:
 		return payloadLen == 0
-	case phases.PowToken:
+	case phases.RegistrationPoWChallenge:
 		return payloadLen >= 56 && payloadLen <= 65
-	case phases.ChallengeResponse:
+	case phases.RegistrationPoWSolution:
 		return payloadLen == 8
-	case phases.SignatureRequest:
+	case phases.RegistrationBlindSignatureRequest:
 		return payloadLen == 48
-	case phases.TokenEmission:
+	case phases.RegistrationTokenIssued:
 		return payloadLen == 48
-	case phases.PoWVerified:
+	case phases.RegistrationPoWAccepted:
 		return payloadLen == 0
-	case phases.RegistrationError:
+	case phases.RegistrationRejected:
 		return payloadLen == 0
 	default:
 		return false

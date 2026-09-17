@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package proto_server_identity;
+
+import "cmd/client/internals/proto/mldsa/mldsa_proto.proto";
+import "cmd/client/internals/proto/x25519/x25519_proto.proto";
+
+option go_package = "P2Chat/cmd/server/internals/proto_generated/identity/proto_server_identity";
+
+message StoredServerIdentity {
+    proto_struct_mldsa.PrivateKeyMLDSA mldsa_private = 1;
+    proto_struct_x25519.PrivateKeyX25519 x25519_private = 2;
+    bytes pub_mldsa = 3;
+    bytes pub_x25519 = 4;
+}

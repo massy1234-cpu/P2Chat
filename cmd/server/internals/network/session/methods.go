@@ -7,8 +7,8 @@ import (
 	"P2Chat/cmd/server/internals/network/transmission"
 	"P2Chat/pkg/apperr"
 	"fmt"
-	"time"
 	"github.com/hashicorp/yamux"
+	"time"
 )
 
 // create a new session with an unique ID and the stream, register it in the connection
@@ -138,7 +138,10 @@ func (s *SingleSession) GoodClose() {
 		s.Flush(15 * time.Second)
 		close(s.Done)
 		s.Stream.Close()
-		select { case s.DeadSessions <- s.ID: default: }
+		select {
+		case s.DeadSessions <- s.ID:
+		default:
+		}
 	})
 }
 
@@ -171,7 +174,7 @@ func (s *SingleSession) Router() error {
 	var result *phases.Result
 
 	// the timer is created and is stopped
-	timer := time.NewTimer(30*time.Second)
+	timer := time.NewTimer(30 * time.Second)
 	defer timer.Stop()
 
 	for {
@@ -186,10 +189,10 @@ func (s *SingleSession) Router() error {
 			return apperr.New("error timeout")
 
 		case msg := <-s.Incoming:
-			
+
 			if !timer.Stop() {
 				select {
-				case <-timer.C:		// drain timer
+				case <-timer.C: // drain timer
 				default:
 				}
 			}
@@ -217,17 +220,17 @@ func (s *SingleSession) Router() error {
 
 			if result.CloseStream {
 				s.ForceClose()
-				p2log.Error("stream closed, session with ID :" , s.ID , "closed")
-				return apperr.New("stream closed, session with ID :" + fmt.Sprint(s.ID) + "closed" )
+				p2log.Error("stream closed, session with ID :", s.ID, "closed")
+				return apperr.New("stream closed, session with ID :" + fmt.Sprint(s.ID) + "closed")
 			}
 
-			for _, value := range result.Replies {
+			for _, value := range result.IntoWire {
 				p2log.Debug("server router sending reply tag: ", fmt.Sprintf("0x%02x", value[0]), "\tlen:", len(value))
 				s.PutOutgoing(value)
 			}
 
 			if result.Completed {
-				if len(result.Replies) > 0 {
+				if len(result.IntoWire) > 0 {
 					s.Flush(5 * time.Second)
 				}
 

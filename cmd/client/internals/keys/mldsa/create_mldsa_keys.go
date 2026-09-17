@@ -4,17 +4,14 @@ import (
 	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/argon"
 	hsm "P2Chat/cmd/client/internals/encryption/encryption_hsm"
-	mldsaencryption "P2Chat/cmd/client/internals/encryption/mldsa_encryption"
 	"P2Chat/cmd/client/internals/p2version"
-	mldsadata "P2Chat/cmd/client/internals/storage/mldsa_data"
 	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
+	mldsadata "P2Chat/cmd/client/internals/storage/mldsa_data"
 	"P2Chat/pkg/apperr"
-	"crypto/rand"
 	"github.com/awnumar/memguard"
 	messagepack "github.com/vmihailenco/msgpack/v5"
 	"time"
 )
-
 
 // fillKeyPair builds both protobuf payloads from already prepared raw key data.
 func fillKeyPair(level int, algorithm string, rawKeyEncrypted []byte, rawKeyPublic []byte, nonce []byte, salt []byte, hsmMethod uint32) (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, error) {
@@ -38,14 +35,14 @@ func StoreKeys(privateKey *struct_mldsa.PrivateKeyMLDSA, publicKey *struct_mldsa
 	// set the checksum of both keys
 	err := privateKey.SetChecksum()
 	if err != nil {
-		return apperr.Wrap("error doing the checksum of private key",err)
+		return apperr.Wrap("error doing the checksum of private key", err)
 	}
 
 	err = publicKey.SetChecksum()
 	if err != nil {
-		return apperr.Wrap("error doing the checksum of public key",err)
+		return apperr.Wrap("error doing the checksum of public key", err)
 	}
-	
+
 	//save keys on file
 	err = mldsadata.SavePairKey(privateKey, publicKey, pathDir)
 	if err != nil {
@@ -85,7 +82,6 @@ func fillPublicKey(algorithm string, rawPublicKey []byte) (*struct_mldsa.PublicK
 	return publicKeyStruct, nil
 }
 
-
 // CreateKeys generates a raw ML-DSA-87 keypair. No encryption.
 func CreateKeys() (*memguard.Enclave, *mldsa87.PublicKey, error) {
 
@@ -114,42 +110,9 @@ func CreateKeys() (*memguard.Enclave, *mldsa87.PublicKey, error) {
 // hardware security module of the platform (SE on darwin, TPM on linux/windows);
 // otherwise it is protected by Argon2id + AES-256-GCM derived from the password.
 func EncryptPrivateKey(password *memguard.Enclave, privateKey *memguard.Enclave, level int, useHSM bool) (*struct_mldsa.PrivateKeyMLDSA, error) {
-
-	if level < 1 || level > 3 {
-		return nil, apperr.New("level must be between 1 and 3")
-	}
-
-	var rawKeyEncrypted, nonce, salt []byte
-	var hsmMethod uint32
-
-	if useHSM {
-		salt = make([]byte, 16)
-		if _, err := rand.Read(salt); err != nil {
-			return nil, apperr.Wrap("generate salt", err)
-		}
-
-		plaintext, err := privateKey.Open()
-		if err != nil {
-			return nil, apperr.Wrap("open private key enclave", err)
-		}
-		defer plaintext.Destroy()
-
-		rawKeyEncrypted, nonce, err = hsm.EncryptHSM(password, plaintext)
-		if err != nil {
-			return nil, apperr.Wrap("HSM encryption failed", err)
-		}
-		hsmMethod = uint32(hsm.WhichOS())
-	} else {
-		passwordBuffer, err := password.Open()
-		if err != nil {
-			return nil, apperr.Wrap("error during opening the password enclave", err)
-		}
-		defer passwordBuffer.Destroy()
-
-		rawKeyEncrypted, nonce, salt, err = mldsaencryption.EncryptPrivateKey(passwordBuffer, privateKey, level)
-		if err != nil {
-			return nil, apperr.Wrap("protect private key", err)
-		}
+	rawKeyEncrypted, nonce, salt, hsmMethod, err := hsm.Encrypt(password, privateKey, level, useHSM)
+	if err != nil {
+		return nil, apperr.Wrap("protect ML-DSA private key", err)
 	}
 
 	return fillPrivateKey(level, "ML-DSA-87", rawKeyEncrypted, nonce, salt, hsmMethod)

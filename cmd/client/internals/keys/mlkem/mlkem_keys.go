@@ -1,7 +1,6 @@
 package mlkem
 
 import (
-	"P2Chat/cmd/client/internals/encryption"
 	HSM "P2Chat/cmd/client/internals/encryption/encryption_hsm"
 	"P2Chat/pkg/apperr"
 	"crypto/mlkem"
@@ -11,18 +10,19 @@ import (
 
 // every key have a different nonce, the key is shared between buckets
 type PrivateKEM struct {
-	privateKeyEncrypted []byte
-	nonce []byte
-	encryptMethod int 			// 0 = nessuno, 1 = SE, 2 = TPM
+	PrivateKeyEncrypted []byte `msgpack:"private_key_encrypted"`
+	Nonce               []byte `msgpack:"nonce"`
+	Salt                []byte `msgpack:"salt"`
+	ArgonLevel          int    `msgpack:"argon_level"`
+	EncryptMethod       uint32 `msgpack:"encrypt_method"` // 0 = nessuno, 1 = SE, 2 = TPM
 }
 
-
 // generate the private key ML-KEM 768
-func CreateKey() (privateKeyEnclaved *memguard.Enclave,publicKey *mlkem.EncapsulationKey768,err error) {
+func CreateKey() (privateKeyEnclaved *memguard.Enclave, publicKey *mlkem.EncapsulationKey768, err error) {
 
 	dk, err := mlkem.GenerateKey768()
 	if err != nil {
-		return nil, nil, apperr.Wrap("error during generation of ml-kem 768 keys",err)
+		return nil, nil, apperr.Wrap("error during generation of ml-kem 768 keys", err)
 	}
 	defer memguard.WipeBytes(dk.Bytes())
 
@@ -31,10 +31,9 @@ func CreateKey() (privateKeyEnclaved *memguard.Enclave,publicKey *mlkem.Encapsul
 
 	publicKey = dk.EncapsulationKey()
 
-	return privateKeyEnclaved,publicKey,nil
+	return privateKeyEnclaved, publicKey, nil
 
 }
-
 
 // get the public key from the private key
 func ExtractPublicKey(privateKeyEnclaved *memguard.Enclave) (publicKey *mlkem.EncapsulationKey768) {
@@ -54,10 +53,8 @@ func ExtractPublicKey(privateKeyEnclaved *memguard.Enclave) (publicKey *mlkem.En
 
 }
 
-
-
-// use the public key to create the secret and chipertext 
-func EncapsulateSecret(publicKey *mlkem.EncapsulationKey768) (secretLocked *memguard.Enclave,ciphertext []byte, err error) {
+// use the public key to create the secret and chipertext
+func EncapsulateSecret(publicKey *mlkem.EncapsulationKey768) (secretLocked *memguard.Enclave, ciphertext []byte, err error) {
 
 	// create the secret and the chipetext (secret incapsulated)
 	secret, ciphertext := publicKey.Encapsulate()
@@ -69,9 +66,8 @@ func EncapsulateSecret(publicKey *mlkem.EncapsulationKey768) (secretLocked *memg
 	return secretLocked, ciphertext, nil
 }
 
-
 // get the secret from the ciphertext
-func DecapsulateChipertext(privateKey *mlkem.DecapsulationKey768,ciphertext []byte) (secretLocked *memguard.Enclave, err error) {
+func DecapsulateChipertext(privateKey *mlkem.DecapsulationKey768, ciphertext []byte) (secretLocked *memguard.Enclave, err error) {
 
 	// get the shared secret
 	secret, err := privateKey.Decapsulate(ciphertext)
@@ -82,45 +78,21 @@ func DecapsulateChipertext(privateKey *mlkem.DecapsulationKey768,ciphertext []by
 	return secretLocked, nil
 }
 
-
 // EncryptPrivateKey encrypts the key based on useHSM bool and returns the filled struct.
 // If useHSM is true, uses EncryptHSM (auto-detects SE on darwin, TPM on linux/windows).
 // If useHSM is false, uses Argon2id + AES-256-GCM.
-func EncryptPrivateKey(password *memguard.Enclave, privateKey *memguard.Enclave, useHSM bool) (*PrivateKEM, error) {
-
-	var ciphertext, nonce []byte
-	var method int
-	var err error
-
-	buffer, keyErr := privateKey.Open()
-	if keyErr != nil {
-		return nil, apperr.Wrap("error opening enclave", keyErr)
-	}
-	defer buffer.Destroy()
-
-	if useHSM {
-		ciphertext, nonce, err = HSM.EncryptHSM(password, buffer)
-		if err != nil {
-			return nil, apperr.Wrap("hsm encrypt error", err)
-		}
-		method = HSM.WhichOS()
-	} else {
-		pwdBuf, pwdErr := password.Open()
-		if pwdErr != nil {
-			return nil, apperr.Wrap("open password enclave", pwdErr)
-		}
-		defer pwdBuf.Destroy()
-
-		ciphertext, nonce, err = encryption.EncryptAes256(pwdBuf, buffer.Bytes())
-		if err != nil {
-			return nil, apperr.Wrap("error during encryption of the private key", err)
-		}
+func EncryptPrivateKey(password *memguard.Enclave, privateKey *memguard.Enclave, level int, useHSM bool) (*PrivateKEM, error) {
+	ciphertext, nonce, salt, method, err := HSM.Encrypt(password, privateKey, level, useHSM)
+	if err != nil {
+		return nil, apperr.Wrap("protect ML-KEM private key", err)
 	}
 
 	scheme := &PrivateKEM{
-		privateKeyEncrypted: ciphertext,
-		nonce:               nonce,
-		encryptMethod:       method,
+		PrivateKeyEncrypted: ciphertext,
+		Nonce:               nonce,
+		Salt:                salt,
+		ArgonLevel:          level,
+		EncryptMethod:       method,
 	}
 
 	return scheme, nil

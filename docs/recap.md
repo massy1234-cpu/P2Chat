@@ -1,5 +1,7 @@
 # ML-DSA Security Update
 
+> Current networking reference: see "Login implementation (2026-09-11)" below. Older architecture proposals and message sketches are retained as history and do not override that section.
+
 ## Objective of the regression
 
 This regression introduces a first level of software hardening for the management of ML-DSA keys and sensitive materials in RAM.
@@ -2554,10 +2556,12 @@ La registrazione è divisa in **due fasi su stream yamux separati**: *token regi
 **Bundle upload** (`Connection.BundleUpload`, handler `bundlereg` — flusso client completo, lato server in costruzione):
 - il client riceve il token dal `Local` chan (bytecode locale `RegistrationToken` 0xa1, iniettato dall'orchestratore via `PutRouter`) → invia `UploadBundleRequest` (0xa4) col `TokenVerification`
 - attende `TokenConfirmation` (0xa5) → riceve il nickname dal `Local` (0xa2) → invia `NicknameRequest` (0xa6) → attende `NicknameResponse` (0xa7)
-- se il nickname è disponibile riceve il bundle dal `Local` (0xa3), compone `BundleUploadPayload` (id_user = hash IK, nickname, public bundle, curve/KEM public sets) → invia `BundleUpload` (0xa8) → attende `BundleConfirmation` (0xa9)
+- se il nickname è disponibile riceve il bundle dal `Local` (0xa3), compone `UserBundle` (id_user = hash IK, nickname, public bundle, curve/KEM public sets) → invia `BundleUpload` (0xa8) → attende `BundleConfirmation` (0xa9)
 - `Connection.BundleUpload` **non invia alcun messaggio all'apertura**: aspetta il token dal `Local` chan (la vecchia istruzione che mandava `RegisterTokenReq` è stata rimossa)
 
 ### Login implementation (2026-09-11)
+
+This section describes the current event-driven implementation. The earlier synchronous Connection.Login and the experimental PutRouterWithState approach have been removed.
 
 The implemented order follows the latest client flow: TLS/yamux → server identification → access PoW → registered-bundle proof → authenticated connection and Login Token. The earlier proposal below is retained as design history; it placed the PoW before identification instead.
 
@@ -2573,13 +2577,43 @@ Client BoltDB stores serialized key:value records:
 - `server:blacklist`: serverID → msgpack reason, endpoint and timestamp.
 - `server:login-bundle`: serverID → msgpack local key-directory number and registered cryptographic BundleID. This is saved after confirmed registration or a successful login with explicitly selected existing keys.
 
+These are actual Bolt buckets, each with its own key:value namespace. Endpoint is a host:port string in Connection, converted to bytes when used as a DB key. The endpoint bucket answers "which identity was pinned at this address?", while observed-ip answers "what is the latest saved address of this identity?". Moving the same verified identity from A to B preserves A→ID, adds B→ID and updates ID→B. LoginBundle contains the local key-directory number and the raw 32-byte BundleID, not the full public bundle.
+
+The user is centralizing bucket creation at startup: database.Init opens the DB and calls CreateBuckets for identities, endpoints, observed-ip and blacklist. SaveKnownServer accesses them with tx.Bucket inside a transaction. SaveLoginBundle still creates its own bucket lazily; SaveServerID retains its legacy lazy path. Bucket handles and bytes returned by Get are transaction-scoped; copy returned bytes if they must outlive the transaction.
+
+**Working-tree issue at this documentation update:** CreateBuckets is not yet compilable because its Update callback lacks the final return nil (confirmed by go test -run '^$' ./cmd/client/database). SaveKnownServer assumes all four buckets exist; test fixtures that assign DB directly must initialize them. These code changes were left untouched by this documentation-only update.
+
+Two identification details remain unchanged: the client verifies the key-derived hash but does not explicitly compare received keys byte-for-byte with the deserialized saved keys; the empty-endpoint fallback to SaveServerID still exists. Automatic first-contact acceptance is TOFU, not independent proof that an unknown identity belongs to the intended operator.
+
 Full login uses the existing Level5 access PoW with a ten-minute deadline (the expected solving time depends on hardware and chance). A fresh nonce then binds both ML-DSA and X25519/XEdDSA signatures to the protocol domain, version, server timestamp, serverID, TLS binding, BundleID and blinded token request. Verification uses only the public bundle already stored under BundleID in Badger. Missing bundles, incorrect passwords and invalid signatures abort; they do not silently trigger a new registration.
 
-Login Token signing uses a dedicated blind BLS key, independent of registration. The key lives in memory for up to 24 hours; server restart invalidates outstanding tokens. The client unblinds and verifies the signature, then stores the token only in a memguard enclave. `Connection.Login` returns it and the CLI retains it in `ConnectionManager.LoginToken` for future reconnect orchestration.
+Login Token signing uses a dedicated blind BLS key, independent of registration. The key lives in memory for up to 24 hours; server restart invalidates outstanding tokens. After unblinding and verification, the phase emits the serialized token with its completion event. The orchestrator immediately seals it into a memguard enclave, wipes the event bytes and retains the enclave in `ConnectionManager.LoginToken`. For quick login, completion carries only the remaining count; the orchestrator retains or drops its existing token.
+
+Login uses the existing byte-only Router pattern, without state injection or new session APIs. `Connection.Login()` opens a stream, assigns `login.Handler`, starts the session and injects `StartLogin` through `PutRouter`. The handler creates its own private state. It emits `NotifyReady`; the orchestrator replies with `Parameters` containing only binding, verified serverID, BundleID and the fast-login flag. Fast login requests the serialized pass token through `NotifyPassToken`/`PassToken`; transient token payloads are wiped after handling. PoW and signing use `NotifySolvePoW`/`PoWSolution` and `NotifySignProof`/`SignedProof`, matching bundle upload's local challenge-signing pattern. Private keys and passwords stay with the orchestrator, never in phase state or Router payloads. Helpers in the login package load credentials, solve cancellable PoW and sign proofs. The phase builds wire replies and emits `NotifyCompleted` (remaining-use byte, then an optional new token) or `NotifyTokenRejected`. The CLI handles cancellation, persistence and retries. Server identification remains separate. All new event tags are local; the network protocol is unchanged.
+
+The local exchange is:
+
+| Local bytecode | Direction | Meaning |
+|---|---|---|
+| StartLogin 0xc1 | Connection → Router | Start phase; Handler creates its state. |
+| NotifyReady 0xc8 / Parameters 0xc4 | Phase → main / main → Router | Supply 97 public bytes: binding32 + serverID32 + BundleID32 + fast flag1. |
+| NotifyPassToken 0xc9 / PassToken 0xc5 | Phase → main / main → Router | Supply the existing serialized token for quick login. |
+| NotifySolvePoW 0xca / PoWSolution 0xc6 | Phase → main / main → Router | Challenge protobuf out; eight-byte big-endian solution back. |
+| NotifySignProof 0xcb / SignedProof 0xc7 | Phase → main / main → Router | Signing message out; protobuf containing the two signatures back. |
+| NotifyCompleted 0xc2 | Phase → main | Remaining-use byte followed by optional newly issued token bytes. |
+| NotifyTokenRejected 0xc3 | Phase → main | End this attempt; main decides whether to retry without a token. |
+
+PutRouter sends to Local, not the network. Handler Replies are forwarded through PutOutgoing to the Writer. Events return to the orchestrator. main.runLogin/main.waitLogin manage these exchanges and PoW cancellation; LoginClient has no password, private-key or context fields.
+
+File responsibilities: connection/login.go is only the entry point; phases/login/login.go holds states/Handler/CheckSize; helpers.go handles transitions and wire replies; identity.go provides orchestrator credential/signature helpers; pow.go provides challenge decoding and cancellable solving. Closing the phase stream does not close the authenticated TLS/yamux connection.
 
 For quick login, the token replaces the PoW. The server identification and dual identity proof remain, so a copied token is not sufficient to impersonate a bundle. A quick login does not issue a replacement token. Badger stores `login:tokens:<keyHash><SHA-256(message)>` → msgpack remaining uses, expiry, last use and BundleID. The first successful redemption creates the record with two uses left; the next two reduce it to zero. The record remains at zero until the signing epoch expires to prevent reuse resetting the counter; Badger can then expire the record because the token is no longer accepted. The read/decrement/write is atomic and serialized against concurrent redemptions. Invalid, expired or exhausted tokens trigger a new full login; a valid account proof is required before a token use is consumed.
 
 The server's `Client.Authed` is an `atomic.Bool`, shared with its connection: only successful full/quick login sets it to true, and connection closure resets it. Future features check `client.Authed.Load()`. The authenticated connection also holds BundleID, login time, proof type and last observed phase activity. `ActiveConnections(BundleID)` counts the user's active authenticated connections; closing one removes only that connection. The dispatcher permits identification, registration and login before authentication and requires the auth flag for other registered phases. At most one login runs per connection and at most four expensive login proof/PoW verifications run concurrently.
+
+Badger has no Bolt-style buckets here: its records are distinguished by key prefixes. During registration, SaveBundle writes raw BundleID→protobuf UserBundle, nickname:<name>→BundleID, and BundleID + :curve:/:kem: + uint32BE index→public set. Login deserializes that existing public payload to verify signatures; it does not register a replacement bundle.
+
+The token DB key uses the raw signing-key hash and SHA256(message), not a serialized token or a hash used as encryption. First redemption binds the token to the proven BundleID; before that point another registered user could redeem a transferred token with their own keys. Zero-use records remain until expiry. Tokens expire at the signing epoch boundary, not necessarily 24 hours after issuance. ActiveConnections is a count, not a per-user connection limit; LastSeen updates on phase starts, and offline status depends on transport detection of disconnect.
 
 CLI usage from the project root (password is read without echo; currently exactly 32 bytes):
 
@@ -2589,13 +2623,13 @@ go run ./cmd/client -server 151.64.120.32 -port 9000
 go run ./cmd/client -server 151.64.120.32 -port 9000 -bundle 3
 ```
 
-The first command registers when no local association exists, then logs in. Later runs use the saved association. `-bundle` explicitly selects previously registered identity-key files, using their original password. Automatic reconnect scheduling is still future work; calling `Login` on a new connection with the returned token already supports the fast path. TLS test configuration remains unchanged. The PoW is after identification, so this flow does not protect the identification response or TCP/TLS handshake from flooding.
+The first command registers when no local association exists, then logs in. Later runs use the saved association. `-bundle` explicitly selects previously registered identity-key files, using their original password. Automatic reconnect scheduling is still future work; after separate identification on a new connection, starting the login phase with the retained token supports the fast path. TLS test configuration remains unchanged. The PoW is after identification, so this flow does not protect the identification response or TCP/TLS handshake from flooding.
 
 Tests cover both phase handlers, rejection of invalid signatures/bindings/PoW, three-use exhaustion, concurrent token redemption, persistence of spent counters across DB reopen, automatic pinning/address updates, and quick login over TLS/yamux with multi-connection presence cleanup. Tests use a low PoW preset to avoid spending minutes per test; production login defaults to Level5.
 
 ### Earlier access login and DDoS filtering proposal
 
-> **Architecture planned, not implemented yet.** The separate `PassToken` phase has been discarded. Access will instead be granted by a PoW-gated login bound to the current TLS connection.
+> **Historical proposal, superseded by the implementation above.** In particular, its PoW-before-identification order, mandatory PoW on every reconnect and explicit first-contact approval do not describe the current code.
 
 The current unauthenticated login phase would otherwise allow an arbitrary client to reach the server without proving either a computational cost or ownership of a registered bundle. The planned sequence is:
 
@@ -2640,7 +2674,7 @@ The bytecodes are now defined in the `phases` packages (`bytecodes.go`) on both 
 | `0xa5` | TOKEN_CONFIRMATION | Server → Client | 1B | Conferma validità del token (1 = valido). |
 | `0xa6` | NICKNAME_REQUEST | Client → Server | ≥1B | Richiesta disponibilità nickname. |
 | `0xa7` | NICKNAME_RESPONSE | Server → Client | 1B | Disponibilità nickname (1 = disponibile). |
-| `0xa8` | BUNDLE_UPLOAD | Client → Server | ≥1B | Payload `BundleUploadPayload` (id_user, nickname, public bundle, sets). |
+| `0xa8` | BUNDLE_UPLOAD | Client → Server | ≥1B | Payload `UserBundle` (id_user, nickname, public bundle, sets). |
 | `0xa9` | BUNDLE_CONFIRMATION | Server → Client | 1B | Conferma accettazione bundle (1 = ok). |
 
 > I bytecode locali del bundle handler (`Local` chan, non di rete) sono `RegistrationToken` 0xa1, `Nickname` 0xa2, `Bundle` 0xa3.

@@ -6,7 +6,7 @@ import (
 )
 
 type Result struct {
-	Replies      [][]byte
+	IntoWire     [][]byte
 	NextDeadline time.Duration
 	Completed    bool
 	CloseStream  bool
@@ -20,13 +20,13 @@ func StripTag(msg []byte, expected byte) ([]byte, bool) {
 	return msg[1:], true
 }
 
-func FillResult(result *Result, replies [][]byte, nextDeadline time.Duration, completed bool, closeStream bool, err error) *Result {
+func FillResult(result *Result, intoWire [][]byte, nextDeadline time.Duration, completed bool, closeStream bool, err error) *Result {
 	// every waiting state must have an idle timeout: default to 30s if the
 	// caller did not set a specific one (see AGENTS.md)
 	if nextDeadline == 0 {
 		nextDeadline = 30 * time.Second
 	}
-	result.Replies = replies
+	result.IntoWire = intoWire
 	result.NextDeadline = nextDeadline
 	result.Completed = completed
 	result.CloseStream = closeStream

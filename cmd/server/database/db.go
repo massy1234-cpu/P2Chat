@@ -6,7 +6,6 @@ import (
 	loadreport "P2Chat/cmd/server/internals/network/load_report"
 	"P2Chat/pkg/apperr"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -14,7 +13,6 @@ import (
 
 var db_manager *badger.DB = nil
 var ticker *time.Ticker
-var once sync.Once
 
 // Init opens the BadgerDB database in <storage.BasePath>/database. It must be
 // called once at startup before any other database function. Returns an error
@@ -47,12 +45,14 @@ func IsInitialized() bool {
 }
 
 func CloseDB() {
-	once.Do(func(){
-		if IsInitialized() {
-			db_manager.Close()
-			if ticker != nil { ticker.Stop() }
-		}
-	})
+	if ticker != nil {
+		ticker.Stop()
+		ticker = nil
+	}
+	if db_manager != nil {
+		_ = db_manager.Close()
+		db_manager = nil
+	}
 }
 
 // return the GC interval in seconds; higher load (more writes) -> shorter interval
@@ -79,25 +79,27 @@ func getTimeFromLoad() float64 {
 }
 
 // GetValue return the value associate to the key into the database
-func GetValue(key []byte) ([]byte,error) {
+func GetValue(key []byte) ([]byte, error) {
+	if !IsInitialized() {
+		return nil, apperr.New("database not initialized")
+	}
+	if len(key) == 0 {
+		return nil, apperr.New("database key is empty")
+	}
 	var value []byte
 
-	err := db_manager.Update(func(txn *badger.Txn) error {
+	err := db_manager.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(key)
 		if err != nil {
 			return err
-		}else{
-			value,err = item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
 		}
-		return nil
+		value, err = item.ValueCopy(nil)
+		return err
 	})
 
 	if err != nil {
-		return nil,err
+		return nil, err
 	}
 
-	return value,nil
+	return value, nil
 }

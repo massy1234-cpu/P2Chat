@@ -2,15 +2,13 @@ package mldsa_keys
 
 import (
 	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
-	"P2Chat/cmd/client/internals/argon"
-	"P2Chat/cmd/client/internals/encryption"
 	hsm "P2Chat/cmd/client/internals/encryption/encryption_hsm"
 	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	"P2Chat/pkg/apperr"
 	"github.com/awnumar/memguard"
 )
 
-// DecodePublicKey converts the packed public-key bytes from the protobuf payload into a raw ML-DSA public key 
+// DecodePublicKey converts the packed public-key bytes from the protobuf payload into a raw ML-DSA public key
 func DecodePublicKey(publicKey *struct_mldsa.PublicKeyMLDSA) (*mldsa87.PublicKey, error) {
 	var rawKey mldsa87.PublicKey
 
@@ -34,38 +32,15 @@ func DecodePrivateKey(password *memguard.Enclave, privateKey *struct_mldsa.Priva
 		return nil, apperr.New("private key is nil")
 	}
 
-	var plaintext *memguard.LockedBuffer
-	var err error
-
-	// if the key was protected by an HSM, decrypt it there, otherwise derive the AES key via Argon2id
-	if privateKey.HsmMethod != 0 {
-		plaintext, err = hsm.DecryptHSM(password, privateKey.Key, privateKey.Nonce, int(privateKey.HsmMethod))
-		if err != nil {
-			return nil, apperr.Wrap("decrypt private key with HSM", err)
-		}
-	} else {
-		pwdBuf, err := password.Open()
-		if err != nil {
-			return nil, apperr.Wrap("open password enclave", err)
-		}
-		defer pwdBuf.Destroy()
-
-		aesKey, err := argon.HashWithArgon(int(privateKey.ArgonParams.Level), pwdBuf, privateKey.ArgonParams.Salt)
-		if err != nil {
-			return nil, apperr.Wrap("derive argon key", err)
-		}
-		defer aesKey.Destroy()
-
-		plaintext, err = encryption.DecryptAes256(aesKey, privateKey.Nonce, privateKey.Key)
-		if err != nil {
-			return nil, apperr.Wrap("decrypt private key", err)
-		}
+	if privateKey.ArgonParams == nil {
+		return nil, apperr.New("argon parameters are nil")
 	}
 
-	enclave := memguard.NewEnclave(plaintext.Bytes())
-	plaintext.Destroy()
-
-	return enclave, nil
+	plaintext, err := hsm.Decrypt(password, privateKey.Key, privateKey.Nonce, privateKey.ArgonParams.Salt, int(privateKey.ArgonParams.Level), privateKey.HsmMethod)
+	if err != nil {
+		return nil, apperr.Wrap("decrypt ML-DSA private key", err)
+	}
+	return plaintext, nil
 }
 
 // DecodePairKeys decodes the public key and decrypts the private key together.

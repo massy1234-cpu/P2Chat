@@ -271,7 +271,7 @@ func (x *PqkemSet) GetSignatureX25519() []byte {
 }
 
 // envelope used for the bundle upload request (travels to the server)
-type BundleUploadPayload struct {
+type UserBundle struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	Nickname             string                 `protobuf:"bytes,2,opt,name=nickname,proto3" json:"nickname,omitempty"`
 	PublicBundle         *PublicBundle          `protobuf:"bytes,3,opt,name=public_bundle,json=publicBundle,proto3" json:"public_bundle,omitempty"`
@@ -283,20 +283,20 @@ type BundleUploadPayload struct {
 	sizeCache            protoimpl.SizeCache
 }
 
-func (x *BundleUploadPayload) Reset() {
-	*x = BundleUploadPayload{}
+func (x *UserBundle) Reset() {
+	*x = UserBundle{}
 	mi := &file_cmd_client_internals_proto_pqxdh_bundle_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *BundleUploadPayload) String() string {
+func (x *UserBundle) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*BundleUploadPayload) ProtoMessage() {}
+func (*UserBundle) ProtoMessage() {}
 
-func (x *BundleUploadPayload) ProtoReflect() protoreflect.Message {
+func (x *UserBundle) ProtoReflect() protoreflect.Message {
 	mi := &file_cmd_client_internals_proto_pqxdh_bundle_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -308,47 +308,47 @@ func (x *BundleUploadPayload) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use BundleUploadPayload.ProtoReflect.Descriptor instead.
-func (*BundleUploadPayload) Descriptor() ([]byte, []int) {
+// Deprecated: Use UserBundle.ProtoReflect.Descriptor instead.
+func (*UserBundle) Descriptor() ([]byte, []int) {
 	return file_cmd_client_internals_proto_pqxdh_bundle_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *BundleUploadPayload) GetNickname() string {
+func (x *UserBundle) GetNickname() string {
 	if x != nil {
 		return x.Nickname
 	}
 	return ""
 }
 
-func (x *BundleUploadPayload) GetPublicBundle() *PublicBundle {
+func (x *UserBundle) GetPublicBundle() *PublicBundle {
 	if x != nil {
 		return x.PublicBundle
 	}
 	return nil
 }
 
-func (x *BundleUploadPayload) GetCurvePublicSets() [][]byte {
+func (x *UserBundle) GetCurvePublicSets() [][]byte {
 	if x != nil {
 		return x.CurvePublicSets
 	}
 	return nil
 }
 
-func (x *BundleUploadPayload) GetKemPublicSets() [][]byte {
+func (x *UserBundle) GetKemPublicSets() [][]byte {
 	if x != nil {
 		return x.KemPublicSets
 	}
 	return nil
 }
 
-func (x *BundleUploadPayload) GetPrivateKeySignMLDSA() []byte {
+func (x *UserBundle) GetPrivateKeySignMLDSA() []byte {
 	if x != nil {
 		return x.PrivateKeySignMLDSA
 	}
 	return nil
 }
 
-func (x *BundleUploadPayload) GetPrivateKeySignX25519() []byte {
+func (x *UserBundle) GetPrivateKeySignX25519() []byte {
 	if x != nil {
 		return x.PrivateKeySignX25519
 	}
@@ -385,8 +385,9 @@ const file_cmd_client_internals_proto_pqxdh_bundle_proto_rawDesc = "" +
 	"identifier\x12\x1b\n" +
 	"\tpqkem_key\x18\x02 \x01(\fR\bpqkemKey\x12'\n" +
 	"\x0fsignature_mldsa\x18\x03 \x01(\fR\x0esignatureMldsa\x12)\n" +
-	"\x10signature_x25519\x18\x04 \x01(\fR\x0fsignatureX25519\"\xb3\x02\n" +
-	"\x13BundleUploadPayload\x12\x1a\n" +
+	"\x10signature_x25519\x18\x04 \x01(\fR\x0fsignatureX25519\"\xaa\x02\n" +
+	"\n" +
+	"UserBundle\x12\x1a\n" +
 	"\bnickname\x18\x02 \x01(\tR\bnickname\x12F\n" +
 	"\rpublic_bundle\x18\x03 \x01(\v2!.proto_struct_bundle.PublicBundleR\fpublicBundle\x12*\n" +
 	"\x11curve_public_sets\x18\x04 \x03(\fR\x0fcurvePublicSets\x12&\n" +
@@ -408,13 +409,13 @@ func file_cmd_client_internals_proto_pqxdh_bundle_proto_rawDescGZIP() []byte {
 
 var file_cmd_client_internals_proto_pqxdh_bundle_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_cmd_client_internals_proto_pqxdh_bundle_proto_goTypes = []any{
-	(*PublicBundle)(nil),        // 0: proto_struct_bundle.PublicBundle
-	(*CurveSet)(nil),            // 1: proto_struct_bundle.CurveSet
-	(*PqkemSet)(nil),            // 2: proto_struct_bundle.PqkemSet
-	(*BundleUploadPayload)(nil), // 3: proto_struct_bundle.BundleUploadPayload
+	(*PublicBundle)(nil), // 0: proto_struct_bundle.PublicBundle
+	(*CurveSet)(nil),     // 1: proto_struct_bundle.CurveSet
+	(*PqkemSet)(nil),     // 2: proto_struct_bundle.PqkemSet
+	(*UserBundle)(nil),   // 3: proto_struct_bundle.UserBundle
 }
 var file_cmd_client_internals_proto_pqxdh_bundle_proto_depIdxs = []int32{
-	0, // 0: proto_struct_bundle.BundleUploadPayload.public_bundle:type_name -> proto_struct_bundle.PublicBundle
+	0, // 0: proto_struct_bundle.UserBundle.public_bundle:type_name -> proto_struct_bundle.PublicBundle
 	1, // [1:1] is the sub-list for method output_type
 	1, // [1:1] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name

@@ -3,9 +3,7 @@ package mldsa_data
 import (
 	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/argon"
-		
-	"P2Chat/cmd/client/internals/encryption"
-	encryptmldsa "P2Chat/cmd/client/internals/encryption/mldsa_encryption"
+	keyencryption "P2Chat/cmd/client/internals/encryption/encryption_hsm"
 	"P2Chat/cmd/client/internals/p2version"
 	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	data "P2Chat/cmd/client/internals/storage"
@@ -107,8 +105,7 @@ func TestLoadPublicKeyMLDSAFromCorruptedFile(t *testing.T) {
 }
 
 func createRealKeyPairForTest() (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, error) {
-	password := encryption.Encaps("password1")
-	defer password.Destroy()
+	password := memguard.NewEnclave([]byte("password1"))
 
 	publicKey, privateKeyExposed, err := mldsa87.GenerateKey(nil)
 	if err != nil {
@@ -124,7 +121,7 @@ func createRealKeyPairForTest() (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.Pu
 
 	privateKeyEnc := memguard.NewEnclave(privateKeyBuf.Bytes())
 
-	ciphertext, nonce, salt, err := encryptmldsa.EncryptPrivateKey(password, privateKeyEnc, 3)
+	ciphertext, nonce, salt, _, err := keyencryption.Encrypt(password, privateKeyEnc, 3, false)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -1,5 +1,42 @@
 # P2Chat — Agent Context
 
+## Current architecture — 2026-09-11
+
+This section describes the current code and supersedes older progress tables, sketches and TODOs below where they conflict. The detailed reference is `docs/recap.md`, section "Login implementation (2026-09-11)".
+
+### Phase boundaries: preserve these patterns
+
+- The client `main` is the orchestrator: open the connection, identify the server, register if needed, start login, consume Events, persist associations and decide retries.
+- `Connection.Login()` takes no arguments. Like the existing phase entry points, it opens a yamux stream, calls `NewSession`, assigns `sess.Handler = login.Handler` directly, calls `Init`, injects `StartLogin` with `PutRouter`, and returns session/Events/error.
+- Do not put server identification, credential loading, cancellation contexts, blocking waits or retry loops inside `Connection.Login`.
+- The phase Handler creates its own state when `phaseState` is nil; its switch calls state-specific helpers in the same phase package. Do not inject a preconstructed state from the Connection or main.
+- Preserve `Local chan []byte`, `PutRouter(bytecode, payload)`, `Events`, and `Result{Replies, Events, NextDeadline, Completed, CloseStream, Err}`. `PutRouter` targets the local Router; `PutOutgoing` targets the network Writer. Do not reintroduce `PutRouterWithState`, typed local state envelopes or global credential registries.
+- Login follows bundle upload's event-driven signing pattern. The phase asks for public parameters, a pass token, PoW work and identity signatures via Events; the orchestrator supplies byte payloads through PutRouter.
+- Password and ML-DSA/X25519 private-key enclaves stay in the orchestrator. `login.Credentials` is not phase state. Helpers `LoadIdentity`, `EncodeParameters`, `SolveChallenge` and `SignProof` live in `phases/login`. The main calls them when preparing or answering phase events.
+- `Context` belongs to orchestration/PoW cancellation, not `LoginClient`. Ordinary phase waits use 30-second deadlines; the PoW-solution wait uses ten minutes.
+
+### Implemented flow and storage
+
+- TLS/yamux → separate server identification → login. New registrations additionally perform registration-token PoW and bundle upload before login.
+- Identification verifies `ServerID = SHA256(PubMLDSA || PubX25519)` and both signatures over version + fresh client nonce + TLS exporter binding on every new connection. Automatic first-contact trust is logged; endpoint pin changes are rejected and the new verified ID is blacklisted. Same identity at a changed address updates the saved address.
+- The explicit byte-for-byte comparison against public keys deserialized from the saved identity is NOT implemented. The empty-endpoint fallback to `SaveServerID` still exists. Do not describe either proposed change as finished.
+- `Connection.Endpoint` is a string containing the configured host:port. The bootstrap assigns it with JoinHostPort. The 32-byte TLS exporter binding is derived per connection and is not persisted.
+- Full login: Level5 PoW → fresh server nonce → registered BundleID and dual ML-DSA/XEdDSA proof → server `Client.Authed.Store(true)` and blind Login Token. Quick login skips only the PoW, never identification or identity proof.
+- Login Token/Pass Token is one token type, separate from the registration token. It allows three subsequent quick logins, with no replacement issued on the quick path. Its dedicated signing key is memory-only and expires after a 24-hour epoch; tokens expire with that epoch and server restart invalidates them.
+- Completion Events carry the remaining-use byte and optionally a newly issued serialized token. The main seals the token in memguard, wipes the event and retains it in `ConnectionManager.LoginToken`. No client token persistence or automatic reconnection loop exists.
+- Server Badger uses prefixed keys, not Bolt buckets: raw BundleID → protobuf UserBundle; `nickname:<name>` → BundleID; BundleID + curve/kem suffix + uint32BE index → public set. Login reads the bundle saved during registration.
+- `login:tokens:` + signing-key hash + SHA256(token message) → MessagePack remaining uses, expiry, last use, BundleID. First successful redemption creates the record with two uses left and binds it to that bundle. A mutex plus transaction serializes decrements; exhausted records remain until expiry. Before first redemption a token can be transferred to another registered user.
+- Client Bolt buckets: `server:identities` ID→MessagePack public identity; `server:endpoints` host:port→ID; `server:observed-ip` ID→MessagePack endpoint/IP; `server:blacklist` ID→reason/address/time; `server:login-bundle` serverID→MessagePack LocalID and raw 32-byte BundleID, NOT a serialized full bundle.
+- Server presence is RAM-only: `activeUsers[BundleID]` holds authenticated connections. Auth is cleared on disconnect; `ActiveConnections` counts but does not cap connections. `LastSeen` tracks phase-start activity, not every packet.
+- TLS test configuration remains unchanged. This ordering does not prevent TCP/TLS or pre-PoW identification flooding.
+
+### Current working-tree caveat: bucket initialization
+
+- The user has moved creation of four server-identification buckets into `database.CreateBuckets()`, called by `database.Init()`. `SaveKnownServer` now uses `tx.Bucket`. `server:login-bundle` is still created lazily in `SaveLoginBundle`; `SaveServerID` also retains lazy creation.
+- Compilation currently fails at `cmd/client/database/db.go`: the Update callback in CreateBuckets lacks a final `return nil`. This was confirmed with `go test -run '^$' ./cmd/client/database`. Document-only work did not change this code.
+- Tests that assign `database.DB` directly must initialize the four buckets before SaveKnownServer; it currently assumes non-nil buckets.
+- Targeted login/identification tests previously passed with `-race`, before these subsequent bucket edits. Do not claim the current working tree passes without rechecking.
+
 ## Project structure
 
 ```
@@ -228,7 +265,7 @@ All paths are relative to `storage.BasePath`, auto-resolved to `<project_root>/d
 
 ## Progress recap
 
-Current development focus (2026-09-07): server identification is in progress. The server creates persistent identity keys so the client can recognize which server it is communicating with and load the information associated with that server. This is the current implementation stage, not a completed feature.
+The table below retains earlier development history. For current identification, login, authentication and database status, use "Current architecture — 2026-09-11" above.
 
 | Area | Status | Details |
 |------|--------|---------|
@@ -291,9 +328,9 @@ Current development focus (2026-09-07): server identification is in progress. Th
 
 ## Agent rules
 
-- **Always communicate in English.** Never write responses, comments, or messages in Italian.
+- **Use the user's language.** Respond in Italian when the user speaks Italian; keep code comments consistent with surrounding code.
 - **Explain first, implement only after confirmed.** When the user asks about a design, approach, or code change, always explain the theory and options first. Never write or modify files until the user explicitly says to proceed ("si", "fallo", "implementa", "scrivi", "modifica"). Save this rule and follow it strictly.
-- **Make only minimal changes.** Stick strictly to what the user asks. Do not create helper functions, refactor, or add new infrastructure. Only use existing functions in the codebase.
+- **Make only minimal changes.** Reuse existing patterns. When the user requests phase helpers or a refactor, keep those helpers inside the existing phase package; do not invent new routing/state infrastructure.
 - **Use the same coding style as existing code.** Follow existing conventions: `module.action` naming, error wrapping with `apperr.Wrap`/`apperr.New`, `memguard` types for secrets, no superfluous comments, compact formatting.
 - Do not rewrite entire files — make targeted edits.
 
@@ -511,7 +548,7 @@ Connection:
 | Autenticazione client IK ML-DSA | ❌ Da fare | Verifica firma messaggi |
 | PoW / Rate limiting | 🔶 WIP | `network/PoW`: `Issue`/`Verify` (HMAC-MAC) pronti; `load_status.LoadReport` da collegare al Dispatcher (import cycle) |
 
-## TODO prossima sessione
+## Historical TODOs — verify against current architecture before acting
 
 ### Registrazione (PoW + challenge-response ML-DSA)
 - PoW core pronto: client `Solve` (Level 1-5), server `Issue`/`Verify` (challenge + HMAC-MAC) su `proto_struct_pow.Challenge`
@@ -537,11 +574,11 @@ Connection:
 - Client: da fare (ciclo su Incoming, smista per tag: 0x00→scarta, 0x01→Registration, ...)
 
 ### Client logic
-- Main orchestration implemented: connection → TLS binding → server identification → token registration → bundle upload.
+- Main orchestration: connection → TLS binding → server identification → existing-account login, or registration token → bundle upload → login for a new account.
 - Simulate a full connection against the server after server identity initialization is exercised with a real password.
 
 ### Server
-- **Server identification follow-up**: define the first-contact trust policy (currently the client verifies cryptographic consistency and logs whether an ID is new or known; it does not yet pin an expected ID to an endpoint), then add Merkle log and gossip.
+- **Server identification follow-up**: automatic first-contact trust and endpoint pinning are implemented. Explicit comparison with stored public keys and removing the empty-endpoint fallback were discussed but are not implemented. Merkle log and gossip remain future work.
 - **Bootstrap server** (speculare al client): `bootstrap.StartServer(addr, port, ctx)` crea `client.NewRegistry()` + certificato + `server_tls.Listen`, lancia in goroutine `AcceptLoop(ctx, ln, registry)` (loop accept → `client.NewClient(conn, registry.DeadClients)` → `registry.AddClient(c)`), ritorna `RegistryClients`. Variante B: inizializzazione nel main. `AcceptLoop` resta pubblico per ciclo di vita gestito dal chiamante
 - Estendere BadgerDB con la lettura atomica e la rimozione controllata dei set one-time quando verranno consegnati a un client.
 - Integrare EKM layer con ML-DSA pinned keys
@@ -566,7 +603,7 @@ Connection:
 
 - **Parla in italiano** quando l'utente parla in italiano.
 - **Prima spiega, implementa solo dopo conferma.** Quando l'utente chiede di design, approccio o modifiche, spiega prima teoria e opzioni. Non scrivere o modificare file finché l'utente non dice esplicitamente di procedere ("si", "fallo", "implementa", "scrivi", "modifica").
-- **Modifiche minime.** Attieniti strettamente a ciò che chiede l'utente. Non creare funzioni helper, refactoring o nuova infrastruttura. Usa solo funzioni esistenti.
+- **Modifiche minime.** Riusa i pattern esistenti. Se sono richiesti helper o refactoring delle phase, mantienili nel package della phase; non introdurre nuove API per iniettare stato o cambiare i canali del Router.
 - **Stesso stile del codice esistente.** `module.action` naming, error wrapping con `apperr.Wrap`/`apperr.New`, `memguard` per segreti, nessun commento superfluo, formatting compatto.
 - **Non riscrivere file interi** — fai edit mirati.
 

@@ -24,6 +24,7 @@ const (
 	stateRequest state = iota
 	stateAwaitIdentity
 	stateCompleted
+	stateFailed
 )
 
 type IdentificationClient struct {
@@ -42,18 +43,29 @@ func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 	if currentState == nil || len(currentState.Binding) != 32 {
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("identification requires a 32-byte TLS binding"))
 	}
+	var phaseResult *phases.Result
 	switch currentState.state {
 	case stateRequest:
-		return handleRequest(result, currentState, byteCode, msg)
+		phaseResult = handleRequest(result, currentState, byteCode, msg)
 	case stateAwaitIdentity:
-		return handleIdentity(result, currentState, byteCode, msg)
+		phaseResult = handleIdentity(result, currentState, byteCode, msg)
+	case stateCompleted:
+		phaseResult = phases.FillResult(result, nil, 0, false, true, nil, apperr.New("server identification already completed"))
+	case stateFailed:
+		phaseResult = phases.FillResult(result, nil, 0, false, true, nil, apperr.New("server identification phase failed"))
 	default:
-		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("server identification already completed"))
+		currentState.state = stateFailed
+		phaseResult = phases.FillResult(result, nil, 0, false, true, nil, apperr.New("server identification reached an invalid state"))
 	}
+	if phaseResult.Err != nil {
+		currentState.state = stateFailed
+	}
+	return phaseResult
 }
 
+// handleRequest handle the server identification request
 func handleRequest(result *phases.Result, currentState *IdentificationClient, byteCode byte, msg []byte) *phases.Result {
-	if byteCode != phases.ServerIdentificationRequest || len(msg) != 0 {
+	if byteCode != phases.ServerIdentityRequest || len(msg) != 0 {
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid identification start"))
 	}
 	if _, err := rand.Read(currentState.nonce[:]); err != nil {
@@ -64,11 +76,11 @@ func handleRequest(result *phases.Result, currentState *IdentificationClient, by
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.Wrap("serialize identification request", err))
 	}
 	currentState.state = stateAwaitIdentity
-	return phases.FillResult(result, [][]byte{append([]byte{phases.ServerIdentificationRequest}, request...)}, 0, false, false, nil, nil)
+	return phases.FillResult(result, [][]byte{append([]byte{phases.ServerIdentityRequest}, request...)}, 0, false, false, nil, nil)
 }
 
 func handleIdentity(result *phases.Result, currentState *IdentificationClient, byteCode byte, msg []byte) *phases.Result {
-	if byteCode != phases.ServerIdentificationResponse {
+	if byteCode != phases.ServerIdentityResponse {
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid identification response"))
 	}
 	response := &serverproto.ServerID{}
@@ -127,9 +139,9 @@ func handleIdentity(result *phases.Result, currentState *IdentificationClient, b
 
 func CheckSize(tag byte, payloadLen int) bool {
 	switch tag {
-	case phases.ServerIdentificationRequest:
+	case phases.ServerIdentityRequest:
 		return payloadLen == 0
-	case phases.ServerIdentificationResponse:
+	case phases.ServerIdentityResponse:
 		return payloadLen > 0 && payloadLen <= 8192
 	default:
 		return false

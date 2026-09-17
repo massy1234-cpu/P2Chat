@@ -43,6 +43,8 @@ func SaveServerID(serverID *idserver.IDServer) (bool, error) {
 	return exists, nil
 }
 
+
+// SaveKnownServer create the buckets for the server identification process and save the IDServer bundle (blacklist, endpoint, id, IP)
 func SaveKnownServer(serverID *idserver.IDServer, endpoint string) (bool, bool, error) {
 	if !IsInitialized() || serverID == nil || len(serverID.ID) != 32 {
 		return false, false, apperr.New("invalid server identity or database not initialized")
@@ -69,22 +71,14 @@ func SaveKnownServer(serverID *idserver.IDServer, endpoint string) (bool, bool, 
 	changed := false
 	blocked := false
 	err = DB.Update(func(tx *bbolt.Tx) error {
-		identities, err := tx.CreateBucketIfNotExists([]byte("server:identities"))
-		if err != nil {
-			return err
-		}
-		endpoints, err := tx.CreateBucketIfNotExists([]byte("server:endpoints"))
-		if err != nil {
-			return err
-		}
-		addresses, err := tx.CreateBucketIfNotExists([]byte("server:observed-ip"))
-		if err != nil {
-			return err
-		}
-		blacklist, err := tx.CreateBucketIfNotExists([]byte("server:blacklist"))
-		if err != nil {
-			return err
-		}
+		identities := tx.Bucket([]byte("server:identities"))
+		
+		endpoints := tx.Bucket([]byte("server:endpoints"))
+		
+		addresses := tx.Bucket([]byte("server:observed-ip"))
+		
+		blacklist := tx.Bucket([]byte("server:blacklist"))
+		
 		if blacklist.Get(serverID.ID) != nil {
 			return apperr.New("server identity is blacklisted")
 		}
@@ -130,6 +124,7 @@ type LoginBundle struct {
 	LocalID  int
 	BundleID []byte
 }
+
 
 func SaveLoginBundle(serverID []byte, bundle *LoginBundle) error {
 	if !IsInitialized() || len(serverID) != 32 || bundle == nil || len(bundle.BundleID) != 32 || bundle.LocalID < 0 {

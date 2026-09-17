@@ -13,6 +13,7 @@ import (
 	serverlogin "P2Chat/cmd/server/internals/network/phases/login"
 	bundleproto "P2Chat/cmd/server/internals/proto_generated/pqxdh/proto_struct_bundle"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"github.com/awnumar/memguard"
 	"google.golang.org/protobuf/proto"
@@ -40,7 +41,7 @@ func TestLoginProtocol(t *testing.T) {
 	}
 	h1, h2 := sha256.Sum256(xPK.Bytes()), sha256.Sum256(mlPK.Bytes())
 	bundleID := sha256.Sum256(append(h1[:], h2[:]...))
-	if err := database.SaveBundle(&bundleproto.BundleUploadPayload{PublicBundle: &bundleproto.PublicBundle{IkMldsa: mlPK.Bytes(), IkX25519: xPK.Bytes()}}, bundleID, []byte("login-test")); err != nil {
+	if err := database.SaveBundle(&bundleproto.UserBundle{PublicBundle: &bundleproto.PublicBundle{IkMldsa: mlPK.Bytes(), IkX25519: xPK.Bytes()}}, bundleID, []byte("login-test")); err != nil {
 		t.Fatal(err)
 	}
 	identity := idserver.GetCurrentID()
@@ -50,8 +51,7 @@ func TestLoginProtocol(t *testing.T) {
 	run := func(t *testing.T, token *memguard.Enclave, mutate func(*loginproto.LoginProof), wrongBinding bool, wantSuccess bool) {
 		t.Helper()
 		authed := false
-		var next *memguard.Enclave
-		client := &LoginClient{Binding: binding, ServerID: serverID[:], BundleID: bundleID[:], MLDSA: mlSK, X25519: xSK, Token: token, SaveToken: func(value *memguard.Enclave) { next = value }}
+		keys := &Credentials{BundleID: bundleID[:], MLDSA: mlSK, X25519: xSK}
 		serverBinding := append([]byte(nil), binding...)
 		if wrongBinding {
 			serverBinding[0] ^= 1
@@ -66,22 +66,54 @@ func TestLoginProtocol(t *testing.T) {
 			authed = true
 			return nil
 		}}
-		var cstate any = client
+		var cstate any
 		var sstate any = server
-		result := Handler(phases.LoginAccessRequest, nil, &cstate)
+		result := Handler(StartLogin, nil, &cstate)
 		var lastProof []byte
-		for step := 0; step < 5; step++ {
+		for step := 0; step < 15; step++ {
 			if result.Err != nil {
 				t.Fatal(result.Err)
 			}
 			if result.Completed {
 				break
 			}
-			if len(result.Replies) != 1 {
+			if len(result.Events) == 1 {
+				event := result.Events[0]
+				var tag byte
+				var payload []byte
+				var err error
+				switch event[0] {
+				case NotifyReady:
+					tag = Parameters
+					payload, err = EncodeParameters(binding, serverID[:], bundleID[:], token != nil)
+				case NotifyPassToken:
+					tag = PassToken
+					opened, openErr := token.Open()
+					if openErr != nil {
+						t.Fatal(openErr)
+					}
+					payload = append([]byte(nil), opened.Bytes()...)
+					opened.Destroy()
+				case NotifySolvePoW:
+					tag = PoWSolution
+					payload, err = SolveChallenge(context.Background(), event[1:])
+				case NotifySignProof:
+					tag = SignedProof
+					payload, err = SignProof(keys, event[1:])
+				default:
+					t.Fatalf("unexpected phase event: %v", event[0])
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				result = Handler(tag, payload, &cstate)
+				continue
+			}
+			if len(result.IntoWire) != 1 {
 				t.Fatalf("missing request at step %d", step)
 			}
-			wire := append([]byte(nil), result.Replies[0]...)
-			if wire[0] == phases.LoginProof {
+			wire := append([]byte(nil), result.IntoWire[0]...)
+			if wire[0] == phases.LoginIdentityProof {
 				proof := &loginproto.LoginProof{}
 				if err := proto.Unmarshal(wire[1:], proof); err != nil {
 					t.Fatal(err)
@@ -93,7 +125,7 @@ func TestLoginProtocol(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				wire = append([]byte{phases.LoginProof}, payload...)
+				wire = append([]byte{phases.LoginIdentityProof}, payload...)
 				lastProof = append([]byte(nil), payload...)
 			}
 			sresult := serverlogin.Handler(wire[0], wire[1:], &sstate)
@@ -106,26 +138,29 @@ func TestLoginProtocol(t *testing.T) {
 				}
 				return
 			}
-			if len(sresult.Replies) != 1 {
+			if len(sresult.IntoWire) != 1 {
 				t.Fatal("missing server reply")
 			}
-			wire = sresult.Replies[0]
+			wire = sresult.IntoWire[0]
 			result = Handler(wire[0], wire[1:], &cstate)
 		}
 		if result.Err != nil {
 			t.Fatal(result.Err)
 		}
 		if wantSuccess {
-			if !authed || !result.Completed || len(result.Events) != 1 || result.Events[0][0] != 1 {
+			if !authed || !result.Completed || len(result.Events) != 1 || result.Events[0][0] != NotifyCompleted {
 				t.Fatal("login did not complete")
 			}
 			if token == nil {
-				issued = next
+				if len(result.Events[0]) <= 2 {
+					t.Fatal("missing issued token")
+				}
+				issued = memguard.NewEnclave(result.Events[0][2:])
 			}
-			if replay := serverlogin.Handler(serverphases.LoginProof, lastProof, &sstate); replay.Err == nil {
+			if replay := serverlogin.Handler(serverphases.LoginIdentityProof, lastProof, &sstate); replay.Err == nil {
 				t.Fatal("accepted replay after completion")
 			}
-		} else if authed || len(result.Events) != 1 || result.Events[0][0] != 0 {
+		} else if authed || len(result.Events) != 1 || result.Events[0][0] != NotifyTokenRejected {
 			t.Fatal("invalid login accepted")
 		}
 	}
@@ -154,9 +189,40 @@ func TestLoginProtocol(t *testing.T) {
 	t.Run("fourth use refused", func(t *testing.T) { run(t, issued, nil, false, false) })
 	t.Run("PoW timeout preserved", func(t *testing.T) {
 		var st any = &serverlogin.LoginServer{Binding: binding, Authenticate: func([]byte, bool) error { return nil }}
-		res := serverlogin.Handler(phases.LoginAccessRequest, nil, &st)
+		res := serverlogin.Handler(phases.LoginStart, nil, &st)
 		if res.Err != nil || res.NextDeadline != 10*time.Minute {
 			t.Fatalf("bad PoW deadline: %+v", res)
 		}
 	})
+}
+
+func TestLoginCreatesOwnState(t *testing.T) {
+	var st any
+	result := Handler(StartLogin, nil, &st)
+	if result.Err != nil || len(result.IntoWire) != 0 || len(result.Events) != 1 || result.Events[0][0] != NotifyReady {
+		t.Fatal("login must request parameters through Events")
+	}
+	if _, ok := st.(*LoginClient); !ok {
+		t.Fatal("handler did not initialize its own state")
+	}
+	result = Handler(phases.LoginChallengeNonce, make([]byte, 34), &st)
+	if result.Err == nil {
+		t.Fatal("accepted network nonce before local parameters")
+	}
+	if st.(*LoginClient).state != stateFailed {
+		t.Fatal("failed login was not marked as failed")
+	}
+}
+
+func TestLoginPoWCancellation(t *testing.T) {
+	var st any = &serverlogin.LoginServer{Binding: bytes.Repeat([]byte{1}, 32), Level: pow.Level1, Authenticate: func([]byte, bool) error { return nil }}
+	result := serverlogin.Handler(phases.LoginStart, nil, &st)
+	if result.Err != nil {
+		t.Fatal(result.Err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := SolveChallenge(ctx, result.IntoWire[0][1:]); err == nil {
+		t.Fatal("cancelled PoW continued")
+	}
 }

@@ -52,7 +52,7 @@ type BundleClient struct {
 	originalM [32]byte
 	sigMLDSA  []byte
 	sigX25519 []byte
-	payload   upload.BundleUploadPayload
+	payload   upload.UserBundle
 }
 
 func Handler(byteCode byte, msg []byte, state *any) *phases.Result {
@@ -132,13 +132,13 @@ func handleToken(result *phases.Result, currentState *BundleClient, byteCode byt
 	p2log.Info("bundle registration token received, uploading the bundle request")
 
 	// forward the whole TokenVerification (token + signature) to the server to initialize the bundle upload
-	reply := append([]byte{phases.UploadBundleRequest}, msg...)
+	reply := append([]byte{phases.BundleRegistrationStart}, msg...)
 	return phases.FillResult(result, [][]byte{reply}, 0, false, false, nil, nil)
 }
 
 // handleTokenConfirmation checks the server confirmation about the token validity.
 func handleTokenConfirmation(result *phases.Result, currentState *BundleClient, byteCode byte, msg []byte) *phases.Result {
-	if byteCode != phases.TokenConfirmation {
+	if byteCode != phases.BundleRegistrationTokenAccepted {
 		p2log.Error("bundle received an invalid token confirmation")
 		currentState.state = stateFailed
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("bundle received an invalid token confirmation"))
@@ -174,14 +174,14 @@ func handleNickname(result *phases.Result, currentState *BundleClient, byteCode 
 	p2log.Info("bundle nickname chosen: ", currentState.nickname)
 
 	// ask the server if the nickname is available
-	reply := append([]byte{phases.NicknameRequest}, msg...)
+	reply := append([]byte{phases.BundleNicknameRequest}, msg...)
 	return phases.FillResult(result, [][]byte{reply}, 0, false, false, nil, nil)
 }
 
 // handleNicknameResponse handles the server availability reply, looping back to
 // choose a new nickname if the requested one is taken.
 func handleNicknameResponse(result *phases.Result, currentState *BundleClient, byteCode byte, msg []byte) *phases.Result {
-	if byteCode != phases.NicknameResponse {
+	if byteCode != phases.BundleNicknameAvailability {
 		p2log.Error("bundle received an invalid nickname response")
 		currentState.state = stateFailed
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("bundle received an invalid nickname response"))
@@ -212,7 +212,7 @@ func handleNicknameResponse(result *phases.Result, currentState *BundleClient, b
 // handleOriginalM saves the challenge (originalM) issued by the server and
 // forwards it to the orchestrator (session Events) for signing with both identity keys.
 func handleOriginalM(result *phases.Result, currentState *BundleClient, byteCode byte, msg []byte) *phases.Result {
-	if byteCode != phases.OriginalM {
+	if byteCode != phases.BundleProofChallenge {
 		p2log.Error("bundle received an invalid challenge")
 		currentState.state = stateFailed
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("bundle received an invalid challenge"))
@@ -286,7 +286,7 @@ func handleBundle(result *phases.Result, currentState *BundleClient, byteCode by
 
 // handleBundleConfirmation handles the final server confirmation.
 func handleBundleConfirmation(result *phases.Result, currentState *BundleClient, byteCode byte, msg []byte) *phases.Result {
-	if byteCode != phases.BundleConfirmation {
+	if byteCode != phases.BundleUploadAccepted {
 		p2log.Error("bundle received an invalid confirmation")
 		currentState.state = stateFailed
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("bundle received an invalid confirmation"))
@@ -360,8 +360,8 @@ func UnpackSignatures(payload []byte) (sigMLDSA, sigX25519 []byte, err error) {
 }
 
 // decodeBundle unmarshals the bundle upload payload (PublicBundle + sets) received from the Local chan.
-func decodeBundle(bundle []byte) (*upload.BundleUploadPayload, error) {
-	var p upload.BundleUploadPayload
+func decodeBundle(bundle []byte) (*upload.UserBundle, error) {
+	var p upload.UserBundle
 	if err := proto.Unmarshal(bundle, &p); err != nil {
 		return nil, apperr.Wrap("error unmarshalling bundle payload", err)
 	}
@@ -372,7 +372,7 @@ func decodeBundle(bundle []byte) (*upload.BundleUploadPayload, error) {
 // every phase has a CheckSize but is different for the bytecodes checked
 func CheckSize(tag byte, payloadLen int) bool {
 	switch tag {
-	case phases.Dummy:
+	case phases.DummyMessage:
 		return payloadLen >= 1
 	case RegistrationToken:
 		return payloadLen >= 1
@@ -382,19 +382,19 @@ func CheckSize(tag byte, payloadLen int) bool {
 		return payloadLen >= 1
 	case SignedOriginalM:
 		return payloadLen >= 2
-	case phases.UploadBundleRequest:
+	case phases.BundleRegistrationStart:
 		return payloadLen >= 1
-	case phases.TokenConfirmation:
+	case phases.BundleRegistrationTokenAccepted:
 		return payloadLen == 1
-	case phases.NicknameRequest:
+	case phases.BundleNicknameRequest:
 		return payloadLen >= 1
-	case phases.NicknameResponse:
+	case phases.BundleNicknameAvailability:
 		return payloadLen == 1
-	case phases.OriginalM:
+	case phases.BundleProofChallenge:
 		return payloadLen == 32
 	case phases.BundleUpload:
 		return payloadLen >= 1
-	case phases.BundleConfirmation:
+	case phases.BundleUploadAccepted:
 		return payloadLen == 1
 	default:
 		return false

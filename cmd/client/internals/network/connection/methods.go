@@ -3,6 +3,8 @@ package connection
 import (
 	"P2Chat/cmd/client/internals/network/phases"
 	bundlereg "P2Chat/cmd/client/internals/network/phases/bundle_reg"
+	getuserbundle "P2Chat/cmd/client/internals/network/phases/get_user_bundle"
+	"P2Chat/cmd/client/internals/network/phases/login"
 	"P2Chat/cmd/client/internals/network/phases/server_identification"
 	"P2Chat/cmd/client/internals/network/phases/token_registration"
 	session "P2Chat/cmd/client/internals/network/session"
@@ -19,40 +21,6 @@ import (
 type Handler func(byteCode byte, msg []byte, state *any) *phases.Result
 type PutOnRouter func()
 
-// ServerIdentification opens a stream and emits the verified server ID as protobuf.
-func (c *Connection) ServerIdentification(binding []byte) (<-chan []byte, error) {
-	if len(binding) != 32 {
-		return nil, apperr.New("identification requires a 32-byte TLS binding")
-	}
-	binding = append([]byte(nil), binding...)
-	stream, err := c.MasterSession.OpenStream()
-	if err != nil {
-		return nil, apperr.Wrap("open server identification stream", err)
-	}
-	sess := c.NewSession(stream)
-	sess.Tag = "Server identification"
-	sess.Handler = func(byteCode byte, msg []byte, state *any) *phases.Result {
-		if *state == nil {
-			*state = &server_identification.IdentificationClient{Binding: binding, Endpoint: c.Endpoint}
-		}
-		result := server_identification.Handler(byteCode, msg, state)
-		if result.Err == nil && result.Completed {
-			identity := &serverproto.ServerID{}
-			if err := proto.Unmarshal(msg, identity); err != nil {
-				return phases.FillResult(result, nil, 0, false, true, nil, err)
-			}
-			c.mu.Lock()
-			c.ServerID = append([]byte(nil), identity.Id...)
-			c.mu.Unlock()
-		}
-		return result
-	}
-	sess.Init()
-	sess.PutRouter(phases.ServerIdentificationRequest, nil)
-	return sess.Events, nil
-}
-
-// --- connection ---
 // create a new connection with the yamux session and start its goroutines
 func NewConnection(session *yamux.Session) *Connection {
 
@@ -68,15 +36,11 @@ func NewConnection(session *yamux.Session) *Connection {
 	return connectionScheme
 }
 
-// watchdog that close the connection if the master session is closed
-func (c *Connection) CheckConnection() {
-	select {
-	case <-c.Done:
-		return
-	case <-c.MasterSession.CloseChan():
-		p2log.Error("connection with the server lost,closing... ")
-		c.Close()
-	}
+// start the goroutines of the connection
+func (c *Connection) Init() {
+	p2log.Debug("connection init")
+	go c.CheckDeadSessions()
+	go c.CheckConnection()
 }
 
 // return the next available ID for a session, reuse the freed IDs if any
@@ -135,11 +99,27 @@ func (c *Connection) CloseAllSessions() {
 	})
 }
 
-// start the goroutines of the connection
-func (c *Connection) Init() {
-	p2log.Debug("connection init")
-	go c.CheckDeadSessions()
-	go c.CheckConnection()
+// goroutine that read the dead sessions chan and release them from the connection
+func (c *Connection) CheckDeadSessions() {
+	for {
+		select {
+		case <-c.Done:
+			return
+		case msg := <-c.DeadSessions:
+			c.ReleaseSession(msg)
+		}
+	}
+}
+
+// watchdog that close the connection if the master session is closed
+func (c *Connection) CheckConnection() {
+	select {
+	case <-c.Done:
+		return
+	case <-c.MasterSession.CloseChan():
+		p2log.Error("connection with the server lost,closing... ")
+		c.Close()
+	}
 }
 
 // close the connection, the master session and all the active sessions
@@ -152,16 +132,37 @@ func (c *Connection) Close() {
 	})
 }
 
-// goroutine that read the dead sessions chan and release them from the connection
-func (c *Connection) CheckDeadSessions() {
-	for {
-		select {
-		case <-c.Done:
-			return
-		case msg := <-c.DeadSessions:
-			c.ReleaseSession(msg)
-		}
+// ServerIdentification opens a stream and emits the verified server ID as protobuf.
+func (c *Connection) ServerIdentification(binding []byte) (<-chan []byte, error) {
+	if len(binding) != 32 {
+		return nil, apperr.New("identification requires a 32-byte TLS binding")
 	}
+	binding = append([]byte(nil), binding...)
+	stream, err := c.MasterSession.OpenStream()
+	if err != nil {
+		return nil, apperr.Wrap("open server identification stream", err)
+	}
+	sess := c.NewSession(stream)
+	sess.Tag = "Server identification"
+	sess.Handler = func(byteCode byte, msg []byte, state *any) *phases.Result {
+		if *state == nil {
+			*state = &server_identification.IdentificationClient{Binding: binding, Endpoint: c.Endpoint}
+		}
+		result := server_identification.Handler(byteCode, msg, state)
+		if result.Err == nil && result.Completed {
+			identity := &serverproto.ServerID{}
+			if err := proto.Unmarshal(msg, identity); err != nil {
+				return phases.FillResult(result, nil, 0, false, true, nil, err)
+			}
+			c.mu.Lock()
+			c.ServerID = append([]byte(nil), identity.Id...)
+			c.mu.Unlock()
+		}
+		return result
+	}
+	sess.Init()
+	sess.PutRouter(phases.ServerIdentityRequest, nil)
+	return sess.Events, nil
 }
 
 // open a new stream for the registration phase and start the token request flow.
@@ -181,8 +182,8 @@ func (c *Connection) TokenRegistration() (<-chan []byte, error) {
 	sess.Handler = token_registration.Handler
 	sess.Init()
 
-	p2log.Info("registration session started, sending RegisterTokenReq")
-	sess.PutOutgoing([]byte{phases.RegisterTokenReq}) // request the registration token to the server
+	p2log.Info("registration session started, sending RegistrationStart")
+	sess.PutOutgoing([]byte{phases.RegistrationStart}) // request the registration token to the server
 
 	return sess.Events, nil
 }
@@ -207,6 +208,56 @@ func (c *Connection) UploadBundle() (*session.SingleSession, <-chan []byte, erro
 	p2log.Info("Upload bundle phase started")
 	// the bundle handler waits for the registration token from the Local chan
 	// (injected by the orchestrator via PutRouter) before sending anything
+	return sess, sess.Events, nil
+}
+
+// CheckBundleAvailability opens the preliminary bundle phase. The caller
+// injects getuserbundle.AvailabilityNickname through PutRouter and receives a
+// single event whose second byte indicates whether the nickname is registered.
+func (c *Connection) CheckBundleAvailability() (*session.SingleSession, <-chan []byte, error) {
+	newStream, err := c.MasterSession.OpenStream()
+	if err != nil {
+		return nil, nil, apperr.Wrap("open bundle availability stream", err)
+	}
+
+	sess := c.NewSession(newStream)
+	sess.Tag = "Bundle availability"
+	sess.Handler = getuserbundle.AvailabilityHandler
+	sess.Init()
+
+	return sess, sess.Events, nil
+}
+
+// GetUserBundle opens the bundle acquisition phase. The caller injects
+// getuserbundle.AcquisitionNickname through PutRouter and receives the
+// serialized UserBundle on Events when the phase completes.
+func (c *Connection) GetUserBundle() (*session.SingleSession, <-chan []byte, error) {
+	newStream, err := c.MasterSession.OpenStream()
+	if err != nil {
+		return nil, nil, apperr.Wrap("open user bundle stream", err)
+	}
+
+	sess := c.NewSession(newStream)
+	sess.Tag = "User bundle acquisition"
+	sess.Handler = getuserbundle.Handler
+	sess.Init()
+
+	return sess, sess.Events, nil
+}
+
+// Login opens the phase session and sends its local start event.
+func (c *Connection) Login() (*session.SingleSession, <-chan []byte, error) {
+	newStream, err := c.MasterSession.OpenStream()
+	if err != nil {
+		return nil, nil, apperr.Wrap("open login stream", err)
+	}
+
+	sess := c.NewSession(newStream)
+	sess.Tag = "Login"
+	sess.Handler = login.Handler
+	sess.Init()
+	sess.PutRouter(login.StartLogin, nil)
+
 	return sess, sess.Events, nil
 }
 

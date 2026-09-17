@@ -113,7 +113,7 @@ func TestCreatePQKEMSetSingle(t *testing.T) {
 		t.Fatal("loadIKKeys:", err)
 	}
 
-	privSet, pubSet, err := CreatePQKEMSet(privateMLDSA, privateX25519, password, false, 0)
+	privSet, pubSet, err := CreatePQKEMSet(privateMLDSA, privateX25519, password, 1, false, 0)
 	if err != nil {
 		t.Fatal("CreatePQKEMSet:", err)
 	}
@@ -165,7 +165,7 @@ func TestCreateKEMsetsBatch(t *testing.T) {
 	}
 
 	n := 5
-	privSets, pubSets, err := CreateKEMsets(password, false, data.BasePath, testBundleID, n)
+	privSets, pubSets, err := CreateKEMsets(password, 1, false, data.BasePath, testBundleID, n)
 	if err != nil {
 		t.Fatal("CreateKEMsets:", err)
 	}
@@ -184,7 +184,6 @@ func TestCreateKEMsetsBatch(t *testing.T) {
 		}
 	}
 }
-
 
 func BenchmarkCreateBundleAndSets(b *testing.B) {
 	pw := make([]byte, 32)

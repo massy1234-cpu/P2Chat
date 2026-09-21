@@ -34,7 +34,7 @@ func ServerStart(address string, port int, password *memguard.Enclave) (*client.
 		return nil, nil, apperr.Wrap("error during server identity initialization", err)
 	}
 
-	if err := blindsignature.InitBlindSignature(); err != nil {
+	if err := blindsignature.Init(password, 3, false); err != nil {
 		p2log.Error("error during blind signature initialization: ", err)
 		return nil, nil, apperr.Wrap("error during blind signature initialization", err)
 	}

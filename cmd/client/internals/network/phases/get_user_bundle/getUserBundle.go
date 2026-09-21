@@ -4,7 +4,6 @@ import (
 	"P2Chat/cmd/client/internals/network/phases"
 	"P2Chat/cmd/client/internals/proto_generated/bundle_request_structs"
 	"P2Chat/pkg/apperr"
-	"bytes"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -91,7 +90,7 @@ func handleResponse(byteCode byte, msg []byte, currentState *BundleSearched, res
 	}
 	currentState.response = response
 
-	if !bytes.Equal(currentState.response.Bundle.Nickname, currentState.request.Nickname) {
+	if currentState.response.Bundle.Nickname != string(currentState.request.Nickname) {
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid response, nickname not match"))
 	}
 	bundle, err := proto.Marshal(currentState.response.Bundle)

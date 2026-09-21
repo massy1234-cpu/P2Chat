@@ -8,7 +8,7 @@ import (
 	"github.com/awnumar/memguard"
 )
 
-func rawPrivateKey(t *testing.T, enclave *memguard.Enclave) *ecdh.PrivateKey {
+func rawPrivateKey(t *testing.T, enclave *PrivateX25519) *ecdh.PrivateKey {
 	t.Helper()
 	buffer, err := enclave.Open()
 	if err != nil {
@@ -31,7 +31,7 @@ func TestCreateKeyAndExtractPublic(t *testing.T) {
 		t.Fatalf("CreateKey: %v", err)
 	}
 
-	extracted := ExtractPublicKey(enclave)
+	extracted := enclave.PublicKey()
 	if extracted == nil {
 		t.Fatal("ExtractPublicKey returned nil")
 	}
@@ -52,11 +52,11 @@ func TestDeriveSecretShared(t *testing.T) {
 		t.Fatalf("bob CreateKey: %v", err)
 	}
 
-	aliceSecret, err := DerivateSecret(rawPrivateKey(t, aliceEnclave), bobPub)
+	aliceSecret, err := aliceEnclave.DeriveSecret(bobPub)
 	if err != nil {
 		t.Fatalf("alice derive: %v", err)
 	}
-	bobSecret, err := DerivateSecret(rawPrivateKey(t, bobEnclave), alicePub)
+	bobSecret, err := bobEnclave.DeriveSecret(alicePub)
 	if err != nil {
 		t.Fatalf("bob derive: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestSerializeDecryptRoundTrip(t *testing.T) {
 		t.Fatalf("CreateKey: %v", err)
 	}
 
-	scheme, err := EncryptPrivateKey(password, enclave, 1, false)
+	scheme, err := enclave.Encrypt(password, 1, false)
 	if err != nil {
 		t.Fatalf("EncryptPrivateKey: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestDecryptWrongPassword(t *testing.T) {
 		t.Fatalf("CreateKey: %v", err)
 	}
 
-	scheme, err := EncryptPrivateKey(password, enclave, 1, false)
+	scheme, err := enclave.Encrypt(password, 1, false)
 	if err != nil {
 		t.Fatalf("EncryptPrivateKey: %v", err)
 	}

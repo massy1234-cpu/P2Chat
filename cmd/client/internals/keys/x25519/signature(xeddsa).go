@@ -5,14 +5,16 @@ import (
 	"crypto"
 	"crypto/rand"
 	"go.step.sm/crypto/x25519"
-	"github.com/awnumar/memguard"
 )
 
-// Sign signs a message with an X25519 private key stored in a memguard Enclave. 
+// Sign signs a message with an X25519 private key stored in a memguard Enclave.
 // The key in the memguard Enclave must be NOT encrypt
-func Sign(privateKey *memguard.Enclave, message []byte) (signed_message []byte, err error) {
+func (privateKey *PrivateX25519) Sign(message []byte) (signed_message []byte, err error) {
+	if privateKey == nil || privateKey.Enclave == nil {
+		return nil, apperr.New("private X25519 key is nil")
+	}
 
-	buffer, err := privateKey.Open()
+	buffer, err := privateKey.Enclave.Open()
 	if err != nil {
 		return nil, apperr.Wrap("open private key enclave", err)
 	}
@@ -29,11 +31,10 @@ func Sign(privateKey *memguard.Enclave, message []byte) (signed_message []byte, 
 
 }
 
-
 // verify if the signature is valid or not
-func verifySignature(publicKey x25519.PublicKey, message []byte, signature []byte) bool {
-
-    verify := x25519.Verify(publicKey, message, signature)
-    return verify
-
+func (publicKey *PublicX25519) Verify(message []byte, signature []byte) bool {
+	if publicKey == nil || publicKey.Key == nil {
+		return false
+	}
+	return x25519.Verify(x25519.PublicKey(publicKey.Key.Bytes()), message, signature)
 }

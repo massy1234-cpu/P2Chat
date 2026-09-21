@@ -121,19 +121,19 @@ func createRealKeyPairForTest() (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.Pu
 
 	privateKeyEnc := memguard.NewEnclave(privateKeyBuf.Bytes())
 
-	ciphertext, nonce, salt, _, err := keyencryption.Encrypt(password, privateKeyEnc, 3, false)
+	ciphertext, encryptionParams, err := keyencryption.Encrypt(password, privateKeyEnc, 3, false)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	argonParams := argon.CreateArgonParams(3)
-	argonParams.Salt = salt
+	argonParams.Salt = encryptionParams.Salt
 
 	privateKeyStruct := &struct_mldsa.PrivateKeyMLDSA{
 		Algorithm:     "ML-DSA-87",
 		P2ChatVersion: p2version.MagicByte(),
 		Timestamp:     time.Now().Unix(),
-		Nonce:         nonce,
+		Nonce:         encryptionParams.Nonce,
 		Key:           ciphertext,
 		ArgonParams:   argonParams,
 	}

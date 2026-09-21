@@ -1,8 +1,6 @@
 package idserver
 
 import (
-	mldsa_keys "P2Chat/cmd/client/internals/keys/mldsa"
-	"P2Chat/cmd/client/internals/keys/x25519"
 	"P2Chat/cmd/client/internals/p2version"
 	"P2Chat/pkg/apperr"
 	"crypto/sha256"
@@ -42,12 +40,12 @@ func CreateIDBundle(binding []byte, nonce []byte) (*IDServer, error) {
 	// sign the []byte (p2version, nonce, tls binding)
 	bytes := signatureCompose([]byte{p2version.GetVersion()}, nonce, binding)
 
-	mldsaSign, err := mldsa_keys.Sign(serverID.MLDSAPrivateKey, bytes, nil, false)
+	mldsaSign, err := serverID.MLDSAPrivateKey.Sign(bytes, nil, false)
 	if err != nil {
 		return nil, apperr.Wrap("sign server ID with ML-DSA", err)
 	}
 
-	x25519Sign, err := x25519.Sign(serverID.X25519Private, bytes)
+	x25519Sign, err := serverID.X25519Private.Sign(bytes)
 	if err != nil {
 		return nil, apperr.Wrap("sign server ID with X25519", err)
 	}

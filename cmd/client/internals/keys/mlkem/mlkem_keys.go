@@ -82,17 +82,17 @@ func DecapsulateChipertext(privateKey *mlkem.DecapsulationKey768, ciphertext []b
 // If useHSM is true, uses EncryptHSM (auto-detects SE on darwin, TPM on linux/windows).
 // If useHSM is false, uses Argon2id + AES-256-GCM.
 func EncryptPrivateKey(password *memguard.Enclave, privateKey *memguard.Enclave, level int, useHSM bool) (*PrivateKEM, error) {
-	ciphertext, nonce, salt, method, err := HSM.Encrypt(password, privateKey, level, useHSM)
+	ciphertext, params, err := HSM.Encrypt(password, privateKey, level, useHSM)
 	if err != nil {
 		return nil, apperr.Wrap("protect ML-KEM private key", err)
 	}
 
 	scheme := &PrivateKEM{
 		PrivateKeyEncrypted: ciphertext,
-		Nonce:               nonce,
-		Salt:                salt,
-		ArgonLevel:          level,
-		EncryptMethod:       method,
+		Nonce:               params.Nonce,
+		Salt:                params.Salt,
+		ArgonLevel:          params.ArgonLevel,
+		EncryptMethod:       params.HSMMethod,
 	}
 
 	return scheme, nil

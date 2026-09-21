@@ -63,7 +63,18 @@ func TestPoWFailureAndDeadline(t *testing.T) {
 		if expired {
 			deadline = time.Now().Add(-time.Second)
 		}
-		var state any = &LoginServer{Binding: bytes.Repeat([]byte{1}, 32), Authenticate: func([]byte, bool) error { t.Fatal("invalid PoW authenticated"); return nil }, state: stateAwaitPoW, secret: secret.Seal(), challenge: challenge, deadline: deadline}
+		var state any = &LoginServer{
+			Binding: bytes.Repeat([]byte{1}, 32),
+			Authenticate: func([]byte, bool) error {
+				t.Fatal("invalid PoW authenticated")
+				return nil
+			},
+			AuthenticateAnonymous: func() error {
+				t.Fatal("invalid PoW authenticated anonymously")
+				return nil
+			},
+			state: stateAwaitPoW, secret: secret.Seal(), challenge: challenge, deadline: deadline,
+		}
 		result := Handler(phases.LoginPoWSolution, binary.BigEndian.AppendUint64(nil, nonce), &state)
 		if result.Err == nil || !result.CloseStream || len(result.IntoWire) != 0 {
 			t.Fatal("invalid or expired proof accepted")

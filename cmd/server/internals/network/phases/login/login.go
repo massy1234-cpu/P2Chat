@@ -42,16 +42,17 @@ const (
 )
 
 type LoginServer struct {
-	Binding      []byte
-	Authenticate func([]byte, bool) error
-	Level        pow.Level
-	state        state
-	secret       *memguard.Enclave
-	challenge    *powproto.Challenge
-	nonce        *loginproto.LoginNonce
-	serverID     []byte
-	token        *memguard.Enclave
-	deadline     time.Time
+	Binding               []byte
+	Authenticate          func([]byte, bool) error
+	AuthenticateAnonymous func() error
+	Level                 pow.Level
+	state                 state
+	secret                *memguard.Enclave
+	challenge             *powproto.Challenge
+	nonce                 *loginproto.LoginNonce
+	serverID              []byte
+	blinded               [][]byte
+	deadline              time.Time
 }
 
 func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
@@ -60,7 +61,7 @@ func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 	if invalid != nil {
 		return invalid
 	}
-	if currentState == nil || len(currentState.Binding) != 32 || currentState.Authenticate == nil {
+	if currentState == nil || len(currentState.Binding) != 32 || currentState.Authenticate == nil || currentState.AuthenticateAnonymous == nil {
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("login requires connection context"))
 	}
 	if !currentState.deadline.IsZero() && time.Now().After(currentState.deadline) {
@@ -92,16 +93,49 @@ func handleRequest(result *phases.Result, currentState *LoginServer, byteCode by
 			return phases.FillResult(result, nil, 0, false, true, err)
 		}
 		defer memguard.WipeBytes(token.Message)
+		defer memguard.WipeBytes(token.Signature)
 		if err := verifyToken(token); err != nil {
-			// A stale token falls back to a fresh full login on a new stream.
 			currentState.state = stateCompleted
 			return phases.FillResult(result, [][]byte{{phases.LoginRejected}}, 0, true, false, nil)
 		}
-		currentState.token = memguard.NewEnclave(msg)
-		return sendNonce(result, currentState)
+		hasher := sha256.New()
+		_, _ = hasher.Write([]byte("P2Chat/login-pass/v1"))
+		_, _ = hasher.Write(msg)
+		var hash [32]byte
+		copy(hash[:], hasher.Sum(nil))
+		unused, err := database.TokenDeduplication(hash)
+		if err != nil {
+			return phases.FillResult(result, nil, 0, false, true, err)
+		}
+		if !unused {
+			currentState.state = stateCompleted
+			return phases.FillResult(result, [][]byte{{phases.LoginRejected}}, 0, true, false, nil)
+		}
+		if err := currentState.AuthenticateAnonymous(); err != nil {
+			return phases.FillResult(result, nil, 0, false, true, err)
+		}
+		currentState.state = stateCompleted
+		return phases.FillResult(result, [][]byte{{phases.LoginTokenRedeemed}}, 0, true, false, nil)
 	}
 	if byteCode != phases.LoginStart {
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid login start"))
+	}
+	request := &loginproto.LoginBlindRequest{}
+	if err := proto.Unmarshal(msg, request); err != nil {
+		return phases.FillResult(result, nil, 0, false, true, err)
+	}
+	if len(request.Blinded) != 3 {
+		return phases.FillResult(result, nil, 0, false, true, apperr.New("login requires three blind token requests"))
+	}
+	for _, encoded := range request.Blinded {
+		var point bls.G1Affine
+		if len(encoded) != 48 {
+			return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid blinded login point"))
+		}
+		if _, err := point.SetBytes(encoded); err != nil || point.IsInfinity() || !point.IsInSubGroup() {
+			return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid blinded login point"))
+		}
+		currentState.blinded = append(currentState.blinded, append([]byte(nil), encoded...))
 	}
 	level := currentState.Level
 	if level == 0 {
@@ -184,8 +218,13 @@ func handleProof(result *phases.Result, currentState *LoginServer, byteCode byte
 	if len(proof.BundleId) != 32 || len(proof.MldsaSignature) != mldsa87.SignatureSize || len(proof.X25519Signature) != 64 || proof.Version != currentState.nonce.Version || proof.Timestamp != currentState.nonce.Timestamp {
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid login proof fields"))
 	}
-	if (currentState.token == nil && len(proof.Blinded) != 48) || (currentState.token != nil && len(proof.Blinded) != 0) {
+	if len(proof.Blinded) != 3 || len(currentState.blinded) != 3 {
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid login blind request"))
+	}
+	for i := range currentState.blinded {
+		if !bytes.Equal(proof.Blinded[i], currentState.blinded[i]) {
+			return phases.FillResult(result, nil, 0, false, true, apperr.New("login blind request changed"))
+		}
 	}
 	stored, err := database.GetValue(proof.BundleId)
 	if err != nil {
@@ -203,54 +242,34 @@ func handleProof(result *phases.Result, currentState *LoginServer, byteCode byte
 	if err != nil || !ok || !x25519.VerifySignature(bundle.PublicBundle.IkX25519, message, proof.X25519Signature) {
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid login identity signatures"))
 	}
-	reply := &loginproto.LoginResult{}
-	tag := phases.LoginTokenRedeemed
-	if currentState.token != nil {
-		opened, err := currentState.token.Open()
-		if err != nil {
-			return phases.FillResult(result, nil, 0, false, true, err)
-		}
-		defer opened.Destroy()
-		token := &loginproto.LoginToken{}
-		if err := proto.Unmarshal(opened.Bytes(), token); err != nil {
-			return phases.FillResult(result, nil, 0, false, true, err)
-		}
-		defer memguard.WipeBytes(token.Message)
-		if err := verifyToken(token); err != nil {
-			return phases.FillResult(result, [][]byte{{phases.LoginRejected}}, 0, true, false, nil)
-		}
-		remaining, err := database.ConsumeLoginToken(token.KeyHash, token.Message, proof.BundleId, token.ExpiresAt)
-		if err != nil {
-			return phases.FillResult(result, [][]byte{{phases.LoginRejected}}, 0, true, false, nil)
-		}
-		reply.RemainingUses = remaining
-	} else {
-		keys, err := blind.GetLoginKeys()
-		if err != nil {
-			return phases.FillResult(result, nil, 0, false, true, err)
-		}
+	keys, err := blind.GetLoginKeys()
+	if err != nil {
+		return phases.FillResult(result, nil, 0, false, true, err)
+	}
+	reply := &loginproto.LoginResult{KeyHash: keys.Hash[:], ExpiresAt: keys.ExpiresAt}
+	pk := keys.Keys.Pk.Y.Bytes()
+	reply.PublicKey = pk[:]
+	for _, encoded := range currentState.blinded {
 		var point bls.G1Affine
-		if _, err := point.SetBytes(proof.Blinded); err != nil || point.IsInfinity() || !point.IsInSubGroup() {
-			return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid blinded login point"))
+		if _, err := point.SetBytes(encoded); err != nil {
+			return phases.FillResult(result, nil, 0, false, true, err)
 		}
 		signed, _ := keys.Keys.Sk.SignBlind(&point)
 		if signed == nil {
 			return phases.FillResult(result, nil, 0, false, true, apperr.New("login token signature failed"))
 		}
 		sig := signed.Bytes()
-		pk := keys.Keys.Pk.Y.Bytes()
-		reply = &loginproto.LoginResult{BlindSignature: sig[:], PublicKey: pk[:], KeyHash: keys.Hash[:], ExpiresAt: keys.ExpiresAt, RemainingUses: 3}
-		tag = phases.LoginTokenIssued
+		reply.BlindSignatures = append(reply.BlindSignatures, append([]byte(nil), sig[:]...))
 	}
 	serialized, err := proto.Marshal(reply)
 	if err != nil {
 		return phases.FillResult(result, nil, 0, false, true, err)
 	}
-	if err := currentState.Authenticate(proof.BundleId, currentState.token == nil); err != nil {
+	if err := currentState.Authenticate(proof.BundleId, true); err != nil {
 		return phases.FillResult(result, nil, 0, false, true, err)
 	}
 	currentState.state = stateCompleted
-	return phases.FillResult(result, [][]byte{append([]byte{tag}, serialized...)}, 0, true, false, nil)
+	return phases.FillResult(result, [][]byte{append([]byte{phases.LoginTokenIssued}, serialized...)}, 0, true, false, nil)
 }
 
 func verifyToken(token *loginproto.LoginToken) error {
@@ -278,7 +297,7 @@ func verifyToken(token *loginproto.LoginToken) error {
 func CheckSize(tag byte, size int) bool {
 	switch tag {
 	case phases.LoginStart:
-		return size == 0
+		return size > 0 && size <= 512
 	case phases.LoginPoWSolution:
 		return size == 8
 	case phases.LoginIdentityProof:

@@ -15,10 +15,10 @@ import (
 
 // struct for contains current IK keys loaded from database
 type CurrentID struct {
-	MLDSAPrivateKey *memguard.Enclave
-	X25519Private   *memguard.Enclave
-	PubMLDSA        *mldsa87.PublicKey
-	PubX25519       *ecdh.PublicKey
+	MLDSAPrivateKey *mldsa_keys.PrivateMLDSA
+	X25519Private   *x25519.PrivateX25519
+	PubMLDSA        *mldsa_keys.PublicMLDSA
+	PubX25519       *x25519.PublicX25519
 }
 
 // global pointer to the IK keys
@@ -75,12 +75,12 @@ func GetCurrentID() *CurrentID {
 
 // SerializeID get the CurrentIK struct and serialize it
 func SerializeID(id *CurrentID, level int, password *memguard.Enclave, HSM bool) (*identityproto.StoredServerIdentity, error) {
-	mldsaProto, err := mldsa_keys.EncryptPrivateKey(password, id.MLDSAPrivateKey, level, HSM)
+	mldsaProto, err := id.MLDSAPrivateKey.Encrypt(password, level, HSM)
 	if err != nil {
 		return nil, apperr.Wrap("error during mldsa key serialization", err)
 	}
 
-	x25519Proto, err := x25519.EncryptPrivateKey(password, id.X25519Private, level, HSM)
+	x25519Proto, err := id.X25519Private.Encrypt(password, level, HSM)
 	if err != nil {
 		return nil, apperr.Wrap("error during x25519 key serialization", err)
 	}
@@ -128,7 +128,7 @@ func DeserializeIK(s *identityproto.StoredServerIdentity, password *memguard.Enc
 	return &CurrentID{
 		MLDSAPrivateKey: mldsaEnclaved,
 		X25519Private:   x25519Enclaved,
-		PubMLDSA:        &mldsaPublic,
-		PubX25519:       x25519Public,
+		PubMLDSA:        &mldsa_keys.PublicMLDSA{Key: &mldsaPublic},
+		PubX25519:       &x25519.PublicX25519{Key: x25519Public},
 	}, nil
 }

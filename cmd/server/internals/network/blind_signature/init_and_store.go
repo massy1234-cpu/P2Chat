@@ -3,6 +3,7 @@ package blindsignature
 import (
 	"P2Chat/cmd/server/database"
 	"P2Chat/pkg/apperr"
+	"bytes"
 	"crypto/sha256"
 	"math/big"
 	"sync"
@@ -137,6 +138,20 @@ func GetCurrentPublicKey() *PublicKey {
 		return nil
 	}
 	return keys.Pk
+}
+
+// GetPublicKeyByHash returns the current registration key when its fingerprint matches.
+func GetPublicKeyByHash(hash []byte) *PublicKey {
+	pk := GetCurrentPublicKey()
+	if pk == nil {
+		return nil
+	}
+	serialized := pk.Y.Bytes()
+	fingerprint := sha256.Sum256(serialized[:])
+	if !bytes.Equal(fingerprint[:], hash) {
+		return nil
+	}
+	return pk
 }
 
 // RotateKeys generates and persists a new key before publishing it in memory.

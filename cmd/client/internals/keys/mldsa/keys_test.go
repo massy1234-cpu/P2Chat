@@ -3,11 +3,11 @@ package mldsa_keys
 import (
 	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/internals/argon"
+	"P2Chat/cmd/client/internals/encryption"
+	"P2Chat/cmd/client/internals/p2version"
+	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	data "P2Chat/cmd/client/internals/storage"
 	mldsa_data "P2Chat/cmd/client/internals/storage/mldsa_data"
-	"P2Chat/cmd/client/internals/encryption"
-	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
-	"P2Chat/cmd/client/internals/p2version"
 	"github.com/awnumar/memguard"
 	"google.golang.org/protobuf/proto"
 	"reflect"
@@ -33,12 +33,12 @@ func TestStoreKeys(t *testing.T) {
 		t.Fatal("error during key creation", err)
 	}
 
-	privateKey, err := EncryptPrivateKey(lockToEnc(t, encryption.Encaps("password")), rawPriv, 3, false)
+	privateKey, err := rawPriv.Encrypt(lockToEnc(t, encryption.Encaps("password")), 3, false)
 	if err != nil {
 		t.Fatal("error during key encryption", err)
 	}
 
-	publicKey, err := NewPublicKey(rawPub)
+	publicKey, err := rawPub.Serialize()
 	if err != nil {
 		t.Fatal("error during public key creation", err)
 	}
@@ -121,7 +121,7 @@ func TestSignature(t *testing.T) {
 		t.Fatal("error during Signature of the message", err)
 	}
 
-	verify := mldsa87.Verify(rawPub, msg, ctx, signature)
+	verify := rawPub.Verify(msg, ctx, signature)
 	if verify == false {
 		t.Fatal("error verify of the message", err)
 	}
@@ -136,12 +136,12 @@ func TestCreateKeysFields(t *testing.T) {
 		t.Fatal("error during key creation", err)
 	}
 
-	privateKeyStruct, err := EncryptPrivateKey(lockToEnc(t, encryption.Encaps("password1")), rawPriv, level, false)
+	privateKeyStruct, err := rawPriv.Encrypt(lockToEnc(t, encryption.Encaps("password1")), level, false)
 	if err != nil {
 		t.Fatal("error during key encryption", err)
 	}
 
-	publicKeyStruct, err := NewPublicKey(rawPub)
+	publicKeyStruct, err := rawPub.Serialize()
 	if err != nil {
 		t.Fatal("error during public key creation", err)
 	}
@@ -246,7 +246,7 @@ func TestDecodePrivateKeyMLDSAWrongPassword(t *testing.T) {
 		t.Fatal("error during key creation", err)
 	}
 
-	privateKeyStruct, err := EncryptPrivateKey(lockToEnc(t, encryption.Encaps("password1")), rawPriv, 3, false)
+	privateKeyStruct, err := rawPriv.Encrypt(lockToEnc(t, encryption.Encaps("password1")), 3, false)
 	if err != nil {
 		t.Fatal("error during key encryption", err)
 	}
@@ -263,7 +263,7 @@ func TestDecodePrivateKeyMLDSAInvalidKeyField(t *testing.T) {
 		t.Fatal("error during key creation", err)
 	}
 
-	privateKeyStruct, err := EncryptPrivateKey(lockToEnc(t, encryption.Encaps("password1")), rawPriv, 3, false)
+	privateKeyStruct, err := rawPriv.Encrypt(lockToEnc(t, encryption.Encaps("password1")), 3, false)
 	if err != nil {
 		t.Fatal("error during key encryption", err)
 	}

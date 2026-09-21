@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package proto_struct_commitment;
+
+import "cmd/client/internals/proto/argon/argon_params.proto";
+
+option go_package = "P2Chat/cmd/client/internals/proto_generated/commitment/proto_struct_commitment";
+
+message CommitmentSchemeUpload {
+    bytes commitment = 1;
+    bytes signature_mldsa = 2;
+    bytes signature_x25519 = 3;
+    bytes nonce = 4;
+    proto.ArgonParams argon_params = 7;     // contains the argon parameters used for pass the psk into argon
+}
+
+message CommitmentSchemePrivate {
+    CommitmentSchemeUpload upload = 1;
+    bytes psk_encrypted = 2;
+    bytes encryptionParams = 3;             // contains *keyencryption.EncryptParams, that are all the parameters used for encrypt the spk into the database
+}

@@ -1,6 +1,6 @@
 # ML-DSA Security Update
 
-> Current networking reference: see "Login implementation (2026-09-11)" below. Older architecture proposals and message sketches are retained as history and do not override that section.
+> Current networking reference: see "Login implementation (2026-09-18)" below. Older architecture proposals and message sketches are retained as history and do not override that section.
 
 ## Objective of the regression
 
@@ -2041,7 +2041,7 @@ in this phase the goal is to get the bundle of the user that we want to communic
 the client have to remember a few IP addresses that used in past for not use again those IP adresses and avoid some type of traffic analysis, for example NOT use the same IP addresses from a TOR for request 10 bundle but cycle every time
 
 for garantee that the bundle on the server is from the real user and not from an attacker or the server that replaced the keys we have 2 options :
-- commitment scheme with a secret that the users shared off the wire
+- commitment scheme with a secret that the users shared off the wire (see section "Commitment Scheme Flow & Bundle Verification (2026-09-21)" below)
 - check the safety number of the other user off the wire
 the first contact is the most vulnerable, but if we check one of these we can have the warranty that the other user is the real one so in future we will keep as trusted the public Identity Key of the other user, NOT the hash because we could expose to a **Second Preimage Attack** 
 
@@ -2559,73 +2559,105 @@ La registrazione è divisa in **due fasi su stream yamux separati**: *token regi
 - se il nickname è disponibile riceve il bundle dal `Local` (0xa3), compone `UserBundle` (id_user = hash IK, nickname, public bundle, curve/KEM public sets) → invia `BundleUpload` (0xa8) → attende `BundleConfirmation` (0xa9)
 - `Connection.BundleUpload` **non invia alcun messaggio all'apertura**: aspetta il token dal `Local` chan (la vecchia istruzione che mandava `RegisterTokenReq` è stata rimossa)
 
-### Login implementation (2026-09-11)
+### Login implementation (2026-09-18)
 
-This section describes the current event-driven implementation. The earlier synchronous Connection.Login and the experimental PutRouterWithState approach have been removed.
+Login is event-driven and has two deliberately different paths. A full login proves ownership of an already registered BundleID and pays a heavy PoW; after that proof the server blindly signs three independent one-use Pass Tokens. A quick login presents one Pass Token and is anonymous: it sends no BundleID and no ML-DSA/XEdDSA proof, so the server cannot link redemption to the full login that issued it.
 
-The implemented order follows the latest client flow: TLS/yamux → server identification → access PoW → registered-bundle proof → authenticated connection and Login Token. The earlier proposal below is retained as design history; it placed the PoW before identification instead.
+The order is TLS/yamux → server identification → login. Production full login defaults to PoW Level5 (current preset: 128 MiB Argon2id, difficulty 11, expected roughly five minutes on the reference hardware) with a ten-minute response deadline. Solve time is probabilistic and hardware-dependent; this is a cost target, not a guaranteed minimum wall-clock delay. Identification still precedes PoW, so the flow does not prevent TCP, TLS or identification flooding.
 
-Client and server use `network/phases/login`, state-specific `handle*` functions and the existing PoW/identity-signature libraries. Login bytecodes are `0x0a` access request, `0x0b` PoW challenge, `0x0c` solution, `0x0d` server nonce, `0x0e` dual identity proof, `0x0f` blind token emission, `0x10` reconnect token, `0x11` accepted reconnect and `0x12` token rejection/fallback. Messages are protobuf (`proto/login/login.proto`).
+Full login works as follows:
 
-On every new connection the client verifies the server's nonce/TLS-exporter proof, including for known IPs. Unknown identities are automatically trusted and logged only after successful cryptographic verification. A changed address with the same verified identity updates the saved address. A different verified identity on an already pinned endpoint is rejected, recorded in the blacklist and never overwrites that endpoint's pin. An invalid signature alone does not blacklist the claimed identity, to avoid poisoning an existing pin.
+1. The client creates three random 64-byte messages and three independent BLS blinding factors, then sends the three 48-byte blinded points in `LoginStart`.
+2. The server validates the three curve points and issues the Level5 PoW challenge.
+3. After a valid solution the server returns a fresh login nonce.
+4. The client signs a domain-separated message containing version, timestamp, serverID, TLS exporter binding, BundleID, nonce and all three blinded points with both its ML-DSA and X25519/XEdDSA identity keys.
+5. The server loads `BundleID → UserBundle` from Badger, verifies both signatures and verifies that the points in the proof are byte-for-byte equal to those supplied before the PoW.
+6. The server blindly signs all three points with the dedicated login BLS key, authenticates this full-login connection as the proven BundleID and returns the three blind signatures plus public-key metadata.
+7. The client unblinds and verifies every signature, builds three independent `LoginToken` protobufs and stores them under the identified server in bbolt.
 
-Client BoltDB stores serialized key:value records:
+The login BLS key is separate from registration, memory-only and valid for a 24-hour signing epoch. Tokens contain the random message, unblinded signature, signing-key hash, epoch expiry and serverID. A server restart loses the login key and invalidates outstanding Pass Tokens.
 
-- `server:identities`: serverID → msgpack identity/public keys (without transient signatures).
-- `server:endpoints`: configured host:port → serverID.
-- `server:observed-ip`: serverID → msgpack endpoint and IP. IP is populated only for numeric configured addresses; Tor-resolved hostnames/onion addresses do not expose a destination IP to the client.
-- `server:blacklist`: serverID → msgpack reason, endpoint and timestamp.
-- `server:login-bundle`: serverID → msgpack local key-directory number and registered cryptographic BundleID. This is saved after confirmed registration or a successful login with explicitly selected existing keys.
+Quick login works as follows:
 
-These are actual Bolt buckets, each with its own key:value namespace. Endpoint is a host:port string in Connection, converted to bytes when used as a DB key. The endpoint bucket answers "which identity was pinned at this address?", while observed-ip answers "what is the latest saved address of this identity?". Moving the same verified identity from A to B preserves A→ID, adds B→ID and updates ID→B. LoginBundle contains the local key-directory number and the raw 32-byte BundleID, not the full public bundle.
+1. The client loads one serialized Pass Token for the identified server and sends only `LoginTokenRedemption`.
+2. The server verifies token fields, signing epoch and BLS signature.
+3. The server calculates `SHA256("P2Chat/login-pass/v1" || serializedToken)` and passes it to `TokenDeduplication`.
+4. A new hash is atomically stored as spent and the connection becomes authenticated anonymously. An existing hash is rejected.
+5. The client deletes the local token after either acceptance or explicit rejection. Deleting a rejected token handles the case where the server consumed it but the earlier acceptance response was lost. When no tokens remain, the client performs another full login.
 
-The user is centralizing bucket creation at startup: database.Init opens the DB and calls CreateBuckets for identities, endpoints, observed-ip and blacklist. SaveKnownServer accesses them with tx.Bucket inside a transaction. SaveLoginBundle still creates its own bucket lazily; SaveServerID retains its legacy lazy path. Bucket handles and bytes returned by Get are transaction-scoped; copy returned bytes if they must outlive the transaction.
+A quick-login connection has `Authed=true` and an `AuthenticatedUser` marked `Anonymous`; it is not inserted in `activeUsers[BundleID]`. Therefore a Pass Token is a bearer credential: possession is sufficient, the first valid redeemer wins, and the server learns no account identity from redemption. A full-login connection remains associated with the proven BundleID for that connection.
 
-**Working-tree issue at this documentation update:** CreateBuckets is not yet compilable because its Update callback lacks the final return nil (confirmed by go test -run '^$' ./cmd/client/database). SaveKnownServer assumes all four buckets exist; test fixtures that assign DB directly must initialize them. These code changes were left untouched by this documentation-only update.
+`LoginTokenRecord`, use counters, `ConsumeLoginToken` and the `login:tokens:` records have been removed. Three separately blinded one-use credentials replace one linkable three-use credential. The server never stores a serialized Pass Token, only its domain-separated hash in the existing token-deduplication database.
 
-Two identification details remain unchanged: the client verifies the key-derived hash but does not explicitly compare received keys byte-for-byte with the deserialized saved keys; the empty-endpoint fallback to SaveServerID still exists. Automatic first-contact acceptance is TOFU, not independent proof that an unknown identity belongs to the intended operator.
-
-Full login uses the existing Level5 access PoW with a ten-minute deadline (the expected solving time depends on hardware and chance). A fresh nonce then binds both ML-DSA and X25519/XEdDSA signatures to the protocol domain, version, server timestamp, serverID, TLS binding, BundleID and blinded token request. Verification uses only the public bundle already stored under BundleID in Badger. Missing bundles, incorrect passwords and invalid signatures abort; they do not silently trigger a new registration.
-
-Login Token signing uses a dedicated blind BLS key, independent of registration. The key lives in memory for up to 24 hours; server restart invalidates outstanding tokens. After unblinding and verification, the phase emits the serialized token with its completion event. The orchestrator immediately seals it into a memguard enclave, wipes the event bytes and retains the enclave in `ConnectionManager.LoginToken`. For quick login, completion carries only the remaining count; the orchestrator retains or drops its existing token.
-
-Login uses the existing byte-only Router pattern, without state injection or new session APIs. `Connection.Login()` opens a stream, assigns `login.Handler`, starts the session and injects `StartLogin` through `PutRouter`. The handler creates its own private state. It emits `NotifyReady`; the orchestrator replies with `Parameters` containing only binding, verified serverID, BundleID and the fast-login flag. Fast login requests the serialized pass token through `NotifyPassToken`/`PassToken`; transient token payloads are wiped after handling. PoW and signing use `NotifySolvePoW`/`PoWSolution` and `NotifySignProof`/`SignedProof`, matching bundle upload's local challenge-signing pattern. Private keys and passwords stay with the orchestrator, never in phase state or Router payloads. Helpers in the login package load credentials, solve cancellable PoW and sign proofs. The phase builds wire replies and emits `NotifyCompleted` (remaining-use byte, then an optional new token) or `NotifyTokenRejected`. The CLI handles cancellation, persistence and retries. Server identification remains separate. All new event tags are local; the network protocol is unchanged.
-
-The local exchange is:
+Login uses the existing byte-only Router. `Connection.Login()` opens a stream, assigns `login.Handler`, calls `Init` and injects `StartLogin`. The phase requests public parameters from the orchestrator, requests cancellable PoW solving and requests identity signatures; passwords and private keys remain outside phase state. `NotifyCompleted` has no counter: on full login it carries a serialized `LoginTokenBatch`, while on quick login it contains only the notification byte.
 
 | Local bytecode | Direction | Meaning |
 |---|---|---|
-| StartLogin 0xc1 | Connection → Router | Start phase; Handler creates its state. |
-| NotifyReady 0xc8 / Parameters 0xc4 | Phase → main / main → Router | Supply 97 public bytes: binding32 + serverID32 + BundleID32 + fast flag1. |
-| NotifyPassToken 0xc9 / PassToken 0xc5 | Phase → main / main → Router | Supply the existing serialized token for quick login. |
-| NotifySolvePoW 0xca / PoWSolution 0xc6 | Phase → main / main → Router | Challenge protobuf out; eight-byte big-endian solution back. |
-| NotifySignProof 0xcb / SignedProof 0xc7 | Phase → main / main → Router | Signing message out; protobuf containing the two signatures back. |
-| NotifyCompleted 0xc2 | Phase → main | Remaining-use byte followed by optional newly issued token bytes. |
-| NotifyTokenRejected 0xc3 | Phase → main | End this attempt; main decides whether to retry without a token. |
+| StartLogin `0xc1` | Connection → Router | Start phase; Handler creates its state. |
+| NotifyReady `0xc8` / Parameters `0xc4` | Phase → main / main → Router | binding32 + serverID32 + BundleID32 + fast flag1. |
+| NotifyPassToken `0xc9` / PassToken `0xc5` | Phase → main / main → Router | Supply one serialized Pass Token. |
+| NotifySolvePoW `0xca` / PoWSolution `0xc6` | Phase → main / main → Router | Challenge protobuf out; uint64BE solution back. |
+| NotifySignProof `0xcb` / SignedProof `0xc7` | Phase → main / main → Router | Full-login signing message out; dual signatures back. |
+| NotifyCompleted `0xc2` | Phase → main | Empty on quick success; followed by `LoginTokenBatch` on full success. |
+| NotifyTokenRejected `0xc3` | Phase → main | The supplied Pass Token is invalid, expired or already spent. |
 
-PutRouter sends to Local, not the network. Handler Replies are forwarded through PutOutgoing to the Writer. Events return to the orchestrator. main.runLogin/main.waitLogin manage these exchanges and PoW cancellation; LoginClient has no password, private-key or context fields.
+#### Client bbolt structure
 
-File responsibilities: connection/login.go is only the entry point; phases/login/login.go holds states/Handler/CheckSize; helpers.go handles transitions and wire replies; identity.go provides orchestrator credential/signature helpers; pow.go provides challenge decoding and cancellable solving. Closing the phase stream does not close the authenticated TLS/yamux connection.
+The client database is `<project-root>/database.db`. It uses real nested bbolt buckets:
 
-For quick login, the token replaces the PoW. The server identification and dual identity proof remain, so a copied token is not sufficient to impersonate a bundle. A quick login does not issue a replacement token. Badger stores `login:tokens:<keyHash><SHA-256(message)>` → msgpack remaining uses, expiry, last use and BundleID. The first successful redemption creates the record with two uses left; the next two reduce it to zero. The record remains at zero until the signing epoch expires to prevent reuse resetting the counter; Badger can then expire the record because the token is no longer accepted. The read/decrement/write is atomic and serialized against concurrent redemptions. Invalid, expired or exhausted tokens trigger a new full login; a valid account proof is required before a token use is consumed.
+```text
+servers
+└── <ServerID:32>
+    ├── identity       → MessagePack verified server identity
+    ├── endpoint       → host:port
+    ├── observed-ip    → latest numeric IP when available
+    ├── login-bundle   → raw BundleID:32
+    ├── pass-tokens
+    │   ├── 0x01       → serialized LoginToken
+    │   ├── 0x02       → serialized LoginToken
+    │   └── 0x03       → serialized LoginToken
+    └── users
+        └── <nickname> → protobuf UserBundle
 
-The server's `Client.Authed` is an `atomic.Bool`, shared with its connection: only successful full/quick login sets it to true, and connection closure resets it. Future features check `client.Authed.Load()`. The authenticated connection also holds BundleID, login time, proof type and last observed phase activity. `ActiveConnections(BundleID)` counts the user's active authenticated connections; closing one removes only that connection. The dispatcher permits identification, registration and login before authentication and requires the auth flag for other registered phases. At most one login runs per connection and at most four expensive login proof/PoW verifications run concurrently.
+server:blacklist
+└── <ServerID:32>      → MessagePack reason, endpoint and timestamp
 
-Badger has no Bolt-style buckets here: its records are distinguished by key prefixes. During registration, SaveBundle writes raw BundleID→protobuf UserBundle, nickname:<name>→BundleID, and BundleID + :curve:/:kem: + uint32BE index→public set. Login deserializes that existing public payload to verify signatures; it does not register a replacement bundle.
-
-The token DB key uses the raw signing-key hash and SHA256(message), not a serialized token or a hash used as encryption. First redemption binds the token to the proven BundleID; before that point another registered user could redeem a transferred token with their own keys. Zero-use records remain until expiry. Tokens expire at the signing epoch boundary, not necessarily 24 hours after issuance. ActiveConnections is a count, not a per-user connection limit; LastSeen updates on phase starts, and offline status depends on transport detection of disconnect.
-
-CLI usage from the project root (password is read without echo; currently exactly 32 bytes):
-
-```sh
-go run ./cmd/client -server 151.64.120.32 -port 9000 -nickname alice
-go run ./cmd/client -server 151.64.120.32 -port 9000
-go run ./cmd/client -server 151.64.120.32 -port 9000 -bundle 3
+private:bundles
+└── <BundleID:32>
+    ├── private-bundle → MessagePack PrivateBundle
+    ├── curve-sets
+    │   └── uint32BE(index) → serialized private curve set
+    └── kem-sets
+        └── uint32BE(index) → serialized private KEM set
 ```
 
-The first command registers when no local association exists, then logs in. Later runs use the saved association. `-bundle` explicitly selects previously registered identity-key files, using their original password. Automatic reconnect scheduling is still future work; after separate identification on a new connection, starting the login phase with the retained token supports the fast path. TLS test configuration remains unchanged. The PoW is after identification, so this flow does not protect the identification response or TCP/TLS handshake from flooding.
+`SavePassTokens` replaces the server's `pass-tokens` bucket atomically with exactly three entries. `LoadPassToken` returns the lowest remaining slot and `DeletePassToken` removes the acknowledged or rejected slot. Serialized Pass Tokens are bearer secrets and are currently stored as raw protobuf values in bbolt; protobuf serialization is not encryption.
 
-Tests cover both phase handlers, rejection of invalid signatures/bindings/PoW, three-use exhaustion, concurrent token redemption, persistence of spent counters across DB reopen, automatic pinning/address updates, and quick login over TLS/yamux with multi-connection presence cleanup. Tests use a low PoW preset to avoid spending minutes per test; production login defaults to Level5.
+#### Server Badger structure
+
+Badger has no bucket hierarchy; both server stores are flat key:value namespaces organized by binary prefixes.
+
+`<project-root>/data/database/` contains:
+
+```text
+"SERVER_IK"                                      → protobuf StoredServerIdentity
+<BundleID:32>                                    → protobuf UserBundle
+"nickname:" || nickname                         → BundleID:32
+BundleID || ":curve:" || uint32BE(index)         → serialized public curve set
+BundleID || ":kem:"   || uint32BE(index)         → serialized public KEM set
+```
+
+`<project-root>/data/token_db/` contains:
+
+```text
+"privateBlindKey"                               → encrypted registration blind key
+<registration-token hash:32>                    → 0x01
+SHA256("P2Chat/login-pass/v1" || LoginToken)     → 0x01
+```
+
+Registration-token and Pass-Token deduplication share the same physical Badger database. Pass Token hashes are domain-separated before entering the flat 32-byte keyspace. `TokenDeduplication` performs the presence check and insertion atomically under its existing mutex; no BundleID, token body, use counter or timestamp is stored for a spent Pass Token.
+
+Tests cover three-token emission after PoW plus bundle proof, blind-signature verification, anonymous first redemption, rejection of token reuse and client bbolt token ordering/deletion. Tests inject Level1 so the suite remains fast; production defaults to Level5.
 
 ### Earlier access login and DDoS filtering proposal
 
@@ -2754,3 +2786,36 @@ this make me think about the real gain of paralelization and real benefits for t
 the idea was infact start (in goroutiness) the bundle creation before the initialization of another session with yamux with the server for seding the bundle
 
 this result make me thought about the benefits and my conclusions was that 0.35 ms is so a short time and so an implementation for create a parallelis for bundle sending and bundle creation could be overkill but i will implement a solution which can still support and implement parallisation for future feature that i will implement and that will benefit of this implementation
+
+### Commitment Scheme Flow & Bundle Verification (2026-09-21)
+
+To protect against key substitution attacks (e.g. a malicious server or Man-In-The-Middle replacing public identity keys in the user bundle), the protocol provides a cryptographic **Commitment Scheme** based on an out-of-band shared secret (pre-shared password):
+
+#### 1. Creation flow (Bundle Owner / Sender)
+1. **Password selection**: The user selects a password/passphrase and shares it with the intended contact through an out-of-band, secure channel (off the wire).
+2. **KDF derivation (Argon2id)**: The sender derives the Pre-Shared Key (PSK, 64 bytes) using Argon2id with default high security level (`Level 3`: Time=6, Memory=1GB, Threads=NumCPU) and a fresh 32-byte salt (`HashWithArgon` / `CreateArgonParams`).
+3. **Commitment creation (`Commitment(...)`)**:
+   - The PSK buffer is used as the key for a **BLAKE2b-256** keyed hash over:
+     - Domain separator (`P2Chat/commitment/v1`)
+     - Random 32-byte nonce
+     - ML-DSA-87 public identity key bytes
+     - X25519 public identity key bytes
+   - The computed commitment hash is dual-signed by the sender's identity keys:
+     - Signed with `ML-DSA-87` (using context `"commitment_scheme_mldsa"`)
+     - Signed with `X25519` (via XEdDSA)
+   - The output is organized into:
+     - `CommitmentSchemeUpload` (public payload attached to the user bundle): contains the commitment hash, both signatures, the nonce, and the public `ArgonParams` (including the salt and level).
+     - `CommitmentSchemePrivate` (local/private storage): wraps the upload scheme and stores the PSK encrypted with `keyencryption.Encrypt` (password- or HSM-backed) to be saved in the client's private database.
+
+#### 2. Verification flow (Bundle Recipient)
+1. **Bundle retrieval**: The recipient downloads the contact's bundle from the server, which contains `CommitmentSchemeUpload` and the public identity keys (ML-DSA and X25519).
+2. **Deriving the matching KDF**: The recipient enters the same password shared out-of-band. Using the `salt` from the bundle's `ArgonParams` and the predefined default Argon2id level (`Level 3`), the recipient executes `DeriveWithArgon` to reconstruct the exact same 64-byte PSK in protected memory (`*memguard.LockedBuffer`).
+3. **Commitment verification (`VerifyCommitment(...)`)**:
+   - Recomputes the expected BLAKE2b-256 hash using the recipient-derived PSK, the nonce from the bundle, and the public identity keys from the bundle.
+   - Compares the expected hash with the bundle's commitment using constant-time comparison (`hmac.Equal`).
+   - Verifies the ML-DSA signature over the commitment hash against the bundle's ML-DSA public key.
+   - Verifies the X25519/XEdDSA signature over the commitment hash against the bundle's X25519 public key.
+
+#### 3. Verification decision
+- **Valid (Match)**: If the commitment hash matches AND both identity signatures are valid, the bundle is confirmed authentic. The identity keys legitimately belong to the expected user, completely ruling out server-side key replacement or MITM. The identity keys can then be safely pinned and trusted locally.
+- **Invalid (Mismatch / Error)**: If the password differs, if the commitment hash does not match, or if either signature fails verification, the bundle is immediately rejected as compromised or untrusted.

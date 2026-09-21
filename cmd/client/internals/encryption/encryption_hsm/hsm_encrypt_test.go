@@ -13,15 +13,15 @@ func TestEncryptDecryptSoftwareRoundTrip(t *testing.T) {
 	secret := []byte("private-key-material")
 	plaintext := memguard.NewEnclave(append([]byte(nil), secret...))
 
-	ciphertext, nonce, salt, method, err := Encrypt(password, plaintext, 1, false)
+	ciphertext, params, err := Encrypt(password, plaintext, 1, false)
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
-	if method != 0 || len(nonce) == 0 || len(salt) != 32 {
-		t.Fatalf("unexpected metadata: method=%d nonce=%d salt=%d", method, len(nonce), len(salt))
+	if params.HSMMethod != 0 || len(params.Nonce) == 0 || len(params.Salt) != 32 {
+		t.Fatalf("unexpected metadata: method=%d nonce=%d salt=%d", params.HSMMethod, len(params.Nonce), len(params.Salt))
 	}
 
-	decrypted, err := Decrypt(password, ciphertext, nonce, salt, 1, method)
+	decrypted, err := Decrypt(password, ciphertext, params)
 	if err != nil {
 		t.Fatalf("Decrypt: %v", err)
 	}

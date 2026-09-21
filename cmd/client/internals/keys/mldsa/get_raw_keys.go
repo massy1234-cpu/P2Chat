@@ -9,7 +9,7 @@ import (
 )
 
 // DecodePublicKey converts the packed public-key bytes from the protobuf payload into a raw ML-DSA public key
-func DecodePublicKey(publicKey *struct_mldsa.PublicKeyMLDSA) (*mldsa87.PublicKey, error) {
+func DecodePublicKey(publicKey *struct_mldsa.PublicKeyMLDSA) (*PublicMLDSA, error) {
 	var rawKey mldsa87.PublicKey
 
 	err := rawKey.UnmarshalBinary(publicKey.Key)
@@ -17,14 +17,14 @@ func DecodePublicKey(publicKey *struct_mldsa.PublicKeyMLDSA) (*mldsa87.PublicKey
 		return nil, apperr.Wrap("convert bytes in public key", err)
 	}
 
-	return &rawKey, nil
+	return &PublicMLDSA{Key: &rawKey}, nil
 
 }
 
 // DecodePrivateKey decrypts the stored private-key payload and returns it sealed
 // in a memguard Enclave until the caller explicitly opens it. It derives the AES
 // key via Argon2id or decrypts through the HSM, depending on how the key was protected.
-func DecodePrivateKey(password *memguard.Enclave, privateKey *struct_mldsa.PrivateKeyMLDSA) (*memguard.Enclave, error) {
+func DecodePrivateKey(password *memguard.Enclave, privateKey *struct_mldsa.PrivateKeyMLDSA) (*PrivateMLDSA, error) {
 	if password == nil {
 		return nil, apperr.New("password is nil")
 	}
@@ -36,15 +36,20 @@ func DecodePrivateKey(password *memguard.Enclave, privateKey *struct_mldsa.Priva
 		return nil, apperr.New("argon parameters are nil")
 	}
 
-	plaintext, err := hsm.Decrypt(password, privateKey.Key, privateKey.Nonce, privateKey.ArgonParams.Salt, int(privateKey.ArgonParams.Level), privateKey.HsmMethod)
+	plaintext, err := hsm.Decrypt(password, privateKey.Key, &hsm.EncryptParams{
+		Nonce:      privateKey.Nonce,
+		Salt:       privateKey.ArgonParams.Salt,
+		ArgonLevel: int(privateKey.ArgonParams.Level),
+		HSMMethod:  privateKey.HsmMethod,
+	})
 	if err != nil {
 		return nil, apperr.Wrap("decrypt ML-DSA private key", err)
 	}
-	return plaintext, nil
+	return &PrivateMLDSA{Enclave: plaintext}, nil
 }
 
 // DecodePairKeys decodes the public key and decrypts the private key together.
-func DecodePairKeys(publicKey *struct_mldsa.PublicKeyMLDSA, privateKey *struct_mldsa.PrivateKeyMLDSA, password *memguard.Enclave) (*mldsa87.PublicKey, *memguard.Enclave, error) {
+func DecodePairKeys(publicKey *struct_mldsa.PublicKeyMLDSA, privateKey *struct_mldsa.PrivateKeyMLDSA, password *memguard.Enclave) (*PublicMLDSA, *PrivateMLDSA, error) {
 	rawPublicKey, err := DecodePublicKey(publicKey)
 	if err != nil {
 		return nil, nil, apperr.Wrap("decode ml-dsa87 public key from file", err)

@@ -88,17 +88,17 @@ func (sk *PrivateKey) EncryptKey(password *memguard.Enclave, level int, useHSM b
 		return nil, apperr.New("private key is nil")
 	}
 
-	ciphertext, nonce, salt, method, err := keyencryption.Encrypt(password, sk.x, level, useHSM)
+	ciphertext, params, err := keyencryption.Encrypt(password, sk.x, level, useHSM)
 	if err != nil {
 		return nil, apperr.Wrap("encrypt blind signature private key", err)
 	}
 
 	return &PrivateKeyEncrypted{
 		Key:        ciphertext,
-		Nonce:      nonce,
-		Salt:       salt,
-		ArgonLevel: level,
-		HSMMethod:  method,
+		Nonce:      params.Nonce,
+		Salt:       params.Salt,
+		ArgonLevel: params.ArgonLevel,
+		HSMMethod:  params.HSMMethod,
 	}, nil
 }
 
@@ -108,7 +108,12 @@ func (sk *PrivateKeyEncrypted) DecryptKey(password *memguard.Enclave) (*PrivateK
 		return nil, apperr.New("encrypted private key is nil")
 	}
 
-	enclave, err := keyencryption.Decrypt(password, sk.Key, sk.Nonce, sk.Salt, sk.ArgonLevel, sk.HSMMethod)
+	enclave, err := keyencryption.Decrypt(password, sk.Key, &keyencryption.EncryptParams{
+		Nonce:      sk.Nonce,
+		Salt:       sk.Salt,
+		ArgonLevel: sk.ArgonLevel,
+		HSMMethod:  sk.HSMMethod,
+	})
 	if err != nil {
 		return nil, apperr.Wrap("decrypt blind signature private key", err)
 	}

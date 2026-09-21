@@ -10,7 +10,7 @@ import (
 )
 
 // SaveBundle stores the public user bundle and its one-time public sets.
-func SaveBundle(bundle *bundleStruct.UserBundle, curvePublicSets, kemPublicSets [][]byte, idBundle [32]byte) error {
+func SaveBundle(bundle *bundleStruct.UserBundle, curvePublicSets []*bundleStruct.CurveSet, kemPublicSets []*bundleStruct.PqkemSet, idBundle [32]byte) error {
 	if !IsInitialized() {
 		return apperr.New("database not initialized")
 	}
@@ -23,7 +23,7 @@ func SaveBundle(bundle *bundleStruct.UserBundle, curvePublicSets, kemPublicSets 
 	}
 
 	return db_manager.Update(func(txn *badger.Txn) error {
-		nicknameKey := append([]byte("nickname:"), bundle.GetNickname()...)
+		nicknameKey := append([]byte("nickname:"), []byte(bundle.GetNickname())...)
 		if err := txn.Set(nicknameKey, idBundle[:]); err != nil {
 			return err
 		}
@@ -33,13 +33,21 @@ func SaveBundle(bundle *bundleStruct.UserBundle, curvePublicSets, kemPublicSets 
 		}
 
 		for i, value := range curvePublicSets {
-			if err := txn.Set(publicSetKey(idBundle, "curve", uint32(i)), value); err != nil {
+			serialized, err := proto.Marshal(value)
+			if err != nil {
+				return err
+			}
+			if err := txn.Set(publicSetKey(idBundle, "curve", uint32(i)), serialized); err != nil {
 				return err
 			}
 		}
 
 		for i, value := range kemPublicSets {
-			if err := txn.Set(publicSetKey(idBundle, "kem", uint32(i)), value); err != nil {
+			serialized, err := proto.Marshal(value)
+			if err != nil {
+				return err
+			}
+			if err := txn.Set(publicSetKey(idBundle, "kem", uint32(i)), serialized); err != nil {
 				return err
 			}
 		}

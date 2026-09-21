@@ -73,7 +73,7 @@ func (c *Connection) AssignHandler(sess *session.SingleSession, ID uint32) {
 				return phases.FillResult(&phases.Result{}, nil, 0, false, true, apperr.New("login unavailable on this connection"))
 			}
 			go func() { <-sess.Done; c.LoginInProgress.CompareAndSwap(sess, nil) }()
-			*state = &login.LoginServer{Binding: c.Binding, Authenticate: c.Authenticate}
+			*state = &login.LoginServer{Binding: c.Binding, Authenticate: c.Authenticate, AuthenticateAnonymous: c.AuthenticateAnonymous}
 		default:
 			if c.Authed == nil || !c.Authed.Load() {
 				return phases.FillResult(&phases.Result{}, nil, 0, false, true, apperr.New("authentication required"))

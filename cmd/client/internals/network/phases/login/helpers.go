@@ -34,13 +34,30 @@ func handleRequest(result *phases.Result, current *LoginClient, tag byte, msg []
 	current.bundleID = append([]byte(nil), msg[64:96]...)
 	current.fast = msg[96] == 1
 
-	// check if the pass token is present for fast login
 	if current.fast {
 		current.state = stateAwaitPassToken
 		return phases.FillResult(result, nil, 30*time.Second, false, false, [][]byte{{NotifyPassToken}}, nil)
 	}
+	request := &loginproto.LoginBlindRequest{}
+	for range 3 {
+		state, point, err := blind.CreateAndBlind()
+		if err != nil {
+			wipeBlindStates(current)
+			return phases.FillResult(result, nil, 0, false, true, nil, err)
+		}
+		current.blindStates = append(current.blindStates, state)
+		encoded := point.Bytes()
+		blinded := append([]byte(nil), encoded[:]...)
+		current.blinded = append(current.blinded, blinded)
+		request.Blinded = append(request.Blinded, blinded)
+	}
+	serialized, err := proto.Marshal(request)
+	if err != nil {
+		wipeBlindStates(current)
+		return phases.FillResult(result, nil, 0, false, true, nil, err)
+	}
 	current.state = stateAwaitPoW
-	return phases.FillResult(result, [][]byte{{phases.LoginStart}}, 30*time.Second, false, false, nil, nil)
+	return phases.FillResult(result, [][]byte{append([]byte{phases.LoginStart}, serialized...)}, 30*time.Second, false, false, nil, nil)
 }
 
 func handlePassToken(result *phases.Result, current *LoginClient, tag byte, msg []byte) *phases.Result {
@@ -53,10 +70,11 @@ func handlePassToken(result *phases.Result, current *LoginClient, tag byte, msg 
 		return phases.FillResult(result, nil, 0, false, true, nil, err)
 	}
 	defer memguard.WipeBytes(token.Message)
+	defer memguard.WipeBytes(token.Signature)
 	if !bytes.Equal(token.ServerId, current.serverID) {
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("login token belongs to another server"))
 	}
-	current.state = stateAwaitNonce
+	current.state = stateAwaitToken
 	return phases.FillResult(result, [][]byte{append([]byte{phases.LoginTokenRedemption}, msg...)}, 30*time.Second, false, false, nil, nil)
 }
 
@@ -87,21 +105,12 @@ func handleNonce(result *phases.Result, current *LoginClient, tag byte, msg []by
 	if err := proto.Unmarshal(msg, nonce); err != nil {
 		return phases.FillResult(result, nil, 0, false, true, nil, err)
 	}
-	if len(nonce.Nonce) != 32 || nonce.Version != uint32(p2version.GetVersion()) || nonce.Timestamp <= 0 {
+	if len(nonce.Nonce) != 32 || nonce.Version != uint32(p2version.GetVersion()) || nonce.Timestamp <= 0 || len(current.blindStates) != 3 {
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid login nonce"))
 	}
-	proof := &loginproto.LoginProof{BundleId: current.bundleID, Timestamp: nonce.Timestamp, Version: nonce.Version}
-	if !current.fast {
-		st, point, err := blind.CreateAndBlind()
-		if err != nil {
-			return phases.FillResult(result, nil, 0, false, true, nil, err)
-		}
-		current.blindState = st
-		encoded := point.Bytes()
-		proof.Blinded = encoded[:]
-	}
+	proof := &loginproto.LoginProof{BundleId: current.bundleID, Timestamp: nonce.Timestamp, Version: nonce.Version, Blinded: current.blinded}
 	current.proof = proof
-	message := loginproto.SigningMessage(current.serverID, current.binding, current.bundleID, nonce, proof.Blinded)
+	message := loginproto.SigningMessage(current.serverID, current.binding, current.bundleID, nonce, current.blinded)
 	current.state = stateAwaitSigned
 	return phases.FillResult(result, nil, 30*time.Second, false, false, [][]byte{append([]byte{NotifySignProof}, message...)}, nil)
 }
@@ -128,51 +137,76 @@ func handleSigned(result *phases.Result, current *LoginClient, tag byte, msg []b
 }
 
 func handleToken(result *phases.Result, currentState *LoginClient, byteCode byte, msg []byte) *phases.Result {
-	var tokenBytes []byte
+	if currentState.fast {
+		if byteCode != phases.LoginTokenRedeemed || len(msg) != 0 {
+			return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid fast login response"))
+		}
+		currentState.state = stateCompleted
+		p2log.Info("anonymous pass-token login completed")
+		return phases.FillResult(result, nil, 0, true, false, [][]byte{{NotifyCompleted}}, nil)
+	}
+	defer wipeBlindStates(currentState)
 	reply := &loginproto.LoginResult{}
 	if err := proto.Unmarshal(msg, reply); err != nil {
 		return phases.FillResult(result, nil, 0, false, true, nil, err)
 	}
-	if currentState.fast {
-		if byteCode != phases.LoginTokenRedeemed || reply.RemainingUses > 2 {
-			return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid fast login response"))
-		}
-	} else {
-		if byteCode != phases.LoginTokenIssued || currentState.blindState == nil || len(reply.BlindSignature) != 48 || len(reply.PublicKey) != 96 || len(reply.KeyHash) != 32 || reply.RemainingUses != 3 || reply.ExpiresAt <= time.Now().Unix() {
-			return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid login token emission"))
-		}
-		hash := sha256.Sum256(reply.PublicKey)
-		if !bytes.Equal(hash[:], reply.KeyHash) {
-			return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("login public key hash mismatch"))
-		}
+	if byteCode != phases.LoginTokenIssued || len(currentState.blindStates) != 3 || len(reply.BlindSignatures) != 3 || len(reply.PublicKey) != 96 || len(reply.KeyHash) != 32 || reply.ExpiresAt <= time.Now().Unix() {
+		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid login token emission"))
+	}
+	hash := sha256.Sum256(reply.PublicKey)
+	if !bytes.Equal(hash[:], reply.KeyHash) {
+		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("login public key hash mismatch"))
+	}
+	var public serverblind.PublicKey
+	if _, err := public.Y.SetBytes(reply.PublicKey); err != nil || public.Y.IsInfinity() || !public.Y.IsInSubGroup() {
+		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid login public key"))
+	}
+	batch := &loginproto.LoginTokenBatch{}
+	for i, blindSignature := range reply.BlindSignatures {
 		var point bls.G1Affine
-		var public serverblind.PublicKey
-		if _, err := point.SetBytes(reply.BlindSignature); err != nil || point.IsInfinity() || !point.IsInSubGroup() {
+		if _, err := point.SetBytes(blindSignature); err != nil || point.IsInfinity() || !point.IsInSubGroup() {
 			return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid login blind signature"))
 		}
-		if _, err := public.Y.SetBytes(reply.PublicKey); err != nil || public.Y.IsInfinity() || !public.Y.IsInSubGroup() {
-			return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid login public key"))
-		}
-		sig := currentState.blindState.Unblind(&point)
-		ok, err := serverblind.Verify(&public, currentState.blindState.Msg, &sig)
+		sig := currentState.blindStates[i].Unblind(&point)
+		ok, err := serverblind.Verify(&public, currentState.blindStates[i].Msg, &sig)
 		if err != nil || !ok {
 			return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("login token verification failed"))
 		}
 		encoded := sig.Bytes()
-		token := &loginproto.LoginToken{Message: currentState.blindState.Msg, Signature: encoded[:], KeyHash: reply.KeyHash, ExpiresAt: reply.ExpiresAt, ServerId: currentState.serverID}
-		serialized, err := proto.Marshal(token)
-		if err != nil {
-			return phases.FillResult(result, nil, 0, false, true, nil, err)
-		}
-		tokenBytes = serialized
-		memguard.WipeBytes(currentState.blindState.Msg)
-		currentState.blindState = nil
+		batch.Tokens = append(batch.Tokens, &loginproto.LoginToken{Message: currentState.blindStates[i].Msg, Signature: encoded[:], KeyHash: reply.KeyHash, ExpiresAt: reply.ExpiresAt, ServerId: currentState.serverID})
+	}
+	serialized, err := proto.Marshal(batch)
+	if err != nil {
+		return phases.FillResult(result, nil, 0, false, true, nil, err)
 	}
 	currentState.state = stateCompleted
-	p2log.Info("login completed; token uses remaining: ", reply.RemainingUses)
-	event := append([]byte{NotifyCompleted, byte(reply.RemainingUses)}, tokenBytes...)
-	memguard.WipeBytes(tokenBytes)
+	p2log.Info("full PoW login completed; three anonymous pass tokens issued")
+	event := append([]byte{NotifyCompleted}, serialized...)
+	memguard.WipeBytes(serialized)
 	return phases.FillResult(result, nil, 0, true, false, [][]byte{event}, nil)
+}
+
+func EncodeParameters(binding, serverID, bundleID []byte, fast bool) ([]byte, error) {
+	if len(binding) != 32 || len(serverID) != 32 || len(bundleID) != 32 {
+		return nil, apperr.New("invalid login parameters")
+	}
+	data := append([]byte(nil), binding...)
+	data = append(data, serverID...)
+	data = append(data, bundleID...)
+	if fast {
+		return append(data, 1), nil
+	}
+	return append(data, 0), nil
+}
+
+func wipeBlindStates(current *LoginClient) {
+	for _, state := range current.blindStates {
+		if state != nil {
+			memguard.WipeBytes(state.Msg)
+		}
+	}
+	current.blindStates = nil
+	current.blinded = nil
 }
 
 func handleRejected(result *phases.Result, current *LoginClient) *phases.Result {

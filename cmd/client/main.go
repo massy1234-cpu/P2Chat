@@ -2,7 +2,8 @@ package main
 
 import (
 	"P2Chat/cmd/client/database"
-	"P2Chat/cmd/client/internals/keys/mldsa"
+	"P2Chat/cmd/client/internals/commitment"
+	mldsa_keys "P2Chat/cmd/client/internals/keys/mldsa"
 	"P2Chat/cmd/client/internals/keys/x25519"
 	"P2Chat/cmd/client/internals/network/bootstrap"
 	"P2Chat/cmd/client/internals/network/connection"
@@ -13,6 +14,9 @@ import (
 	"P2Chat/cmd/client/internals/network/session"
 	"P2Chat/cmd/client/internals/p2chat_errors"
 	"P2Chat/cmd/client/internals/p2log"
+	"P2Chat/cmd/client/internals/proto_generated/commitment/proto_struct_commitment"
+	loginproto "P2Chat/cmd/client/internals/proto_generated/login/proto_struct_login"
+	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	"P2Chat/cmd/client/internals/proto_generated/pqxdh/proto_struct_bundle"
 	"P2Chat/cmd/client/internals/protocol/pqxdh"
 	"P2Chat/cmd/client/internals/storage"
@@ -20,6 +24,7 @@ import (
 	"P2Chat/pkg/apperr"
 	"bufio"
 	"context"
+	"crypto/ecdh"
 	"crypto/sha256"
 	"flag"
 	"fmt"
@@ -81,13 +86,11 @@ func main() {
 		knownBundle = &database.LoginBundle{LocalID: *localBundle}
 	}
 	if knownBundle != nil {
-		loginToken, err := runLogin(connManager, binding, knownBundle, password)
-		if err != nil {
+		if err := runLogin(connManager, binding, knownBundle, password); err != nil {
 			p2log.Error("login failed: ", err)
 			return
 		}
-		p2log.Info("authenticated connection ready; login token available: ", loginToken != nil)
-		connManager.LoginToken = loginToken
+		p2log.Info("authenticated connection ready")
 		if err := requestAndStoreUserBundle(connManager.Conn, *requestedNickname); err != nil {
 			p2log.Error("user bundle request failed: ", err)
 			return
@@ -115,8 +118,14 @@ func main() {
 	}
 	p2log.Info("token received from the token registration phase")
 
+	commitmentSecret, err := readCommitmentSecret()
+	if err != nil {
+		p2log.Error("error reading commitment secret: ", err)
+		return
+	}
+
 	// Initialize the bundle PQXDH after obtaining the registration token
-	publicBundle, curveSets, kemSets, err := pqxdh.InitializePQXDH(password, 1, false, storage.BasePath, 2)
+	publicBundle, curveSets, kemSets, err := pqxdh.InitializePQXDH(password, commitmentSecret, 1, false, storage.BasePath, 2)
 	if err != nil {
 		p2log.Error("error creating the PQXDH bundle: ", err)
 		return
@@ -191,13 +200,11 @@ func main() {
 		p2log.Error("save registered login bundle: ", err)
 		return
 	}
-	loginToken, err := runLogin(connManager, binding, registered, password)
-	if err != nil {
+	if err := runLogin(connManager, binding, registered, password); err != nil {
 		p2log.Error("login failed: ", err)
 		return
 	}
-	p2log.Info("authenticated connection ready; login token available: ", loginToken != nil)
-	connManager.LoginToken = loginToken
+	p2log.Info("authenticated connection ready")
 	if err := requestAndStoreUserBundle(connManager.Conn, *requestedNickname); err != nil {
 		p2log.Error("user bundle request failed: ", err)
 		return
@@ -246,11 +253,49 @@ func requestAndStoreUserBundle(conn *connection.Connection, nickname string) err
 	if err := proto.Unmarshal(serialized, bundle); err != nil {
 		return apperr.Wrap("decode received user bundle", err)
 	}
-	if err := database.SaveUserBundle(bundle, conn.ServerID); err != nil {
+
+	publicBundle := bundle.GetPublicBundle()
+	if publicBundle == nil || publicBundle.GetCommitmentScheme() == nil {
+		return apperr.New("received bundle has no commitment")
+	}
+	schemeCommit := publicBundle.GetCommitmentScheme()
+	params := schemeCommit.GetArgonParams()
+	if params == nil || len(params.GetSalt()) != 32 || params.GetLen() != 32 || params.GetLevel() < 1 || params.GetLevel() > 3 {
+		return apperr.New("received bundle has invalid commitment Argon parameters")
+	}
+
+	commitmentSecret, err := readCommitmentSecret()
+	if err != nil {
+		return apperr.Wrap("read commitment secret", err)
+	}
+
+	auth, err := verifyCommitment(schemeCommit, publicBundle.GetIkMldsa(), publicBundle.GetIkX25519(), commitmentSecret)
+	if err != nil {
+		return apperr.Wrap("verify received bundle commitment", err)
+	}
+
+	if err := database.SaveUserBundle(bundle, conn.ServerID, auth); err != nil {
 		return apperr.Wrap("save received user bundle", err)
+	}
+	if !auth {
+		p2log.Warning("user bundle saved without commitment authentication: ", nickname)
+		return nil
 	}
 	p2log.Info("user bundle saved for nickname: ", nickname)
 	return nil
+}
+
+func verifyCommitment(scheme *proto_struct_commitment.CommitmentSchemeUpload, mldsaPublic, x25519Public []byte, psk *memguard.Enclave) (bool, error) {
+	publicMLDSA, err := mldsa_keys.DecodePublicKey(&struct_mldsa.PublicKeyMLDSA{Key: mldsaPublic})
+	if err != nil {
+		return false, apperr.Wrap("decode commitment ML-DSA public key", err)
+	}
+	publicX25519, err := ecdh.X25519().NewPublicKey(x25519Public)
+	if err != nil {
+		return false, apperr.Wrap("decode commitment X25519 public key", err)
+	}
+
+	return commitment.VerifyCommitment(scheme, publicMLDSA, &x25519.PublicX25519{Key: publicX25519}, psk)
 }
 
 func confirmBundleStorage(nickname string) bool {
@@ -263,20 +308,35 @@ func confirmBundleStorage(nickname string) bool {
 }
 
 // runLogin orchestrates login events; identification is completed separately.
-func runLogin(manager *connection.ConnectionManager, binding []byte, bundle *database.LoginBundle, password *memguard.Enclave) (*memguard.Enclave, error) {
-	keys, err := login.LoadIdentity(bundle, password)
-	if err != nil {
-		return nil, err
-	}
-	token := manager.LoginToken
-	for attempt := 0; attempt < 2; attempt++ {
-		parameters, err := login.EncodeParameters(binding, manager.Conn.ServerID, keys.BundleID, token != nil)
+func runLogin(manager *connection.ConnectionManager, binding []byte, bundle *database.LoginBundle, password *memguard.Enclave) error {
+	var keys *login.Credentials
+	for attempt := 0; attempt < 4; attempt++ {
+		stored, err := database.LoadPassToken(manager.Conn.ServerID)
 		if err != nil {
-			return nil, err
+			return err
+		}
+		var token *memguard.Enclave
+		if stored != nil {
+			token = memguard.NewEnclave(stored.Serialized)
+			memguard.WipeBytes(stored.Serialized)
+		}
+		bundleID := bundle.BundleID
+		if token == nil || len(bundleID) != 32 {
+			if keys == nil {
+				keys, err = login.LoadIdentity(bundle, password)
+				if err != nil {
+					return err
+				}
+			}
+			bundleID = keys.BundleID
+		}
+		parameters, err := login.EncodeParameters(binding, manager.Conn.ServerID, bundleID, token != nil)
+		if err != nil {
+			return err
 		}
 		sess, events, err := manager.Conn.Login()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
@@ -286,27 +346,71 @@ func runLogin(manager *connection.ConnectionManager, binding []byte, bundle *dat
 			case <-ctx.Done():
 			}
 		}()
-		next, retry, err := waitLogin(ctx, manager, sess, events, keys, parameters, token)
+		tokens, retry, err := waitLogin(ctx, manager, sess, events, keys, parameters, token)
 		cancel()
 		if err != nil {
 			sess.ForceClose()
-			return nil, err
+			return err
+		}
+		if stored != nil {
+			if err := database.DeletePassToken(manager.Conn.ServerID, stored.Slot); err != nil {
+				return err
+			}
 		}
 		if retry {
-			token = nil
-			manager.LoginToken = nil
 			continue
 		}
-		registered := &database.LoginBundle{LocalID: bundle.LocalID, BundleID: keys.BundleID}
-		if err := database.SaveLoginBundle(manager.Conn.ServerID, registered); err != nil {
-			return nil, err
+		if len(tokens) != 0 {
+			batch := &loginproto.LoginTokenBatch{}
+			if err := proto.Unmarshal(tokens, batch); err != nil {
+				memguard.WipeBytes(tokens)
+				return err
+			}
+			serialized := make([][]byte, 0, len(batch.Tokens))
+			for _, pass := range batch.Tokens {
+				value, err := proto.Marshal(pass)
+				if err != nil {
+					wipeLoginTokenBatch(batch)
+					memguard.WipeBytes(tokens)
+					return err
+				}
+				serialized = append(serialized, value)
+			}
+			wipeLoginTokenBatch(batch)
+			memguard.WipeBytes(tokens)
+			saveErr := database.SavePassTokens(manager.Conn.ServerID, serialized)
+			for _, value := range serialized {
+				memguard.WipeBytes(value)
+			}
+			if saveErr != nil {
+				return saveErr
+			}
 		}
-		return next, nil
+		if keys != nil {
+			registered := &database.LoginBundle{LocalID: bundle.LocalID, BundleID: keys.BundleID}
+			if err := database.SaveLoginBundle(manager.Conn.ServerID, registered); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
-	return nil, apperr.New("login token rejected")
+	return apperr.New("all pass tokens were rejected")
 }
 
-func waitLogin(ctx context.Context, manager *connection.ConnectionManager, sess *session.SingleSession, events <-chan []byte, keys *login.Credentials, parameters []byte, token *memguard.Enclave) (*memguard.Enclave, bool, error) {
+func wipeLoginTokenBatch(batch *loginproto.LoginTokenBatch) {
+	if batch == nil {
+		return
+	}
+	for _, token := range batch.Tokens {
+		if token != nil {
+			memguard.WipeBytes(token.Message)
+			memguard.WipeBytes(token.Signature)
+		}
+	}
+	batch.Tokens = nil
+}
+
+func waitLogin(ctx context.Context, manager *connection.ConnectionManager, sess *session.SingleSession, events <-chan []byte, keys *login.Credentials, parameters []byte, token *memguard.Enclave) ([]byte, bool, error) {
 	timer := time.NewTimer(11 * time.Minute)
 	defer timer.Stop()
 	for {
@@ -341,18 +445,12 @@ func waitLogin(ctx context.Context, manager *connection.ConnectionManager, sess 
 				}
 				sess.PutRouter(login.SignedProof, proof)
 			case login.NotifyCompleted:
-				if len(event) < 2 {
-					return nil, false, apperr.New("invalid login completion")
-				}
-				if len(event) > 2 {
-					next := memguard.NewEnclave(event[2:])
+				if len(event) > 1 {
+					tokens := append([]byte(nil), event[1:]...)
 					memguard.WipeBytes(event)
-					return next, false, nil
+					return tokens, false, nil
 				}
-				if event[1] == 0 {
-					return nil, false, nil
-				}
-				return token, false, nil
+				return nil, false, nil
 			case login.NotifyTokenRejected:
 				if token == nil {
 					return nil, false, apperr.New("full login rejected")
@@ -384,6 +482,25 @@ func readPassword() (*memguard.Enclave, error) {
 	if len(input) != 32 {
 		memguard.WipeBytes(input)
 		return nil, fmt.Errorf("bundle password must be 32 bytes")
+	}
+	buffer := memguard.NewBufferFromBytes(input)
+	memguard.WipeBytes(input)
+	return buffer.Seal(), nil
+}
+
+func readCommitmentSecret() (*memguard.Enclave, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return nil, fmt.Errorf("standard input is not a terminal")
+	}
+	fmt.Print("Shared commitment secret: ")
+	input, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Println()
+	if err != nil {
+		memguard.WipeBytes(input)
+		return nil, err
+	}
+	if len(input) == 0 {
+		return nil, fmt.Errorf("commitment secret must not be empty")
 	}
 	buffer := memguard.NewBufferFromBytes(input)
 	memguard.WipeBytes(input)
@@ -459,11 +576,11 @@ func signAndInject(bundleSess *session.SingleSession, password *memguard.Enclave
 		return apperr.Wrap("error loading the IK keys", err)
 	}
 
-	sigMLDSA, err := mldsa_keys.Sign(ikMLDSA, originalM, nil, false)
+	sigMLDSA, err := ikMLDSA.Sign(originalM, nil, false)
 	if err != nil {
 		return apperr.Wrap("error signing with ML-DSA", err)
 	}
-	sigX25519, err := x25519.Sign(ikX25519, originalM)
+	sigX25519, err := ikX25519.Sign(originalM)
 	if err != nil {
 		return apperr.Wrap("error signing with X25519", err)
 	}

@@ -10,6 +10,12 @@ import (
 
 var DB *bbolt.DB = nil
 
+var (
+	bucketServers         = []byte("servers")
+	bucketServerBlacklist = []byte("server:blacklist")
+	bucketPrivateBundles  = []byte("private:bundles")
+)
+
 // Init opens the bbolt database at <storage.ProjectRoot>/database.db. It must
 // be called once at startup before any other database function. Returns an
 // error if the database cannot be opened; callers should abort client startup.
@@ -34,27 +40,17 @@ func Init() error {
 
 func CreateBuckets() error {
 	err := DB.Update(func(tx *bbolt.Tx) error {
-		_,err := tx.CreateBucketIfNotExists([]byte("server:identities"))
-		if err != nil {
-			return err
-		}
-		
-		_,err = tx.CreateBucketIfNotExists([]byte("server:endpoints"))
-		if err != nil {
-			return err
-		}
-		
-		_,err = tx.CreateBucketIfNotExists([]byte("server:observed-ip"))
-		if err != nil {
-			return err
-		}
-		
-		_,err = tx.CreateBucketIfNotExists([]byte("server:blacklist"))
+		_, err := tx.CreateBucketIfNotExists(bucketServers)
 		if err != nil {
 			return err
 		}
 
-		_,err = tx.CreateBucketIfNotExists([]byte("id_server+nickname:bundlebytes"))
+		_, err = tx.CreateBucketIfNotExists(bucketServerBlacklist)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.CreateBucketIfNotExists(bucketPrivateBundles)
 		if err != nil {
 			return err
 		}

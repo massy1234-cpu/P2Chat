@@ -1,7 +1,6 @@
 package connection
 
 import (
-	"github.com/awnumar/memguard"
 	"github.com/cretz/bine/tor"
 	"github.com/hashicorp/yamux"
 	"sync"
@@ -21,9 +20,8 @@ type Connection struct {
 }
 
 type ConnectionManager struct {
-	LoginToken *memguard.Enclave
-	Conn       *Connection
-	Tor        *tor.Tor
-	Once       sync.Once
-	Done       chan struct{}
+	Conn *Connection
+	Tor  *tor.Tor
+	Once sync.Once
+	Done chan struct{}
 }

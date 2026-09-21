@@ -8,10 +8,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// SaveUserBundle save the nickname and his bundle into the database but have to know the server ID. the store into the databse is classified by
-// id_server:nickname and then
-func SaveUserBundle(userBundle *proto_struct_bundle.UserBundle, idServer []byte) error {
-	if userBundle == nil || len(idServer) == 0 || len(userBundle.Nickname) == 0 {
+// SaveUserBundle saves a user bundle under the server where it was obtained.
+func SaveUserBundle(userBundle *proto_struct_bundle.UserBundle, idServer []byte, auth bool) error {
+	if !IsInitialized() || userBundle == nil || len(idServer) != 32 || len(userBundle.Nickname) == 0 {
 		return apperr.New("invalid user bundle storage parameters")
 	}
 
@@ -21,18 +20,33 @@ func SaveUserBundle(userBundle *proto_struct_bundle.UserBundle, idServer []byte)
 	}
 
 	err = DB.Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte("id_server+nickname:bundlebytes"))
-		if b == nil {
-			return apperr.New("user bundle bucket not found")
+		nickname := []byte(userBundle.Nickname)
+		servers := tx.Bucket(bucketServers)
+		if servers == nil {
+			return apperr.New("servers bucket not found")
+		}
+		server := servers.Bucket(idServer)
+		if server == nil || server.Get(keyServerIdentity) == nil {
+			return apperr.New("server identity not found")
+		}
+		b, err := server.CreateBucketIfNotExists(bucketServerUsers)
+		if err != nil {
+			return err
 		}
 
-		key := CreateKey(idServer, userBundle.Nickname)
-
-		if CheckNickname(b, key) != nil {
+		if CheckNickname(b, nickname) != nil {
 			return apperr.New("user already present")
 		}
 
-		return b.Put(key, s)
+		if err := b.Put(nickname, s); err != nil {
+			return err
+		}
+
+		authKey := append([]byte("auth:"), nickname...)
+		if auth {
+			return b.Put(authKey, []byte{1})
+		}
+		return b.Put(authKey, []byte{0})
 	})
 
 	return err
@@ -43,20 +57,26 @@ func CheckNickname(bucket *bbolt.Bucket, key []byte) []byte {
 }
 
 func LoadBundle(nickname []byte, idServer []byte) (*proto_struct_bundle.UserBundle, error) {
-	if len(idServer) == 0 || len(nickname) == 0 {
+	if !IsInitialized() || len(idServer) != 32 || len(nickname) == 0 {
 		return nil, apperr.New("invalid user bundle lookup parameters")
 	}
 
 	var result []byte
 	err := DB.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte("id_server+nickname:bundlebytes"))
+		servers := tx.Bucket(bucketServers)
+		if servers == nil {
+			return apperr.New("servers bucket not found")
+		}
+		server := servers.Bucket(idServer)
+		if server == nil {
+			return apperr.New("server identity not found")
+		}
+		b := server.Bucket(bucketServerUsers)
 		if b == nil {
 			return apperr.New("user bundle bucket not found")
 		}
 
-		key := CreateKey(idServer, nickname)
-
-		raw := b.Get(key)
+		raw := b.Get(nickname)
 		if raw == nil {
 			return apperr.New("user bundle not found")
 		}
@@ -72,12 +92,4 @@ func LoadBundle(nickname []byte, idServer []byte) (*proto_struct_bundle.UserBund
 		return nil, apperr.Wrap("decode stored user bundle", err)
 	}
 	return p, nil
-}
-
-func CreateKey(idServer []byte, nickname []byte) []byte {
-	key := []byte{}
-	key = append(key, idServer[:]...)
-	key = append(key, byte(0))
-	key = append(key, nickname...)
-	return key
 }

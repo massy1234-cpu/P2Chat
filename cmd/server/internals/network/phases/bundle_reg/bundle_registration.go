@@ -214,6 +214,9 @@ func handleBundle(result *phases.Result, currentState *BundleServer, byteCode by
 	if err != nil {
 		return bundleReject(result, currentState, apperr.Wrap("error decoding bundle", err))
 	}
+	if err := validateCommitment(bundle.GetPublicBundle()); err != nil {
+		return bundleReject(result, currentState, err)
+	}
 
 	currentState.payload.PublicBundle = bundle.GetPublicBundle()
 	currentState.payload.CurvePublicSets = bundle.GetCurvePublicSets()
@@ -244,8 +247,8 @@ func handleBundle(result *phases.Result, currentState *BundleServer, byteCode by
 	p2log.Info("bundle decoded and identity signatures verified, proceed with the bundle storage into the database")
 
 	// save the bundle into the database
-	if err := database.SaveBundle(bundle, currentState.idUser, []byte(currentState.nickname)); err != nil {
-		if delErr := database.DeleteAllAssociation(bundle, currentState.idUser, []byte(currentState.nickname)); delErr != nil {
+	if err := database.SaveBundle(bundle, bundle.GetCurvePublicSets(), bundle.GetKemPublicSets(), currentState.idUser); err != nil {
+		if delErr := database.DeleteAllAssociation(currentState.idUser, []byte(currentState.nickname), len(bundle.GetCurvePublicSets()), len(bundle.GetKemPublicSets())); delErr != nil {
 			p2log.Error("error deleting bundle associations: ", delErr)
 		}
 		return bundleReject(result, currentState, apperr.Wrap("error saving bundle", err))
@@ -253,6 +256,34 @@ func handleBundle(result *phases.Result, currentState *BundleServer, byteCode by
 
 	currentState.state = stateCompleted
 	return phases.FillResult(result, [][]byte{append([]byte{phases.BundleUploadAccepted}, 1)}, 0, true, false, nil)
+}
+
+func validateCommitment(bundle *upload.PublicBundle) error {
+	if bundle == nil {
+		return apperr.New("public bundle is missing")
+	}
+
+	commitment := bundle.GetCommitmentScheme()
+	if commitment == nil {
+		return apperr.New("commitment scheme is missing")
+	}
+	if len(commitment.GetCommitment()) == 0 {
+		return apperr.New("commitment is empty")
+	}
+	if len(commitment.GetSignatureMldsa()) == 0 {
+		return apperr.New("commitment ML-DSA signature is empty")
+	}
+	if len(commitment.GetSignatureX25519()) == 0 {
+		return apperr.New("commitment X25519 signature is empty")
+	}
+	if len(commitment.GetNonce()) == 0 {
+		return apperr.New("commitment nonce is empty")
+	}
+	if commitment.GetArgonParams() == nil || len(commitment.GetArgonParams().GetSalt()) == 0 {
+		return apperr.New("commitment Argon parameters are missing")
+	}
+
+	return nil
 }
 
 // bundleReject releases the reserved nickname, marks the state as failed and

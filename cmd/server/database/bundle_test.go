@@ -26,11 +26,14 @@ func TestSaveBundleStoresPublicDataAndSets(t *testing.T) {
 
 	id := [32]byte{1, 2, 3}
 	bundle := &proto_struct_bundle.UserBundle{
-		Nickname:     []byte("alice"),
+		Nickname:     "alice",
 		PublicBundle: &proto_struct_bundle.PublicBundle{IkMldsa: []byte("public-key")},
 	}
-	curveSets := [][]byte{[]byte("curve-0"), []byte("curve-1")}
-	kemSets := [][]byte{[]byte("kem-0")}
+	curveSets := []*proto_struct_bundle.CurveSet{
+		{Identifier: 0, X25519Key: []byte("curve-0")},
+		{Identifier: 1, X25519Key: []byte("curve-1")},
+	}
+	kemSets := []*proto_struct_bundle.PqkemSet{{Identifier: 0, PqkemKey: []byte("kem-0")}}
 	if err := SaveBundle(bundle, curveSets, kemSets, id); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +46,7 @@ func TestSaveBundleStoresPublicDataAndSets(t *testing.T) {
 	if err := proto.Unmarshal(storedBundle, decoded); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(decoded.GetNickname(), bundle.GetNickname()) {
+	if decoded.GetNickname() != bundle.GetNickname() {
 		t.Fatal("stored bundle has the wrong nickname")
 	}
 
@@ -52,19 +55,27 @@ func TestSaveBundleStoresPublicDataAndSets(t *testing.T) {
 		t.Fatal("nickname association was not stored")
 	}
 	for i, want := range curveSets {
+		wantBytes, err := proto.Marshal(want)
+		if err != nil {
+			t.Fatal(err)
+		}
 		got, err := GetValue(publicSetKey(id, "curve", uint32(i)))
-		if err != nil || !bytes.Equal(got, want) {
+		if err != nil || !bytes.Equal(got, wantBytes) {
 			t.Fatalf("curve set %d was not stored", i)
 		}
 	}
 	for i, want := range kemSets {
+		wantBytes, err := proto.Marshal(want)
+		if err != nil {
+			t.Fatal(err)
+		}
 		got, err := GetValue(publicSetKey(id, "kem", uint32(i)))
-		if err != nil || !bytes.Equal(got, want) {
+		if err != nil || !bytes.Equal(got, wantBytes) {
 			t.Fatalf("KEM set %d was not stored", i)
 		}
 	}
 
-	if err := DeleteAllAssociation(id, bundle.GetNickname(), len(curveSets), len(kemSets)); err != nil {
+	if err := DeleteAllAssociation(id, []byte(bundle.GetNickname()), len(curveSets), len(kemSets)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := GetValue(id[:]); !errors.Is(err, badger.ErrKeyNotFound) {

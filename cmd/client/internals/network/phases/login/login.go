@@ -39,7 +39,8 @@ const (
 type LoginClient struct {
 	state                       state
 	binding, serverID, bundleID []byte
-	blindState                  *blind.BlindState
+	blindStates                 []*blind.BlindState
+	blinded                     [][]byte
 	proof                       *loginproto.LoginProof
 	fast                        bool
 }
@@ -106,9 +107,9 @@ func CheckSize(tag byte, size int) bool {
 	case phases.LoginChallengeNonce:
 		return size >= 34 && size <= 128
 	case phases.LoginTokenIssued:
-		return size > 0 && size <= 512
+		return size > 0 && size <= 1024
 	case phases.LoginTokenRedeemed:
-		return size <= 32
+		return size == 0
 	default:
 		return false
 	}

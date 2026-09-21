@@ -106,7 +106,7 @@ func handleIdentity(result *phases.Result, currentState *IdentificationClient, b
 	if err := publicKey.UnmarshalBinary(response.PubMldsa); err != nil {
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.Wrap("decode server ML-DSA key", err))
 	}
-	if !mldsa_keys.VerifySignature(&publicKey, message, nil, response.MldsaSign) ||
+	if !(&mldsa_keys.PublicMLDSA{Key: &publicKey}).Verify(message, nil, response.MldsaSign) ||
 		!x25519_keys.VerifySignature(response.PubX25519, message, response.X25519Sign) {
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid server identification signatures"))
 	}

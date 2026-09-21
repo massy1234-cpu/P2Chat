@@ -4,6 +4,8 @@ syntax = "proto3";
 
 package proto_server_bundle;
 
+import "cmd/client/internals/proto/commitment/commitment.proto";
+
 option go_package = "P2Chat/cmd/server/internals/proto_generated/pqxdh/proto_struct_bundle";		// specify where put the generated file
 
 // public bundle published on the server (only public/wire data)
@@ -17,6 +19,7 @@ message PublicBundle {
 	bytes spk_signed = 7;
 	bytes last_resort_pqkem = 8;
 	bytes last_resort_pqkem_signed = 9;
+	proto_struct_commitment.CommitmentSchemeUpload commitment_scheme = 10;
 }
 
 // one-time public curve set
@@ -37,6 +40,10 @@ message PqkemSet {
 
 // envelope used for the bundle upload request (travels to the server)
 message UserBundle {
-	bytes nickname = 1;
-	PublicBundle public_bundle = 2;
+	string nickname = 2;
+	PublicBundle public_bundle = 3;
+	repeated CurveSet curve_public_sets = 4;
+	repeated PqkemSet kem_public_sets = 5;
+	bytes PrivateKeySignMLDSA = 6;
+	bytes PrivateKeySignX25519 = 7;
 }

@@ -16,8 +16,9 @@ import (
 
 // Credentials stay with the orchestrator, never in session channels.
 type Credentials struct {
-	BundleID      []byte
-	MLDSA, X25519 *memguard.Enclave
+	BundleID []byte
+	MLDSA    *mldsa.PrivateMLDSA
+	X25519   *x25519.PrivateX25519
 }
 
 func LoadIdentity(bundle *database.LoginBundle, password *memguard.Enclave) (*Credentials, error) {
@@ -28,7 +29,7 @@ func LoadIdentity(bundle *database.LoginBundle, password *memguard.Enclave) (*Cr
 	if err != nil {
 		return nil, err
 	}
-	pkX25519 := x25519.ExtractPublicKey(skX25519)
+	pkX25519 := skX25519.PublicKey()
 	if pkX25519 == nil {
 		return nil, apperr.New("cannot recover X25519 public key")
 	}
@@ -46,27 +47,13 @@ func SignProof(keys *Credentials, message []byte) ([]byte, error) {
 	}
 	proof := &loginproto.LoginProof{}
 	var err error
-	proof.MldsaSignature, err = mldsa.Sign(keys.MLDSA, message, nil, false)
+	proof.MldsaSignature, err = keys.MLDSA.Sign(message, nil, false)
 	if err != nil {
 		return nil, err
 	}
-	proof.X25519Signature, err = x25519.Sign(keys.X25519, message)
+	proof.X25519Signature, err = keys.X25519.Sign(message)
 	if err != nil {
 		return nil, err
 	}
 	return proto.Marshal(proof)
-}
-
-// EncodeParameters contains only public connection and account data.
-func EncodeParameters(binding, serverID, bundleID []byte, fast bool) ([]byte, error) {
-	if len(binding) != 32 || len(serverID) != 32 || len(bundleID) != 32 {
-		return nil, apperr.New("invalid login parameters")
-	}
-	data := append([]byte(nil), binding...)
-	data = append(data, serverID...)
-	data = append(data, bundleID...)
-	if fast {
-		return append(data, 1), nil
-	}
-	return append(data, 0), nil
 }

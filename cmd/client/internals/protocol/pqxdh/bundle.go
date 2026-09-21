@@ -2,21 +2,25 @@ package pqxdh
 
 import (
 	"P2Chat/cmd/client/database"
+	"P2Chat/cmd/client/internals/commitment"
 	mldsa_keys "P2Chat/cmd/client/internals/keys/mldsa"
 	mlkem_keys "P2Chat/cmd/client/internals/keys/mlkem"
 	x25519_keys "P2Chat/cmd/client/internals/keys/x25519"
+	commitmentproto "P2Chat/cmd/client/internals/proto_generated/commitment/proto_struct_commitment"
 	"P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	bundleproto "P2Chat/cmd/client/internals/proto_generated/pqxdh/proto_struct_bundle"
 	structures "P2Chat/cmd/client/internals/protocol/pqxdh/structure"
 	data "P2Chat/cmd/client/internals/storage"
 	"P2Chat/pkg/apperr"
-	"github.com/awnumar/memguard"
-	messagepack "github.com/vmihailenco/msgpack/v5"
-	"google.golang.org/protobuf/proto"
+	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/awnumar/memguard"
+	messagepack "github.com/vmihailenco/msgpack/v5"
+	"google.golang.org/protobuf/proto"
 )
 
 // bundleIKDir returns the filesystem path for the IK keys of a given bundle.
@@ -57,7 +61,7 @@ func GetBundleID(basePath string) (int, error) {
 }
 
 // LoadIKKeys loads the IK keys stored outside the database ( ML-DSA and X25519 )
-func LoadIKKeys(password *memguard.Enclave, basePath string, ID int) (privateMLDSA *memguard.Enclave, publicMLDSA *proto_struct_mldsa.PublicKeyMLDSA, privateX25519 *memguard.Enclave, err error) {
+func LoadIKKeys(password *memguard.Enclave, basePath string, ID int) (privateMLDSA *mldsa_keys.PrivateMLDSA, publicMLDSA *proto_struct_mldsa.PublicKeyMLDSA, privateX25519 *x25519_keys.PrivateX25519, err error) {
 
 	ikDir := filepath.Join(basePath, "bundle_"+strconv.Itoa(ID)+"_IK_keys")
 
@@ -120,7 +124,7 @@ func LoadIKKeys(password *memguard.Enclave, basePath string, ID int) (privateMLD
 // password is an Argon2-derived AES-256 key, managed at a higher level.
 // ML-DSA and X25519 IK keys are stored on filesystem in a per-bundle directory;
 // SPK and ML-KEM private keys are encrypted and stored in the private bundle.
-func CreateBundles(password *memguard.Enclave, level int, HSM bool, ID int) (public *bundleproto.PublicBundle, private *structures.PrivateBundle, err error) {
+func CreateBundles(password *memguard.Enclave, commitmentSecret *memguard.Enclave, level int, HSM bool, ID int) (public *bundleproto.PublicBundle, private *structures.PrivateBundle, privateCommitment *commitmentproto.CommitmentSchemePrivate, err error) {
 
 	public = &bundleproto.PublicBundle{}
 	private = &structures.PrivateBundle{}
@@ -130,75 +134,80 @@ func CreateBundles(password *memguard.Enclave, level int, HSM bool, ID int) (pub
 
 	ikDir := bundleIKDir(ID)
 
-	privateKeyMldsa, err := FillMLDSA(password, level, HSM, public, ikDir)
+	privateKeyMldsa, publicKeyMldsa, err := FillMLDSA(password, level, HSM, public, ikDir)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	ikEnclave, err := FillXeddsa(password, level, HSM, public, private, ikDir)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	if err := fillLastResortPQKEM(password, level, HSM, public, private); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// cross-sign IK keys: ML-DSA signs IK_X25519, X25519 signs IK_mldsa
-	public.IkX25519Signed, err = mldsa_keys.Sign(privateKeyMldsa, public.GetIkX25519(), nil, true)
+	public.IkX25519Signed, err = privateKeyMldsa.Sign(public.GetIkX25519(), nil, true)
 	if err != nil {
-		return nil, nil, apperr.Wrap("error during the ML-DSA signature of IK_X25519", err)
+		return nil, nil, nil, apperr.Wrap("error during the ML-DSA signature of IK_X25519", err)
 	}
 
-	public.IkMldsaSigned, err = x25519_keys.Sign(ikEnclave, public.GetIkMldsa())
+	public.IkMldsaSigned, err = ikEnclave.Sign(public.GetIkMldsa())
 	if err != nil {
-		return nil, nil, apperr.Wrap("error during the X25519 signature of IK_mldsa", err)
+		return nil, nil, nil, apperr.Wrap("error during the X25519 signature of IK_mldsa", err)
 	}
 
-	public.SpkSigned, err = mldsa_keys.Sign(privateKeyMldsa, public.GetSpk(), nil, true)
+	public.SpkSigned, err = privateKeyMldsa.Sign(public.GetSpk(), nil, true)
 	if err != nil {
-		return nil, nil, apperr.Wrap("error during the ML-DSA signature of SPK", err)
+		return nil, nil, nil, apperr.Wrap("error during the ML-DSA signature of SPK", err)
 	}
 
-	public.LastResortPqkemSigned, err = mldsa_keys.Sign(privateKeyMldsa, public.GetLastResortPqkem(), nil, true)
+	public.LastResortPqkemSigned, err = privateKeyMldsa.Sign(public.GetLastResortPqkem(), nil, true)
 	if err != nil {
-		return nil, nil, apperr.Wrap("error during the ML-DSA signature of last-resort PQKEM", err)
+		return nil, nil, nil, apperr.Wrap("error during the ML-DSA signature of last-resort PQKEM", err)
 	}
 
-	return public, private, nil
+	public.CommitmentScheme, privateCommitment, err = commitment.Commitment(publicKeyMldsa, ikEnclave.PublicKey(), privateKeyMldsa, ikEnclave, commitmentSecret, level, password, HSM)
+	if err != nil {
+		return nil, nil, nil, apperr.Wrap("create bundle commitment", err)
+	}
+
+	return public, private, privateCommitment, nil
 }
 
 // fill the public bundle with MLDSA and store keys in the bundle IK directory
-func FillMLDSA(password *memguard.Enclave, level int, HSM bool, public *bundleproto.PublicBundle, ikDir string) (privateKeyMldsa *memguard.Enclave, err error) {
+func FillMLDSA(password *memguard.Enclave, level int, HSM bool, public *bundleproto.PublicBundle, ikDir string) (privateKeyMldsa *mldsa_keys.PrivateMLDSA, publicKeyMldsa *mldsa_keys.PublicMLDSA, err error) {
 
 	privateKeyMldsa, rawPub, err := mldsa_keys.CreateKeys()
 	if err != nil {
-		return nil, apperr.Wrap("error during the creation of the bundle for pqxdh (mldsa) ", err)
+		return nil, nil, apperr.Wrap("error during the creation of the bundle for pqxdh (mldsa) ", err)
 	}
 
-	privStruct, err := mldsa_keys.EncryptPrivateKey(password, privateKeyMldsa, level, HSM)
+	privStruct, err := privateKeyMldsa.Encrypt(password, level, HSM)
 	if err != nil {
-		return nil, apperr.Wrap("error during the encryption of the mldsa bundle key", err)
+		return nil, nil, apperr.Wrap("error during the encryption of the mldsa bundle key", err)
 	}
 
-	pubStruct, err := mldsa_keys.NewPublicKey(rawPub)
+	pubStruct, err := rawPub.Serialize()
 	if err != nil {
-		return nil, apperr.Wrap("error during the creation of the public key struct", err)
+		return nil, nil, apperr.Wrap("error during the creation of the public key struct", err)
 	}
 
 	public.IkMldsa = pubStruct.Key
 
 	if err := mldsa_keys.StoreKeys(privStruct, pubStruct, ikDir); err != nil {
-		return nil, apperr.Wrap("store ML-DSA keys in bundle dir", err)
+		return nil, nil, apperr.Wrap("store ML-DSA keys in bundle dir", err)
 	}
 
-	return privateKeyMldsa, nil
+	return privateKeyMldsa, rawPub, nil
 
 }
 
 // fill the public bundle with X25519 IK and SPK, encrypt private keys in the private bundle.
 // The X25519 IK private key is encrypted and saved on filesystem in the per-bundle IK directory.
-func FillXeddsa(password *memguard.Enclave, level int, HSM bool, public *bundleproto.PublicBundle, private *structures.PrivateBundle, ikDir string) (ikEnclave *memguard.Enclave, err error) {
+func FillXeddsa(password *memguard.Enclave, level int, HSM bool, public *bundleproto.PublicBundle, private *structures.PrivateBundle, ikDir string) (ikEnclave *x25519_keys.PrivateX25519, err error) {
 
 	ikEnclave, ikPub, err := x25519_keys.CreateKey()
 	if err != nil {
@@ -206,12 +215,7 @@ func FillXeddsa(password *memguard.Enclave, level int, HSM bool, public *bundlep
 	}
 	public.IkX25519 = ikPub.Bytes()
 
-	ikScheme, err := x25519_keys.EncryptPrivateKey(password, ikEnclave, level, HSM)
-	if err != nil {
-		return nil, apperr.Wrap("encrypt IK X25519", err)
-	}
-
-	ikSerialized, err := x25519_keys.SerializePrivateKey(ikScheme)
+	ikSerialized, err := ikEnclave.SerializeAndEncrypt(password, level, HSM)
 	if err != nil {
 		return nil, apperr.Wrap("serialize IK X25519", err)
 	}
@@ -226,12 +230,7 @@ func FillXeddsa(password *memguard.Enclave, level int, HSM bool, public *bundlep
 	}
 	public.Spk = spkPub.Bytes()
 
-	spkScheme, err := x25519_keys.EncryptPrivateKey(password, spkEnclave, level, HSM)
-	if err != nil {
-		return nil, apperr.Wrap("encrypt SPK", err)
-	}
-
-	private.SPK, err = x25519_keys.SerializePrivateKey(spkScheme)
+	private.SPK, err = spkEnclave.SerializeAndEncrypt(password, level, HSM)
 	if err != nil {
 		return nil, apperr.Wrap("serialize SPK", err)
 	}
@@ -264,7 +263,7 @@ func fillLastResortPQKEM(password *memguard.Enclave, level int, HSM bool, public
 // i can do a trade-off in this case for create a more compact code and efficent
 // *this function will manage from another that will create a stock of 100 CurveSet*
 // all the sensitive data inside the struct are encrypted inside this function using the 'EncryptPrivateKey' function
-func CreateCurveSet(privateKeyMldsa *memguard.Enclave, privateKeyX25519 *memguard.Enclave, password *memguard.Enclave, level int, HSM bool, identifier int) (privateSet []byte, publicSet []byte, err error) {
+func CreateCurveSet(privateKeyMldsa *mldsa_keys.PrivateMLDSA, privateKeyX25519 *x25519_keys.PrivateX25519, password *memguard.Enclave, level int, HSM bool, identifier int) (privateSet []byte, publicSet *bundleproto.CurveSet, err error) {
 
 	private := &structures.PrivateCurveSet{}
 	public := &bundleproto.CurveSet{}
@@ -279,21 +278,17 @@ func CreateCurveSet(privateKeyMldsa *memguard.Enclave, privateKeyX25519 *memguar
 
 	public.X25519Key = publicKey.Bytes()
 
-	privateEncrypted, err := x25519_keys.EncryptPrivateKey(password, privateEnclaved, level, HSM)
-	if err != nil {
-		return nil, nil, apperr.Wrap("encrypt SPK", err)
-	}
-	private.X25519_key, err = x25519_keys.SerializePrivateKey(privateEncrypted)
+	private.X25519_key, err = privateEnclaved.SerializeAndEncrypt(password, level, HSM)
 	if err != nil {
 		return nil, nil, apperr.Wrap("serialize SPK", err)
 	}
 
-	public.SignatureMldsa, err = mldsa_keys.Sign(privateKeyMldsa, public.X25519Key, nil, true)
+	public.SignatureMldsa, err = privateKeyMldsa.Sign(public.X25519Key, nil, true)
 	if err != nil {
 		return nil, nil, apperr.Wrap("error during mldsa signature in the curve set", err)
 	}
 
-	public.SignatureX25519, err = x25519_keys.Sign(privateKeyX25519, public.X25519Key)
+	public.SignatureX25519, err = privateKeyX25519.Sign(public.X25519Key)
 	if err != nil {
 		return nil, nil, apperr.Wrap("error during x25519 signature in the curve set", err)
 	}
@@ -303,16 +298,11 @@ func CreateCurveSet(privateKeyMldsa *memguard.Enclave, privateKeyX25519 *memguar
 		return nil, nil, apperr.Wrap("marshal private curve set", err)
 	}
 
-	publicBytes, err := proto.Marshal(public)
-	if err != nil {
-		return nil, nil, apperr.Wrap("marshal public curve set", err)
-	}
-
-	return privateBytes, publicBytes, nil
+	return privateBytes, public, nil
 }
 
 // all the sensitive data inside the struct are encrypted inside this function using the 'EncryptPrivateKey' function
-func CreatePQKEMSet(privateKeyMldsa *memguard.Enclave, privateKeyX25519 *memguard.Enclave, password *memguard.Enclave, level int, HSM bool, identifier int) (privateSet []byte, publicSet []byte, err error) {
+func CreatePQKEMSet(privateKeyMldsa *mldsa_keys.PrivateMLDSA, privateKeyX25519 *x25519_keys.PrivateX25519, password *memguard.Enclave, level int, HSM bool, identifier int) (privateSet []byte, publicSet *bundleproto.PqkemSet, err error) {
 
 	private := &structures.PrivatekemSet{}
 	public := &bundleproto.PqkemSet{}
@@ -336,12 +326,12 @@ func CreatePQKEMSet(privateKeyMldsa *memguard.Enclave, privateKeyX25519 *memguar
 		return nil, nil, apperr.Wrap("serialize PQKEM", err)
 	}
 
-	public.SignatureMldsa, err = mldsa_keys.Sign(privateKeyMldsa, public.PqkemKey, nil, true)
+	public.SignatureMldsa, err = privateKeyMldsa.Sign(public.PqkemKey, nil, true)
 	if err != nil {
 		return nil, nil, apperr.Wrap("error during mldsa signature in the PQKEM set", err)
 	}
 
-	public.SignatureX25519, err = x25519_keys.Sign(privateKeyX25519, public.PqkemKey)
+	public.SignatureX25519, err = privateKeyX25519.Sign(public.PqkemKey)
 	if err != nil {
 		return nil, nil, apperr.Wrap("error during x25519 signature in the PQKEM set", err)
 	}
@@ -351,18 +341,13 @@ func CreatePQKEMSet(privateKeyMldsa *memguard.Enclave, privateKeyX25519 *memguar
 		return nil, nil, apperr.Wrap("marshal private PQKEM set", err)
 	}
 
-	publicBytes, err := proto.Marshal(public)
-	if err != nil {
-		return nil, nil, apperr.Wrap("marshal public PQKEM set", err)
-	}
-
-	return privateBytes, publicBytes, nil
+	return privateBytes, public, nil
 }
 
 // CreateCurveSets creates curve sets in memory.
-// Returns the slice of pairs (serialized to bytes) ready to be saved by the caller.
+// Returns the private serialized sets and the public protobuf sets.
 // NOTE : the set is divided into public and private part, only the public must be published onto the server, the private must be saved into database
-func CreateCurveSets(password *memguard.Enclave, level int, HSM bool, basePath string, ID int, numSets int) (privateSets [][]byte, publicSets [][]byte, err error) {
+func CreateCurveSets(password *memguard.Enclave, level int, HSM bool, basePath string, ID int, numSets int) (privateSets [][]byte, publicSets []*bundleproto.CurveSet, err error) {
 
 	privateMLDSA, _, privateX25519, err := LoadIKKeys(password, basePath, ID)
 	if err != nil {
@@ -370,7 +355,7 @@ func CreateCurveSets(password *memguard.Enclave, level int, HSM bool, basePath s
 	}
 
 	privateSets = make([][]byte, numSets)
-	publicSets = make([][]byte, numSets)
+	publicSets = make([]*bundleproto.CurveSet, numSets)
 
 	for i := 0; i < numSets; i++ {
 		privateSet, publicSet, err := CreateCurveSet(privateMLDSA, privateX25519, password, level, HSM, i)
@@ -388,7 +373,7 @@ func CreateCurveSets(password *memguard.Enclave, level int, HSM bool, basePath s
 // CreateKEMSets creates ml-kem sets in memory.
 // Returns the slice of pairs (serialized to bytes) ready to be saved by the caller.
 // NOTE : the set is divided into public and private part, only the public must be published onto the server, the private must be saved into database
-func CreateKEMsets(password *memguard.Enclave, level int, HSM bool, basePath string, ID int, numSets int) (privateSets [][]byte, publicSets [][]byte, err error) {
+func CreateKEMsets(password *memguard.Enclave, level int, HSM bool, basePath string, ID int, numSets int) (privateSets [][]byte, publicSets []*bundleproto.PqkemSet, err error) {
 
 	privateMLDSA, _, privateX25519, err := LoadIKKeys(password, basePath, ID)
 	if err != nil {
@@ -396,7 +381,7 @@ func CreateKEMsets(password *memguard.Enclave, level int, HSM bool, basePath str
 	}
 
 	privateSets = make([][]byte, numSets)
-	publicSets = make([][]byte, numSets)
+	publicSets = make([]*bundleproto.PqkemSet, numSets)
 
 	for i := 0; i < numSets; i++ {
 		privateSet, publicSet, err := CreatePQKEMSet(privateMLDSA, privateX25519, password, level, HSM, i)
@@ -412,7 +397,7 @@ func CreateKEMsets(password *memguard.Enclave, level int, HSM bool, basePath str
 }
 
 // main function that manage all the bundle generation flow
-func InitializePQXDH(password *memguard.Enclave, level int, HSM bool, basePath string, numSets int) (publicBundle *bundleproto.PublicBundle, curvePublicSets [][]byte, kemPublicSets [][]byte, err error) {
+func InitializePQXDH(password *memguard.Enclave, commitmentSecret *memguard.Enclave, level int, HSM bool, basePath string, numSets int) (publicBundle *bundleproto.PublicBundle, curvePublicSets []*bundleproto.CurveSet, kemPublicSets []*bundleproto.PqkemSet, err error) {
 
 	// get the right ID
 	currentID, err := GetBundleID(basePath)
@@ -423,11 +408,9 @@ func InitializePQXDH(password *memguard.Enclave, level int, HSM bool, basePath s
 	// new bundle ID
 	newID := currentID + 1
 
-	ID := strconv.Itoa(newID)
-
 	// flow : create the main bundles ( private and public ), the public will send to the server and the
 	// private saved on the device
-	publicBundle, privateBundle, err := CreateBundles(password, level, HSM, newID)
+	publicBundle, privateBundle, privateCommitment, err := CreateBundles(password, commitmentSecret, level, HSM, newID)
 	if err != nil {
 		return nil, nil, nil, apperr.Wrap("error during the creation of the bundle", err)
 	}
@@ -442,20 +425,26 @@ func InitializePQXDH(password *memguard.Enclave, level int, HSM bool, basePath s
 	if err != nil {
 		return nil, nil, nil, apperr.Wrap("error during the creation of the KEM sets", err)
 	}
+	h1 := sha256.Sum256(publicBundle.IkX25519)
+	h2 := sha256.Sum256(publicBundle.IkMldsa)
+	bundleID := sha256.Sum256(append(h1[:], h2[:]...))
 
 	// save the private part of the sets
-	if err := database.SaveSets(curvePrivateSet, "curve:"+ID); err != nil {
+	if err := database.SaveSets(curvePrivateSet, bundleID[:], "curve"); err != nil {
 		return nil, nil, nil, apperr.Wrap("error during save the curve set: ", err)
 	}
-	if err := database.SaveSets(kemPrivateSet, "kem:"+ID); err != nil {
+	if err := database.SaveSets(kemPrivateSet, bundleID[:], "kem"); err != nil {
 		return nil, nil, nil, apperr.Wrap("error during save the kem set: ", err)
 	}
 
 	// i have NOT to destroy all the sets bytes because are already encrypted, so safe in memory
 
 	// save the privateBundle struct inside the database ( SPK and last-resort key )
-	if err := database.SavePrivateBundle(privateBundle, ID); err != nil {
+	if err := database.SavePrivateBundle(privateBundle, bundleID[:]); err != nil {
 		return nil, nil, nil, apperr.Wrap("error during save the curve set: ", err)
+	}
+	if err := database.SaveCommitment(privateCommitment, bundleID[:]); err != nil {
+		return nil, nil, nil, apperr.Wrap("error during save the private commitment: ", err)
 	}
 
 	// this is safe, the GC will not collect the [][]byte, this data will be send to the server

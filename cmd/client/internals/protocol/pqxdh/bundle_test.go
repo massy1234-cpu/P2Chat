@@ -28,10 +28,19 @@ func makeTestPassword(t *testing.T) *memguard.Enclave {
 	return memguard.NewEnclave(key)
 }
 
+func makeTestCommitmentSecret(t *testing.T) *memguard.Enclave {
+	t.Helper()
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		t.Fatal("generate commitment secret:", err)
+	}
+	return memguard.NewEnclave(secret)
+}
+
 func TestCreateBundlesNonHSM(t *testing.T) {
 	password := makeTestPassword(t)
 
-	public, private, err := CreateBundles(password, 1, false, 1)
+	public, private, privateCommitment, err := CreateBundles(password, makeTestCommitmentSecret(t), 1, false, 1)
 	if err != nil {
 		t.Fatal("CreateBundles failed:", err)
 	}
@@ -40,6 +49,9 @@ func TestCreateBundlesNonHSM(t *testing.T) {
 	}
 	if private == nil {
 		t.Fatal("private bundle is nil")
+	}
+	if public.GetCommitmentScheme() == nil || privateCommitment == nil {
+		t.Fatal("commitment scheme is missing")
 	}
 	if len(public.GetIkMldsa()) == 0 {
 		t.Fatal("IK_mldsa is empty")
@@ -77,7 +89,7 @@ func TestCreateCurveSetSingle(t *testing.T) {
 	password := makeTestPassword(t)
 	defer cleanupTestBundle()
 
-	_, _, err := CreateBundles(password, 1, false, testBundleID)
+	_, _, _, err := CreateBundles(password, makeTestCommitmentSecret(t), 1, false, testBundleID)
 	if err != nil {
 		t.Fatal("CreateBundles:", err)
 	}
@@ -94,7 +106,7 @@ func TestCreateCurveSetSingle(t *testing.T) {
 	if len(privSet) == 0 {
 		t.Fatal("private curve set is empty")
 	}
-	if len(pubSet) == 0 {
+	if pubSet == nil || len(pubSet.GetX25519Key()) == 0 {
 		t.Fatal("public curve set is empty")
 	}
 }
@@ -103,7 +115,7 @@ func TestCreatePQKEMSetSingle(t *testing.T) {
 	password := makeTestPassword(t)
 	defer cleanupTestBundle()
 
-	_, _, err := CreateBundles(password, 1, false, testBundleID)
+	_, _, _, err := CreateBundles(password, makeTestCommitmentSecret(t), 1, false, testBundleID)
 	if err != nil {
 		t.Fatal("CreateBundles:", err)
 	}
@@ -120,7 +132,7 @@ func TestCreatePQKEMSetSingle(t *testing.T) {
 	if len(privSet) == 0 {
 		t.Fatal("private KEM set is empty")
 	}
-	if len(pubSet) == 0 {
+	if pubSet == nil || len(pubSet.GetPqkemKey()) == 0 {
 		t.Fatal("public KEM set is empty")
 	}
 }
@@ -129,7 +141,7 @@ func TestCreateCurveSetsBatch(t *testing.T) {
 	password := makeTestPassword(t)
 	defer cleanupTestBundle()
 
-	_, _, err := CreateBundles(password, 1, false, testBundleID)
+	_, _, _, err := CreateBundles(password, makeTestCommitmentSecret(t), 1, false, testBundleID)
 	if err != nil {
 		t.Fatal("CreateBundles:", err)
 	}
@@ -149,7 +161,7 @@ func TestCreateCurveSetsBatch(t *testing.T) {
 		if len(privSets[i]) == 0 {
 			t.Fatalf("private set %d is empty", i)
 		}
-		if len(pubSets[i]) == 0 {
+		if pubSets[i] == nil || len(pubSets[i].GetX25519Key()) == 0 {
 			t.Fatalf("public set %d is empty", i)
 		}
 	}
@@ -159,7 +171,7 @@ func TestCreateKEMsetsBatch(t *testing.T) {
 	password := makeTestPassword(t)
 	defer cleanupTestBundle()
 
-	_, _, err := CreateBundles(password, 1, false, testBundleID)
+	_, _, _, err := CreateBundles(password, makeTestCommitmentSecret(t), 1, false, testBundleID)
 	if err != nil {
 		t.Fatal("CreateBundles:", err)
 	}
@@ -179,7 +191,7 @@ func TestCreateKEMsetsBatch(t *testing.T) {
 		if len(privSets[i]) == 0 {
 			t.Fatalf("private KEM set %d is empty", i)
 		}
-		if len(pubSets[i]) == 0 {
+		if pubSets[i] == nil || len(pubSets[i].GetPqkemKey()) == 0 {
 			t.Fatalf("public KEM set %d is empty", i)
 		}
 	}
@@ -188,9 +200,11 @@ func TestCreateKEMsetsBatch(t *testing.T) {
 func BenchmarkCreateBundleAndSets(b *testing.B) {
 	pw := make([]byte, 32)
 	copy(pw, []byte("password"))
+	commitmentSecret := make([]byte, 32)
+	copy(commitmentSecret, []byte("shared commitment secret"))
 
 	s := time.Now()
-	publicBundle, curveSets, kemSets, err := InitializePQXDH(memguard.NewEnclave(pw), 1, false, data.BasePath, 100)
+	publicBundle, curveSets, kemSets, err := InitializePQXDH(memguard.NewEnclave(pw), memguard.NewEnclave(commitmentSecret), 1, false, data.BasePath, 100)
 	tBundle := time.Since(s)
 	if err != nil {
 		b.Log("fatal,error: ", err)

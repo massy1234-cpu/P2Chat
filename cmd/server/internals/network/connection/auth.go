@@ -10,8 +10,24 @@ import (
 type AuthenticatedUser struct {
 	BundleID    [32]byte
 	PoWVerified bool
+	Anonymous   bool
 	LoginAt     time.Time
 	LastSeen    atomic.Int64
+}
+
+func (c *Connection) AuthenticateAnonymous() error {
+	activeMu.Lock()
+	defer activeMu.Unlock()
+	if c.IsClosed() || c.Auth.Load() != nil {
+		return apperr.New("connection closed or already authenticated")
+	}
+	user := &AuthenticatedUser{Anonymous: true, LoginAt: time.Now()}
+	user.LastSeen.Store(user.LoginAt.Unix())
+	c.Auth.Store(user)
+	if c.Authed != nil {
+		c.Authed.Store(true)
+	}
+	return nil
 }
 
 var activeMu sync.Mutex
@@ -53,6 +69,9 @@ func (c *Connection) ClearAuthentication() {
 		c.Authed.Store(false)
 	}
 	if user := c.Auth.Swap(nil); user != nil {
+		if user.Anonymous {
+			return
+		}
 		delete(activeUsers[user.BundleID], c)
 		if len(activeUsers[user.BundleID]) == 0 {
 			delete(activeUsers, user.BundleID)

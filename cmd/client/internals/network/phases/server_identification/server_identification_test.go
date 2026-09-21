@@ -44,7 +44,7 @@ func TestIdentificationVerification(t *testing.T) {
 	hash.Write(mlPublic.Bytes())
 	hash.Write(xPublic.Bytes())
 	id := hash.Sum(nil)
-	for _, name := range []string{"valid", "wrong nonce", "wrong binding", "wrong ID", "bad MLDSA", "bad X25519", "oversized version", "truncated"} {
+	for _, name := range []string{"valid", "wrong nonce", "wrong binding", "wrong ID", "bad MLDSA", "bad X25519", "wrong MLDSA key size", "wrong X25519 key size", "wrong MLDSA signature size", "wrong X25519 signature size", "oversized version", "oversized payload", "truncated"} {
 		t.Run(name, func(t *testing.T) {
 			conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", server.Listener.Addr().String(), &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})
 			if err != nil {
@@ -92,11 +92,11 @@ func TestIdentificationVerification(t *testing.T) {
 			}
 			message := append([]byte{1}, request.Nonce...)
 			message = append(message, binding...)
-			mlSignature, err := mldsa_keys.Sign(mlPrivate, message, nil, false)
+			mlSignature, err := mlPrivate.Sign(message, nil, false)
 			if err != nil {
 				t.Fatal(err)
 			}
-			xSignature, err := x25519.Sign(xPrivate, message)
+			xSignature, err := xPrivate.Sign(message)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -108,6 +108,14 @@ func TestIdentificationVerification(t *testing.T) {
 				response.MldsaSign[0] ^= 1
 			case "bad X25519":
 				response.X25519Sign[0] ^= 1
+			case "wrong MLDSA key size":
+				response.PubMldsa = response.PubMldsa[:len(response.PubMldsa)-1]
+			case "wrong X25519 key size":
+				response.PubX25519 = response.PubX25519[:len(response.PubX25519)-1]
+			case "wrong MLDSA signature size":
+				response.MldsaSign = response.MldsaSign[:len(response.MldsaSign)-1]
+			case "wrong X25519 signature size":
+				response.X25519Sign = response.X25519Sign[:len(response.X25519Sign)-1]
 			case "oversized version":
 				response.VersionP2 = 256
 			}
@@ -118,17 +126,24 @@ func TestIdentificationVerification(t *testing.T) {
 			if name == "truncated" {
 				payload = payload[:len(payload)-1]
 			}
+			if name == "oversized payload" {
+				payload = make([]byte, 8193)
+			}
 			result := Handler(phases.ServerIdentityResponse, payload, &phaseState)
 			if name != "valid" {
 				if result.Err == nil || !result.CloseStream {
 					t.Fatal("invalid response accepted")
 				}
-				if phaseState.(*IdentificationClient).state != stateFailed {
+				if name != "oversized payload" && phaseState.(*IdentificationClient).state != stateFailed {
 					t.Fatal("failed identification was not marked as failed")
 				}
 				if err := db.View(func(tx *bbolt.Tx) error {
-					if tx.Bucket([]byte("server:identities")) != nil {
-						t.Fatal("invalid identity reached database")
+					servers := tx.Bucket([]byte("servers"))
+					if servers != nil {
+						serverID, _ := servers.Cursor().First()
+						if serverID != nil {
+							t.Fatal("invalid identity reached database")
+						}
 					}
 					return nil
 				}); err != nil {
@@ -141,7 +156,7 @@ func TestIdentificationVerification(t *testing.T) {
 			}
 			var stored idserver.IDServer
 			if err := db.View(func(tx *bbolt.Tx) error {
-				return messagepack.Unmarshal(tx.Bucket([]byte("server:identities")).Get(id), &stored)
+				return messagepack.Unmarshal(tx.Bucket([]byte("servers")).Bucket(id).Get([]byte("identity")), &stored)
 			}); err != nil {
 				t.Fatal(err)
 			}

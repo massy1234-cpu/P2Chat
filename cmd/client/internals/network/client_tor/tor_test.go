@@ -74,11 +74,11 @@ func TestVerifyDifferentNodes(t *testing.T) {
 		t.Fatal("connessione nil")
 	}
 
-	g1, m1, e1, err := CircuitPath(torObj, 15*time.Second)
+	c1, err := CircuitPath(torObj, 15*time.Second)
 	if err != nil {
 		t.Fatalf("CircuitPath fallita: %v", err)
 	}
-	t.Logf("\n 1° circuito -> guard=%s middle=%s exit=%s \n", g1, m1, e1)
+	t.Logf("\n 1° circuito -> guard=%s middle=%s exit=%s \n", c1.Guard, c1.Middle, c1.Exit)
 
 	conn.Close()
 
@@ -97,16 +97,16 @@ func TestVerifyDifferentNodes(t *testing.T) {
 	}
 	defer conn.Close()
 
-	g2, m2, e2, err := CircuitPath(torObj, 15*time.Second)
+	c2, err := CircuitPath(torObj, 15*time.Second)
 	if err != nil {
 		t.Fatalf("CircuitPath fallita: %v", err)
 	}
-	t.Logf("\n 2° circuito -> guard=%s middle=%s exit=%s \n", g2, m2, e2)
+	t.Logf("\n 2° circuito -> guard=%s middle=%s exit=%s \n", c2.Guard, c2.Middle, c2.Exit)
 
-	if e1 == e2 {
-		t.Fatalf("exit node non cambiato: %s", e1)
+	if c1.Exit == c2.Exit {
+		t.Fatalf("exit node non cambiato: %s", c1.Exit)
 	}
-	if m1 == m2 {
-		t.Logf("middle node non cambiato: %s", m1)
+	if c1.Middle == c2.Middle {
+		t.Logf("middle node non cambiato: %s", c1.Middle)
 	}
 }

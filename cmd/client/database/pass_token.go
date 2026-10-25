@@ -6,15 +6,12 @@ import (
 	bbolt "go.etcd.io/bbolt"
 )
 
-var bucketPassTokens = []byte("pass-tokens")
-
-type PassToken struct {
-	Slot       byte
-	Serialized []byte
+func SavePassTokens(serverID []byte, tokens [][]byte) error {
+	return defaultStore.SavePassTokens(serverID, tokens)
 }
 
-func SavePassTokens(serverID []byte, tokens [][]byte) error {
-	if !IsInitialized() || len(serverID) != 32 || len(tokens) != 3 {
+func (s *Store) SavePassTokens(serverID []byte, tokens [][]byte) error {
+	if len(serverID) != 32 || len(tokens) != 3 {
 		return apperr.New("invalid pass token storage parameters")
 	}
 	for _, token := range tokens {
@@ -22,21 +19,21 @@ func SavePassTokens(serverID []byte, tokens [][]byte) error {
 			return apperr.New("invalid serialized pass token")
 		}
 	}
-	return DB.Update(func(tx *bbolt.Tx) error {
-		servers := tx.Bucket(bucketServers)
+	return s.update(func(tx *bbolt.Tx) error {
+		servers := tx.Bucket([]byte(bucketServersName))
 		if servers == nil {
 			return apperr.New("servers bucket not found")
 		}
 		server := servers.Bucket(serverID)
-		if server == nil || server.Get(keyServerIdentity) == nil {
+		if server == nil || server.Get([]byte(keyServerIdentityName)) == nil {
 			return apperr.New("server identity not found")
 		}
-		if server.Bucket(bucketPassTokens) != nil {
-			if err := server.DeleteBucket(bucketPassTokens); err != nil {
+		if server.Bucket([]byte(bucketPassTokensName)) != nil {
+			if err := server.DeleteBucket([]byte(bucketPassTokensName)); err != nil {
 				return err
 			}
 		}
-		bucket, err := server.CreateBucket(bucketPassTokens)
+		bucket, err := server.CreateBucket([]byte(bucketPassTokensName))
 		if err != nil {
 			return err
 		}
@@ -50,12 +47,16 @@ func SavePassTokens(serverID []byte, tokens [][]byte) error {
 }
 
 func LoadPassToken(serverID []byte) (*PassToken, error) {
-	if !IsInitialized() || len(serverID) != 32 {
-		return nil, apperr.New("invalid server ID or database not initialized")
+	return defaultStore.LoadPassToken(serverID)
+}
+
+func (s *Store) LoadPassToken(serverID []byte) (*PassToken, error) {
+	if len(serverID) != 32 {
+		return nil, apperr.New("invalid server ID")
 	}
 	var token *PassToken
-	err := DB.View(func(tx *bbolt.Tx) error {
-		servers := tx.Bucket(bucketServers)
+	err := s.view(func(tx *bbolt.Tx) error {
+		servers := tx.Bucket([]byte(bucketServersName))
 		if servers == nil {
 			return nil
 		}
@@ -63,7 +64,7 @@ func LoadPassToken(serverID []byte) (*PassToken, error) {
 		if server == nil {
 			return nil
 		}
-		bucket := server.Bucket(bucketPassTokens)
+		bucket := server.Bucket([]byte(bucketPassTokensName))
 		if bucket == nil {
 			return nil
 		}
@@ -78,11 +79,15 @@ func LoadPassToken(serverID []byte) (*PassToken, error) {
 }
 
 func DeletePassToken(serverID []byte, slot byte) error {
-	if !IsInitialized() || len(serverID) != 32 || slot < 1 || slot > 3 {
+	return defaultStore.DeletePassToken(serverID, slot)
+}
+
+func (s *Store) DeletePassToken(serverID []byte, slot byte) error {
+	if len(serverID) != 32 || slot < 1 || slot > 3 {
 		return apperr.New("invalid pass token deletion parameters")
 	}
-	return DB.Update(func(tx *bbolt.Tx) error {
-		servers := tx.Bucket(bucketServers)
+	return s.update(func(tx *bbolt.Tx) error {
+		servers := tx.Bucket([]byte(bucketServersName))
 		if servers == nil {
 			return nil
 		}
@@ -90,7 +95,7 @@ func DeletePassToken(serverID []byte, slot byte) error {
 		if server == nil {
 			return nil
 		}
-		bucket := server.Bucket(bucketPassTokens)
+		bucket := server.Bucket([]byte(bucketPassTokensName))
 		if bucket == nil {
 			return nil
 		}

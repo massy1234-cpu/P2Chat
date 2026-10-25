@@ -91,7 +91,7 @@ func CreateKeys() (*PrivateMLDSA, *PublicMLDSA, error) {
 	}
 	defer privateKeyExposed.Destroy()
 
-	privateKey := &PrivateMLDSA{Enclave: memguard.NewEnclave(privateKeyExposed.Bytes())}
+	privateKey := &PrivateMLDSA{enclave: memguard.NewEnclave(privateKeyExposed.Bytes())}
 
 	var packed [mldsa87.PublicKeySize]byte
 	publicKey.Pack(&packed)
@@ -101,7 +101,7 @@ func CreateKeys() (*PrivateMLDSA, *PublicMLDSA, error) {
 		return nil, nil, apperr.Wrap("copy public key", err)
 	}
 
-	return privateKey, &PublicMLDSA{Key: &pubCopy}, nil
+	return privateKey, &PublicMLDSA{key: &pubCopy}, nil
 
 }
 
@@ -110,10 +110,10 @@ func CreateKeys() (*PrivateMLDSA, *PublicMLDSA, error) {
 // hardware security module of the platform (SE on darwin, TPM on linux/windows);
 // otherwise it is protected by Argon2id + AES-256-GCM derived from the password.
 func (privateKey *PrivateMLDSA) Encrypt(password *memguard.Enclave, level int, useHSM bool) (*struct_mldsa.PrivateKeyMLDSA, error) {
-	if privateKey == nil || privateKey.Enclave == nil {
+	if privateKey == nil || privateKey.enclave == nil {
 		return nil, apperr.New("private ML-DSA key is nil")
 	}
-	rawKeyEncrypted, params, err := hsm.Encrypt(password, privateKey.Enclave, level, useHSM)
+	rawKeyEncrypted, params, err := hsm.Encrypt(password, privateKey.enclave, level, useHSM)
 	if err != nil {
 		return nil, apperr.Wrap("protect ML-DSA private key", err)
 	}
@@ -124,12 +124,12 @@ func (privateKey *PrivateMLDSA) Encrypt(password *memguard.Enclave, level int, u
 
 // Serialize wraps the public ML-DSA key in its protobuf storage structure.
 func (rawPublicKey *PublicMLDSA) Serialize() (*struct_mldsa.PublicKeyMLDSA, error) {
-	if rawPublicKey == nil || rawPublicKey.Key == nil {
+	if rawPublicKey == nil || rawPublicKey.key == nil {
 		return nil, apperr.New("public ML-DSA key is nil")
 	}
 
 	var packed [mldsa87.PublicKeySize]byte
-	rawPublicKey.Key.Pack(&packed)
+	rawPublicKey.key.Pack(&packed)
 	return fillPublicKey("ML-DSA-87", packed[:])
 
 }

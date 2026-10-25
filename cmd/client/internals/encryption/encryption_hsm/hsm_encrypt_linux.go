@@ -41,12 +41,12 @@ func platformEncrypt(password *memguard.Enclave, plaintext *memguard.LockedBuffe
 	}
 	defer combinedBuf.Destroy()
 
-	ciphertext, nonce, err := encryption.EncryptAes256(combinedBuf, plaintext.Bytes())
+	encrypted, err := encryption.EncryptAes256(combinedBuf, plaintext.Bytes())
 	if err != nil {
 		return nil, nil, apperr.Wrap("encrypt with TPM-derived key", err)
 	}
 
-	return ciphertext, nonce, nil
+	return encrypted.Ciphertext, encrypted.Nonce, nil
 }
 
 // Decrypt using TPM: unseal secret, combine with password, AES-256-GCM decrypt
@@ -79,7 +79,10 @@ func platformDecrypt(password *memguard.Enclave, ciphertext []byte, nonce []byte
 	}
 	defer combinedBuf.Destroy()
 
-	plaintext, err := encryption.DecryptAes256(combinedBuf, nonce, ciphertext)
+	plaintext, err := encryption.DecryptAes256(combinedBuf, &encryption.EncryptedPayload{
+		Ciphertext: ciphertext,
+		Nonce:      nonce,
+	})
 	if err != nil {
 		return nil, apperr.Wrap("decrypt with TPM-derived key", err)
 	}

@@ -5,25 +5,48 @@ import (
 	"crypto/ecdh"
 
 	"github.com/awnumar/memguard"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 type PrivateX25519 struct {
-	Enclave *memguard.Enclave
+	enclave *memguard.Enclave
 }
 
 type PublicX25519 struct {
-	Key *ecdh.PublicKey
+	key *ecdh.PublicKey
 }
 
-func (privateKey *PrivateX25519) Open() (*memguard.LockedBuffer, error) {
-	if privateKey == nil || privateKey.Enclave == nil {
+func (publicKey *PublicX25519) MarshalMsgpack() ([]byte, error) {
+	if publicKey == nil || publicKey.key == nil {
+		return nil, apperr.New("public X25519 key is nil")
+	}
+	return msgpack.Marshal(publicKey.key.Bytes())
+}
+
+func (publicKey *PublicX25519) UnmarshalMsgpack(b []byte) error {
+	var raw []byte
+	if err := msgpack.Unmarshal(b, &raw); err != nil {
+		return apperr.Wrap("unmarshal public key raw bytes", err)
+	}
+
+	k, err := ecdh.X25519().NewPublicKey(raw)
+	if err != nil {
+		return apperr.Wrap("decode public X25519 key", err)
+	}
+
+	publicKey.key = k
+	return nil
+}
+
+func (privateKey *PrivateX25519) open() (*memguard.LockedBuffer, error) {
+	if privateKey == nil || privateKey.enclave == nil {
 		return nil, apperr.New("private X25519 key is nil")
 	}
-	return privateKey.Enclave.Open()
+	return privateKey.enclave.Open()
 }
 
-func (privateKey *PrivateX25519) Native() (*ecdh.PrivateKey, error) {
-	buffer, err := privateKey.Open()
+func (privateKey *PrivateX25519) native() (*ecdh.PrivateKey, error) {
+	buffer, err := privateKey.open()
 	if err != nil {
 		return nil, apperr.Wrap("open private X25519 key", err)
 	}
@@ -36,8 +59,19 @@ func (privateKey *PrivateX25519) Native() (*ecdh.PrivateKey, error) {
 }
 
 func (publicKey *PublicX25519) Bytes() []byte {
-	if publicKey == nil || publicKey.Key == nil {
+	if publicKey == nil || publicKey.key == nil {
 		return nil
 	}
-	return publicKey.Key.Bytes()
+	return publicKey.key.Bytes()
+}
+
+const PublicKeySize = 32
+const SignatureSize = 64
+
+func NewPublicKey(data []byte) (*PublicX25519, error) {
+	key, err := ecdh.X25519().NewPublicKey(data)
+	if err != nil {
+		return nil, apperr.Wrap("decode X25519 public key", err)
+	}
+	return &PublicX25519{key: key}, nil
 }

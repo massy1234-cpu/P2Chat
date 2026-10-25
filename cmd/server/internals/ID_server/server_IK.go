@@ -1,13 +1,11 @@
 package idserver
 
 import (
-	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
 	mldsa_keys "P2Chat/cmd/client/internals/keys/mldsa"
 	"P2Chat/cmd/client/internals/keys/x25519"
 	"P2Chat/cmd/server/database"
 	identityproto "P2Chat/cmd/server/internals/proto_generated/identity/proto_server_identity"
 	"P2Chat/pkg/apperr"
-	"crypto/ecdh"
 
 	"github.com/awnumar/memguard"
 	proto "google.golang.org/protobuf/proto"
@@ -115,12 +113,12 @@ func DeserializeIK(s *identityproto.StoredServerIdentity, password *memguard.Enc
 		return nil, apperr.Wrap("decrypt X25519 server private key", err)
 	}
 
-	var mldsaPublic mldsa87.PublicKey
-	if err := mldsaPublic.UnmarshalBinary(s.PubMldsa); err != nil {
+	mldsaPublic, err := mldsa_keys.NewPublicKey(s.PubMldsa)
+	if err != nil {
 		return nil, apperr.Wrap("decode ML-DSA server public key", err)
 	}
 
-	x25519Public, err := ecdh.X25519().NewPublicKey(s.PubX25519)
+	x25519Public, err := x25519.NewPublicKey(s.PubX25519)
 	if err != nil {
 		return nil, apperr.Wrap("decode X25519 server public key", err)
 	}
@@ -128,7 +126,7 @@ func DeserializeIK(s *identityproto.StoredServerIdentity, password *memguard.Enc
 	return &CurrentID{
 		MLDSAPrivateKey: mldsaEnclaved,
 		X25519Private:   x25519Enclaved,
-		PubMLDSA:        &mldsa_keys.PublicMLDSA{Key: &mldsaPublic},
-		PubX25519:       &x25519.PublicX25519{Key: x25519Public},
+		PubMLDSA:        mldsaPublic,
+		PubX25519:       x25519Public,
 	}, nil
 }

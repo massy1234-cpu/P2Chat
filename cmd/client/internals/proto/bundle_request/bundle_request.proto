@@ -9,10 +9,12 @@ import "cmd/server/internals/proto/pqxdh/bundle.proto";
 
 message BundleRequest {
     bytes nickname = 1;
+    repeated bytes nicknames = 2;
 }
 
 message BundleResponse {
     proto_server_bundle.UserBundle bundle = 2;
+    repeated proto_server_bundle.UserBundle bundles = 3;
 }
 
 message BundleAvailabilityResponse {

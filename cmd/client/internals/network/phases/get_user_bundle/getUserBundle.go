@@ -11,33 +11,33 @@ import (
 type state uint8
 
 const (
-	stateAwaitNickname state = iota
+	stateAwaitNicknames state = iota
 	stateAwaitResponse
 	stateCompleted
 	stateFailed
 )
 
-const AcquisitionNickname byte = 0xf1
+const AcquisitionBundle byte = 0xf2
 
-type BundleSearched struct {
-	state    state
-	request  *bundle_request_structs.BundleRequest
-	response *bundle_request_structs.BundleResponse
+type BundleAcquisition struct {
+	state     state
+	nicknames [][]byte
+	response  *ResponseBundles
 }
 
 func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 	result := &phases.Result{}
-	currentState, errResult := phases.GetPhase[BundleSearched](byteCode, msg, phaseState, CheckSize)
+	currentState, errResult := phases.GetPhase[BundleAcquisition](byteCode, msg, phaseState, CheckSize)
 	if errResult != nil {
 		return errResult
 	}
 	if currentState == nil {
-		currentState = &BundleSearched{state: stateAwaitNickname}
+		currentState = &BundleAcquisition{state: stateAwaitNicknames}
 		*phaseState = currentState
 	}
 
 	switch currentState.state {
-	case stateAwaitNickname:
+	case stateAwaitNicknames:
 		return SendRequest(byteCode, msg, currentState, result)
 	case stateAwaitResponse:
 		return handleResponse(byteCode, msg, currentState, result)
@@ -51,73 +51,82 @@ func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 	}
 }
 
-// SendRequest get the nickname from the local chan and send the request to the server
-func SendRequest(byteCode byte, msg []byte, currentState *BundleSearched, result *phases.Result) *phases.Result {
-	if byteCode != AcquisitionNickname || len(msg) == 0 {
+// SendRequest receives the three nicknames from the local Router and sends
+// one batch request to the server.
+func SendRequest(byteCode byte, msg []byte, currentState *BundleAcquisition, result *phases.Result) *phases.Result {
+	if byteCode != AcquisitionBundle || len(msg) == 0 {
 		currentState.state = stateFailed
-		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid local nickname"))
-	}
-	req := &bundle_request_structs.BundleRequest{}
-	req.Nickname = msg
-	currentState.request = req
-	s, err := proto.Marshal(req)
-	if err != nil {
-		currentState.state = stateFailed
-		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("error during serialization of proto struct"))
+		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid local bundle request"))
 	}
 
-	b := append(
-		[]byte{phases.BundleAcquisitionRequest},
-		s...,
-	)
-
+	request := &bundle_request_structs.BundleRequest{}
+	if err := proto.Unmarshal(msg, request); err != nil {
+		currentState.state = stateFailed
+		return phases.FillResult(result, nil, 0, false, true, nil, apperr.Wrap("decode local bundle request", err))
+	}
+	if err := validateNicknames(request.GetNicknames()); err != nil {
+		currentState.state = stateFailed
+		return phases.FillResult(result, nil, 0, false, true, nil, err)
+	}
+	currentState.nicknames = cloneNicknames(request.GetNicknames())
 	currentState.state = stateAwaitResponse
-	return phases.FillResult(result, [][]byte{b}, 0, false, false, nil, nil)
+	return phases.FillResult(result, [][]byte{append([]byte{phases.BundleAcquisitionRequest}, msg...)}, 0, false, false, nil, nil)
 }
 
-func handleResponse(byteCode byte, msg []byte, currentState *BundleSearched, result *phases.Result) *phases.Result {
+func handleResponse(byteCode byte, msg []byte, currentState *BundleAcquisition, result *phases.Result) *phases.Result {
 	if byteCode != phases.BundleAcquisitionResponse || len(msg) == 0 {
 		currentState.state = stateFailed
-		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid bytecode"))
+		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid bundle response"))
 	}
 
-	response, err := decodeResponse(msg)
-	if err != nil {
-		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid response, maybe bytes corruption"))
-	}
-	if response.Bundle == nil {
-		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("server had reject the request"))
-	}
-	currentState.response = response
-
-	if currentState.response.Bundle.Nickname != string(currentState.request.Nickname) {
-		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid response, nickname not match"))
-	}
-	bundle, err := proto.Marshal(currentState.response.Bundle)
+	response, err := DecodeResponseBundles(msg)
 	if err != nil {
 		currentState.state = stateFailed
-		return phases.FillResult(result, nil, 0, false, true, nil, apperr.Wrap("error serializing received bundle", err))
+		return phases.FillResult(result, nil, 0, false, true, nil, err)
 	}
-
+	if err := response.ValidateRequested(currentState.nicknames); err != nil {
+		currentState.state = stateFailed
+		return phases.FillResult(result, nil, 0, false, true, nil, err)
+	}
+	currentState.response = response
 	currentState.state = stateCompleted
-	return phases.FillResult(result, [][]byte{{phases.BundleAcquisitionConfirmation}}, 0, true, false, [][]byte{bundle}, nil)
+
+	event := append([]byte(nil), msg...)
+	return phases.FillResult(result, [][]byte{{phases.BundleAcquisitionConfirmation}}, 0, true, false, [][]byte{event}, nil)
 }
 
-func decodeResponse(response []byte) (*bundle_request_structs.BundleResponse, error) {
-	b := &bundle_request_structs.BundleResponse{}
-	err := proto.Unmarshal(response, b)
-	if err != nil {
-		return nil, err
+func validateNicknames(nicknames [][]byte) error {
+	if len(nicknames) != BundleRequestCount {
+		return apperr.New("bundle request must contain exactly three nicknames")
 	}
-	return b, nil
+	seen := make(map[string]struct{}, BundleRequestCount)
+	for _, nickname := range nicknames {
+		if len(nickname) == 0 || len(nickname) > 64 {
+			return apperr.New("invalid nickname in bundle request")
+		}
+		value := string(nickname)
+		if _, exists := seen[value]; exists {
+			return apperr.New("duplicate nickname in bundle request")
+		}
+		seen[value] = struct{}{}
+	}
+	return nil
+}
+
+func cloneNicknames(nicknames [][]byte) [][]byte {
+	cloned := make([][]byte, len(nicknames))
+	for index, nickname := range nicknames {
+		cloned[index] = append([]byte(nil), nickname...)
+	}
+	return cloned
 }
 
 func CheckSize(tag byte, payloadLen int) bool {
 	switch tag {
-	case AcquisitionNickname:
-		return payloadLen > 0 && payloadLen <= 64
+	case AcquisitionBundle:
+		return payloadLen > 0 && payloadLen <= 512
 	case phases.BundleAcquisitionResponse:
-		return payloadLen > 0 && payloadLen <= 8<<20
+		return payloadLen > 0 && payloadLen <= 24<<20
 	default:
 		return false
 	}

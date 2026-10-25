@@ -1,6 +1,7 @@
 package serverstart
 
 import (
+	ed25519_keys "P2Chat/cmd/client/internals/keys/ed25519"
 	"P2Chat/cmd/client/internals/p2log"
 	"P2Chat/cmd/server/database"
 	idserver "P2Chat/cmd/server/internals/ID_server"
@@ -9,10 +10,9 @@ import (
 	"P2Chat/cmd/server/internals/network/certificate"
 	"P2Chat/cmd/server/internals/network/client"
 	loadreport "P2Chat/cmd/server/internals/network/load_report"
+	nicknameexposure "P2Chat/cmd/server/internals/nicknameExposure"
 	"P2Chat/pkg/apperr"
-	"crypto/ed25519"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net"
 
@@ -28,6 +28,10 @@ func ServerStart(address string, port int, password *memguard.Enclave) (*client.
 		p2log.Error("error during database initialization: ", err)
 		return nil, nil, apperr.Wrap("error during database initialization", err)
 	}
+	if err := nicknameexposure.Init(); err != nil {
+		p2log.Error("error during nickname catalog initialization: ", err)
+		return nil, nil, apperr.Wrap("error during nickname catalog initialization", err)
+	}
 
 	if err := idserver.Init(3, password, false); err != nil {
 		p2log.Error("error during server identity initialization: ", err)
@@ -42,13 +46,13 @@ func ServerStart(address string, port int, password *memguard.Enclave) (*client.
 	registry := client.NewRegistry()
 	loadreport.Init(&registry.ClientsNumber)
 
-	certDer, enclave, err := certificate.CreateCertificateSelf(true)
+	certDer, key, err := certificate.CreateCertificateSelf(true)
 	if err != nil {
 		p2log.Error("error during certificate creation: ", err)
 		return nil, nil, apperr.Wrap("error during certificate creation", err)
 	}
 
-	tlsCert, err := buildTLS(certDer, enclave)
+	tlsCert, err := buildTLS(certDer, key)
 	if err != nil {
 		p2log.Error("error building the TLS certificate: ", err)
 		return nil, nil, apperr.Wrap("error building the TLS certificate", err)
@@ -77,28 +81,7 @@ func ServerStart(address string, port int, password *memguard.Enclave) (*client.
 	return registry, ln, nil
 }
 
-// buildTLS converts the self-signed certificate bytes and its private key
-// enclave into a tls.Certificate usable by tls.Listen.
-func buildTLS(certDer []byte, enclave *memguard.Enclave) (*tls.Certificate, error) {
-	opened, err := enclave.Open()
-	if err != nil {
-		return nil, err
-	}
-	defer opened.Destroy()
-
-	privDER := append([]byte{}, opened.Bytes()...)
-	parsed, err := x509.ParsePKCS8PrivateKey(privDER)
-	if err != nil {
-		return nil, err
-	}
-
-	edKey, ok := parsed.(ed25519.PrivateKey)
-	if !ok {
-		return nil, fmt.Errorf("unexpected private key type")
-	}
-
-	return &tls.Certificate{
-		Certificate: [][]byte{certDer},
-		PrivateKey:  edKey,
-	}, nil
+// buildTLS delegates key handling to the certificate key object.
+func buildTLS(certDer []byte, key *ed25519_keys.PrivateEd25519) (*tls.Certificate, error) {
+	return key.TLSCertificate(certDer)
 }

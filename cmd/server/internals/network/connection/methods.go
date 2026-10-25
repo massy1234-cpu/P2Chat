@@ -3,9 +3,11 @@ package connection
 import (
 	"P2Chat/cmd/client/internals/p2log"
 	"P2Chat/cmd/server/internals/network/dispatcher"
+	loadreport "P2Chat/cmd/server/internals/network/load_report"
 	"P2Chat/cmd/server/internals/network/phases"
 	getuserbundle "P2Chat/cmd/server/internals/network/phases/get_user_bundle"
 	"P2Chat/cmd/server/internals/network/phases/login"
+	nicknamecatalog "P2Chat/cmd/server/internals/network/phases/nickname_catalog"
 	"P2Chat/cmd/server/internals/network/phases/server_identification"
 	"P2Chat/cmd/server/internals/network/session"
 	"P2Chat/pkg/apperr"
@@ -68,12 +70,23 @@ func (c *Connection) AssignHandler(sess *session.SingleSession, ID uint32) {
 			*state = getuserbundle.NewBundleSearched(c.Authed != nil && c.Authed.Load())
 		case phases.BundleAvailabilityRequest:
 			*state = getuserbundle.NewBundleAvailability(c.Authed != nil && c.Authed.Load())
+		case phases.NicknameCatalogRequest:
+			*state = nicknamecatalog.NewCatalogRequest(c.Authed != nil && c.Authed.Load())
 		case phases.LoginStart, phases.LoginTokenRedemption:
 			if !c.Identified.Load() || c.Auth.Load() != nil || !c.LoginInProgress.CompareAndSwap(nil, sess) {
 				return phases.FillResult(&phases.Result{}, nil, 0, false, true, apperr.New("login unavailable on this connection"))
 			}
 			go func() { <-sess.Done; c.LoginInProgress.CompareAndSwap(sess, nil) }()
-			*state = &login.LoginServer{Binding: c.Binding, Authenticate: c.Authenticate, AuthenticateAnonymous: c.AuthenticateAnonymous}
+			loginState := &login.LoginServer{Binding: c.Binding, Authenticate: c.Authenticate, AuthenticateAnonymous: c.AuthenticateAnonymous}
+			if byteCode == phases.LoginStart {
+				level, err := loadreport.LoadReport()
+				if err != nil {
+					return phases.FillResult(&phases.Result{}, nil, 0, false, true, err)
+				}
+				loginState.Level = level
+				p2log.Info("login PoW level selected from server load: ", level)
+			}
+			*state = loginState
 		default:
 			if c.Authed == nil || !c.Authed.Load() {
 				return phases.FillResult(&phases.Result{}, nil, 0, false, true, apperr.New("authentication required"))

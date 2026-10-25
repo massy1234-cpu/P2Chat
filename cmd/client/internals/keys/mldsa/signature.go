@@ -10,11 +10,11 @@ import (
 // and destroys the temporary buffer.
 // the context is optional but must coincide during the verification of the sign, add more entropy
 func (privateKey *PrivateMLDSA) Sign(message []byte, context []byte, randomized bool) (signature []byte, err error) {
-	if privateKey == nil || privateKey.Enclave == nil {
+	if privateKey == nil || privateKey.enclave == nil {
 		return nil, apperr.New("private ML-DSA key is nil")
 	}
 
-	rawKey, err := privateKey.Native()
+	rawKey, err := privateKey.native()
 	if err != nil {
 		return nil, err
 	}

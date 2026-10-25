@@ -30,7 +30,7 @@ type PrivateKeyEncrypted struct {
 }
 
 type PublicKey struct {
-	Y bls.G2Affine
+	point bls.G2Affine
 }
 
 type LoginKeys struct {
@@ -44,7 +44,7 @@ func (sk *PrivateKey) GetPublicKey() (*PublicKey, error) {
 	if sk == nil || sk.x == nil {
 		return nil, apperr.New("private key is nil")
 	}
-	x := sk.GetX()
+	x := sk.getX()
 	if x == nil {
 		return nil, apperr.New("cannot access the private key")
 	}
@@ -63,10 +63,10 @@ func (sk *PrivateKey) GetPublicKey() (*PublicKey, error) {
 	var Y bls.G2Affine
 	Y.FromJacobian(&Yj)
 
-	return &PublicKey{Y: Y}, nil
+	return &PublicKey{point: Y}, nil
 }
 
-func (sk *PrivateKey) GetX() *fr.Element {
+func (sk *PrivateKey) getX() *fr.Element {
 	if sk == nil || sk.x == nil {
 		return nil
 	}
@@ -134,4 +134,18 @@ func (sk *PrivateKey) SerializeAndEncryptKey(password *memguard.Enclave, level i
 	}
 
 	return serializedKey, nil
+}
+
+func NewPublicKey(data []byte) (*PublicKey, error) {
+	var point bls.G2Affine
+	if _, err := point.SetBytes(data); err != nil || point.IsInfinity() || !point.IsInSubGroup() {
+		return nil, apperr.New("invalid blind signature public key")
+	}
+	return &PublicKey{point: point}, nil
+}
+func (pk *PublicKey) Bytes() [96]byte {
+	if pk == nil {
+		return [96]byte{}
+	}
+	return pk.point.Bytes()
 }

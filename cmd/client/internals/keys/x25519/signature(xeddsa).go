@@ -10,11 +10,11 @@ import (
 // Sign signs a message with an X25519 private key stored in a memguard Enclave.
 // The key in the memguard Enclave must be NOT encrypt
 func (privateKey *PrivateX25519) Sign(message []byte) (signed_message []byte, err error) {
-	if privateKey == nil || privateKey.Enclave == nil {
+	if privateKey == nil || privateKey.enclave == nil {
 		return nil, apperr.New("private X25519 key is nil")
 	}
 
-	buffer, err := privateKey.Enclave.Open()
+	buffer, err := privateKey.enclave.Open()
 	if err != nil {
 		return nil, apperr.Wrap("open private key enclave", err)
 	}
@@ -33,8 +33,8 @@ func (privateKey *PrivateX25519) Sign(message []byte) (signed_message []byte, er
 
 // verify if the signature is valid or not
 func (publicKey *PublicX25519) Verify(message []byte, signature []byte) bool {
-	if publicKey == nil || publicKey.Key == nil {
+	if publicKey == nil || publicKey.key == nil {
 		return false
 	}
-	return x25519.Verify(x25519.PublicKey(publicKey.Key.Bytes()), message, signature)
+	return x25519.Verify(x25519.PublicKey(publicKey.key.Bytes()), message, signature)
 }

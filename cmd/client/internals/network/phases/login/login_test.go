@@ -48,7 +48,7 @@ func TestAnonymousPassTokenProtocol(t *testing.T) {
 	h1, h2 := sha256.Sum256(xPK.Bytes()), sha256.Sum256(mlPK.Bytes())
 	bundleID := sha256.Sum256(append(h1[:], h2[:]...))
 	bundle := &bundleproto.UserBundle{Nickname: "login-test", PublicBundle: &bundleproto.PublicBundle{IkMldsa: mlPK.Bytes(), IkX25519: xPK.Bytes()}}
-	if err := database.SaveBundle(bundle, nil, nil, bundleID); err != nil {
+	if err := database.SaveBundle(bundle, bundleID); err != nil {
 		t.Fatal(err)
 	}
 	identity := idserver.GetCurrentID()

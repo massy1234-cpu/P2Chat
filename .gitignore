@@ -1,0 +1,49 @@
+# Binaries and compiled outputs
+client
+server
+*.test
+*.dylib
+*.so
+*.a
+
+# Go workspace & build
+*.exe
+*.exe~
+*.dll
+*.so#
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Tor cache and runtime data
+data/Tor/
+data/Log Files/
+
+# Databases and local runtime keys
+database.db
+data/bundle_*_IK_keys/
+
+# Python & CNN Password Classifier build artifacts / virtualenvs
+**/_internal/
+**/build/
+**/dist/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pt
+*.spec
+password_cnn/build/
+password_cnn/dist/
+password_cnn/rockyou.txt
+password_cnn/passwords_full.csv
+cmd/client/internals/cnn_password/neuralNetwork/
+
+# Output CAD/Test artifacts
+output/

@@ -9,22 +9,22 @@ import (
 )
 
 type PrivateMLDSA struct {
-	Enclave *memguard.Enclave
+	enclave *memguard.Enclave
 }
 
 type PublicMLDSA struct {
-	Key *mldsa87.PublicKey
+	key *mldsa87.PublicKey
 }
 
-func (privateKey *PrivateMLDSA) Open() (*memguard.LockedBuffer, error) {
-	if privateKey == nil || privateKey.Enclave == nil {
+func (privateKey *PrivateMLDSA) open() (*memguard.LockedBuffer, error) {
+	if privateKey == nil || privateKey.enclave == nil {
 		return nil, apperr.New("private ML-DSA key is nil")
 	}
-	return privateKey.Enclave.Open()
+	return privateKey.enclave.Open()
 }
 
-func (privateKey *PrivateMLDSA) Native() (*mldsa87.PrivateKey, error) {
-	buffer, err := privateKey.Open()
+func (privateKey *PrivateMLDSA) native() (*mldsa87.PrivateKey, error) {
+	buffer, err := privateKey.open()
 	if err != nil {
 		return nil, apperr.Wrap("open private ML-DSA key", err)
 	}
@@ -38,18 +38,29 @@ func (privateKey *PrivateMLDSA) Native() (*mldsa87.PrivateKey, error) {
 }
 
 func (publicKey *PublicMLDSA) Bytes() []byte {
-	if publicKey == nil || publicKey.Key == nil {
+	if publicKey == nil || publicKey.key == nil {
 		return nil
 	}
-	return publicKey.Key.Bytes()
+	return publicKey.key.Bytes()
 }
 
 func (publicKey *PublicMLDSA) Verify(message, context, signature []byte) bool {
-	return publicKey != nil && publicKey.Key != nil && mldsa87.Verify(publicKey.Key, message, context, signature)
+	return publicKey != nil && publicKey.key != nil && mldsa87.Verify(publicKey.key, message, context, signature)
 }
 
 func wipeNativeMLDSA(key *mldsa87.PrivateKey) {
 	if key != nil {
 		encryption.Wipe(key)
 	}
+}
+
+const PublicKeySize = mldsa87.PublicKeySize
+const SignatureSize = mldsa87.SignatureSize
+
+func NewPublicKey(data []byte) (*PublicMLDSA, error) {
+	var key mldsa87.PublicKey
+	if err := key.UnmarshalBinary(data); err != nil {
+		return nil, apperr.Wrap("decode ML-DSA public key", err)
+	}
+	return &PublicMLDSA{key: &key}, nil
 }

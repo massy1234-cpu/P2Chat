@@ -111,17 +111,17 @@ func handleRequest(result *phases.Result, currentState *RegistrationServer, byte
 		return registrationError(result, apperr.Wrap("error generating registration secret", err))
 	}
 
-	challenge, reply, err := issueChallenge(secret, currentState.level)
+	issued, err := issueChallenge(secret, currentState.level)
 	if err != nil {
 		currentState.state = stateFailed
 		return registrationError(result, err)
 	}
 
 	currentState.secret = secret
-	currentState.challenge = challenge
+	currentState.challenge = issued.Challenge
 	currentState.state = stateAwaitNonce
 	p2log.Info("server registration: PoW challenge emitted, level: ", currentState.level)
-	return phases.FillResult(result, [][]byte{reply}, currentState.level.MaxWaitTime(), false, false, nil)
+	return phases.FillResult(result, [][]byte{issued.WirePayload}, currentState.level.MaxWaitTime(), false, false, nil)
 }
 
 // handleNonce verifies the PoW solution and notifies the client.
@@ -182,20 +182,29 @@ func registrationError(result *phases.Result, err error) *phases.Result {
 	return phases.FillResult(result, [][]byte{{phases.RegistrationRejected}}, 0, false, true, err)
 }
 
+// IssuedChallenge encapsulates the generated challenge and its wire-ready payload.
+type IssuedChallenge struct {
+	Challenge   *challengeStruct.Challenge
+	WirePayload []byte
+}
+
 // issueChallenge creates and serializes the challenge reply for the router.
-func issueChallenge(secret []byte, level pow.Level) (*challengeStruct.Challenge, []byte, error) {
+func issueChallenge(secret []byte, level pow.Level) (*IssuedChallenge, error) {
 	challenge, err := pow.Issue(secret, level)
 	if err != nil {
-		return nil, nil, apperr.Wrap("error creating challenge", err)
+		return nil, apperr.Wrap("error creating challenge", err)
 	}
 
 	challengeSerialized, err := proto.Marshal(challenge)
 	if err != nil {
-		return nil, nil, apperr.Wrap("error serializing challenge", err)
+		return nil, apperr.Wrap("error serializing challenge", err)
 	}
 
 	data := append([]byte{phases.RegistrationPoWChallenge}, challengeSerialized...)
-	return challenge, data, nil
+	return &IssuedChallenge{
+		Challenge:   challenge,
+		WirePayload: data,
+	}, nil
 }
 
 // receiveNonce decodes the nonce from the payload already validated by the Handler.

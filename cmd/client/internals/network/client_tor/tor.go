@@ -125,18 +125,25 @@ func NewCircuit(torObj *tor.Tor) error {
 	return nil
 }
 
-// CircuitPath returns guard, middle and exit of the first fully-built 3-hop
-// circuit, polling until one is available or the timeout expires.
-func CircuitPath(torObj *tor.Tor, timeout time.Duration) (guard, middle, exit string, err error) {
+// CircuitHops contains the 3-hop nodes of a Tor circuit.
+type CircuitHops struct {
+	Guard  string
+	Middle string
+	Exit   string
+}
+
+// CircuitPath returns the 3-hop nodes of the first fully-built circuit,
+// polling until one is available or the timeout expires.
+func CircuitPath(torObj *tor.Tor, timeout time.Duration) (*CircuitHops, error) {
 	if torObj == nil || torObj.Control == nil {
-		return "", "", "", apperr.New("controller Tor non disponibile")
+		return nil, apperr.New("controller Tor non disponibile")
 	}
 
 	deadline := time.Now().Add(timeout)
 	for {
 		vals, err := torObj.Control.GetInfo("circuit-status")
 		if err != nil {
-			return "", "", "", apperr.Wrap("GETINFO circuit-status fallito", err)
+			return nil, apperr.Wrap("GETINFO circuit-status fallito", err)
 		}
 
 		if len(vals) > 0 {
@@ -151,13 +158,17 @@ func CircuitPath(torObj *tor.Tor, timeout time.Duration) (guard, middle, exit st
 				}
 				path := strings.Split(strings.Trim(parts[2], ","), ",")
 				if len(path) == 3 {
-					return path[0], path[1], path[2], nil
+					return &CircuitHops{
+						Guard:  path[0],
+						Middle: path[1],
+						Exit:   path[2],
+					}, nil
 				}
 			}
 		}
 
 		if time.Now().After(deadline) {
-			return "", "", "", apperr.New("nessun circuito 3-hop BUILT trovato")
+			return nil, apperr.New("nessun circuito 3-hop BUILT trovato")
 		}
 		time.Sleep(500 * time.Millisecond)
 	}

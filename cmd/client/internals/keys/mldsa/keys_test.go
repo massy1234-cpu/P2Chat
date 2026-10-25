@@ -105,7 +105,7 @@ func TestSignature(t *testing.T) {
 
 	var rawKey mldsa87.PrivateKey
 
-	buffer, err := rawPriv.Open()
+	buffer, err := rawPriv.open()
 	if err != nil {
 		t.Fatal("error during open Enclave")
 	}

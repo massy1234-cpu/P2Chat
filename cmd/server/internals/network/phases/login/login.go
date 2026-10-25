@@ -1,7 +1,7 @@
 package login
 
 import (
-	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
+	"P2Chat/cmd/client/internals/keys/mldsa"
 	"P2Chat/cmd/client/internals/p2version"
 	powproto "P2Chat/cmd/client/internals/proto_generated/PoW/proto_struct_pow"
 	loginproto "P2Chat/cmd/client/internals/proto_generated/login/proto_struct_login"
@@ -13,7 +13,6 @@ import (
 	blind "P2Chat/cmd/server/internals/network/blind_signature"
 	"P2Chat/cmd/server/internals/network/dispatcher"
 	"P2Chat/cmd/server/internals/network/phases"
-	bundleproto "P2Chat/cmd/server/internals/proto_generated/pqxdh/proto_struct_bundle"
 	"P2Chat/pkg/apperr"
 	"bytes"
 	"crypto/rand"
@@ -138,8 +137,8 @@ func handleRequest(result *phases.Result, currentState *LoginServer, byteCode by
 		currentState.blinded = append(currentState.blinded, append([]byte(nil), encoded...))
 	}
 	level := currentState.Level
-	if level == 0 {
-		level = pow.Level5
+	if level < pow.Level1 || level > pow.Level5 {
+		return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid login PoW level"))
 	}
 	secret := memguard.NewBufferRandom(32)
 	challenge, err := pow.Issue(secret.Bytes(), level)
@@ -215,7 +214,7 @@ func handleProof(result *phases.Result, currentState *LoginServer, byteCode byte
 	if err := proto.Unmarshal(msg, proof); err != nil {
 		return phases.FillResult(result, nil, 0, false, true, err)
 	}
-	if len(proof.BundleId) != 32 || len(proof.MldsaSignature) != mldsa87.SignatureSize || len(proof.X25519Signature) != 64 || proof.Version != currentState.nonce.Version || proof.Timestamp != currentState.nonce.Timestamp {
+	if len(proof.BundleId) != 32 || len(proof.MldsaSignature) != mldsa_keys.SignatureSize || len(proof.X25519Signature) != 64 || proof.Version != currentState.nonce.Version || proof.Timestamp != currentState.nonce.Timestamp {
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid login proof fields"))
 	}
 	if len(proof.Blinded) != 3 || len(currentState.blinded) != 3 {
@@ -226,20 +225,13 @@ func handleProof(result *phases.Result, currentState *LoginServer, byteCode byte
 			return phases.FillResult(result, nil, 0, false, true, apperr.New("login blind request changed"))
 		}
 	}
-	stored, err := database.GetValue(proof.BundleId)
+	bundle, err := database.LoadPublicBundle(proof.BundleId)
 	if err != nil {
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("registered bundle not found"))
 	}
-	bundle := &bundleproto.UserBundle{}
-	if err := proto.Unmarshal(stored, bundle); err != nil {
-		return phases.FillResult(result, nil, 0, false, true, err)
-	}
-	if bundle.PublicBundle == nil {
-		return phases.FillResult(result, nil, 0, false, true, apperr.New("registered bundle is invalid"))
-	}
 	message := loginproto.SigningMessage(currentState.serverID, currentState.Binding, proof.BundleId, currentState.nonce, proof.Blinded)
-	ok, err := mldsa.VerifySignature(bundle.PublicBundle.IkMldsa, message, nil, proof.MldsaSignature)
-	if err != nil || !ok || !x25519.VerifySignature(bundle.PublicBundle.IkX25519, message, proof.X25519Signature) {
+	ok, err := mldsa.VerifySignature(bundle.IkMldsa, message, nil, proof.MldsaSignature)
+	if err != nil || !ok || !x25519.VerifySignature(bundle.IkX25519, message, proof.X25519Signature) {
 		return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid login identity signatures"))
 	}
 	keys, err := blind.GetLoginKeys()
@@ -247,7 +239,7 @@ func handleProof(result *phases.Result, currentState *LoginServer, byteCode byte
 		return phases.FillResult(result, nil, 0, false, true, err)
 	}
 	reply := &loginproto.LoginResult{KeyHash: keys.Hash[:], ExpiresAt: keys.ExpiresAt}
-	pk := keys.Keys.Pk.Y.Bytes()
+	pk := keys.Keys.Pk.Bytes()
 	reply.PublicKey = pk[:]
 	for _, encoded := range currentState.blinded {
 		var point bls.G1Affine

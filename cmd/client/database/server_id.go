@@ -11,24 +11,12 @@ import (
 	bbolt "go.etcd.io/bbolt"
 )
 
-type ServerAddress struct {
-	Endpoint string
-	IP       string
-}
-
-var (
-	keyServerIdentity = []byte("identity")
-	keyServerEndpoint = []byte("endpoint")
-	keyServerIP       = []byte("observed-ip")
-	keyLoginBundle    = []byte("login-bundle")
-	bucketServerUsers = []byte("users")
-)
-
 // SaveServerID checks whether the verified identity exists before storing it.
 func SaveServerID(serverID *idserver.IDServer) (bool, error) {
-	if !IsInitialized() {
-		return false, apperr.New("database not initialized")
-	}
+	return defaultStore.SaveServerID(serverID)
+}
+
+func (s *Store) SaveServerID(serverID *idserver.IDServer) (bool, error) {
 	if serverID == nil || len(serverID.ID) != 32 {
 		return false, apperr.New("invalid server ID")
 	}
@@ -39,21 +27,21 @@ func SaveServerID(serverID *idserver.IDServer) (bool, error) {
 		return false, apperr.Wrap("serialize server ID", err)
 	}
 	exists := false
-	err = DB.Update(func(tx *bbolt.Tx) error {
-		servers, err := tx.CreateBucketIfNotExists(bucketServers)
+	err = s.update(func(tx *bbolt.Tx) error {
+		servers, err := tx.CreateBucketIfNotExists([]byte(bucketServersName))
 		if err != nil {
 			return err
 		}
 		bucket := servers.Bucket(serverID.ID)
 		if bucket != nil {
 			exists = true
-			return checkStoredIdentity(bucket.Get(keyServerIdentity), &identity)
+			return checkStoredIdentity(bucket.Get([]byte(keyServerIdentityName)), &identity)
 		}
 		bucket, err = servers.CreateBucket(serverID.ID)
 		if err != nil {
 			return err
 		}
-		return bucket.Put(keyServerIdentity, serialized)
+		return bucket.Put([]byte(keyServerIdentityName), serialized)
 	})
 	if err != nil {
 		return false, apperr.Wrap("save server ID", err)
@@ -61,14 +49,24 @@ func SaveServerID(serverID *idserver.IDServer) (bool, error) {
 	return exists, nil
 }
 
+// ServerRegistrationStatus represents the outcome of verifying and storing a known server.
+type ServerRegistrationStatus struct {
+	AlreadyExists   bool
+	EndpointChanged bool
+}
+
 // SaveKnownServer create the buckets for the server identification process and save the IDServer bundle (blacklist, endpoint, id, IP)
-func SaveKnownServer(serverID *idserver.IDServer, endpoint string) (bool, bool, error) {
-	if !IsInitialized() || serverID == nil || len(serverID.ID) != 32 {
-		return false, false, apperr.New("invalid server identity or database not initialized")
+func SaveKnownServer(serverID *idserver.IDServer, endpoint string) (*ServerRegistrationStatus, error) {
+	return defaultStore.SaveKnownServer(serverID, endpoint)
+}
+
+func (s *Store) SaveKnownServer(serverID *idserver.IDServer, endpoint string) (*ServerRegistrationStatus, error) {
+	if serverID == nil || len(serverID.ID) != 32 {
+		return nil, apperr.New("invalid server identity")
 	}
 	host, _, err := net.SplitHostPort(endpoint)
 	if err != nil {
-		return false, false, apperr.Wrap("invalid server endpoint", err)
+		return nil, apperr.Wrap("invalid server endpoint", err)
 	}
 	address := ServerAddress{Endpoint: endpoint}
 	if ip := net.ParseIP(host); ip != nil {
@@ -78,17 +76,17 @@ func SaveKnownServer(serverID *idserver.IDServer, endpoint string) (bool, bool, 
 	identity.MldsaSign, identity.X25519Sign = nil, nil
 	serialized, err := messagepack.Marshal(&identity)
 	if err != nil {
-		return false, false, err
+		return nil, err
 	}
 	exists := false
 	changed := false
 	blocked := false
-	err = DB.Update(func(tx *bbolt.Tx) error {
-		servers, err := tx.CreateBucketIfNotExists(bucketServers)
+	err = s.update(func(tx *bbolt.Tx) error {
+		servers, err := tx.CreateBucketIfNotExists([]byte(bucketServersName))
 		if err != nil {
 			return err
 		}
-		blacklist, err := tx.CreateBucketIfNotExists(bucketServerBlacklist)
+		blacklist, err := tx.CreateBucketIfNotExists([]byte(bucketServerBlacklistName))
 		if err != nil {
 			return err
 		}
@@ -113,52 +111,54 @@ func SaveKnownServer(serverID *idserver.IDServer, endpoint string) (bool, bool, 
 			if err != nil {
 				return err
 			}
-			if err := bucket.Put(keyServerIdentity, serialized); err != nil {
+			if err := bucket.Put([]byte(keyServerIdentityName), serialized); err != nil {
 				return err
 			}
 		} else {
 			exists = true
-			if err := checkStoredIdentity(bucket.Get(keyServerIdentity), &identity); err != nil {
+			if err := checkStoredIdentity(bucket.Get([]byte(keyServerIdentityName)), &identity); err != nil {
 				return err
 			}
 		}
-		previousEndpoint := bucket.Get(keyServerEndpoint)
+		previousEndpoint := bucket.Get([]byte(keyServerEndpointName))
 		changed = exists && previousEndpoint != nil && !bytes.Equal(previousEndpoint, []byte(address.Endpoint))
 		if !bytes.Equal(previousEndpoint, []byte(address.Endpoint)) {
-			if err := bucket.Put(keyServerEndpoint, []byte(address.Endpoint)); err != nil {
+			if err := bucket.Put([]byte(keyServerEndpointName), []byte(address.Endpoint)); err != nil {
 				return err
 			}
 		}
-		if !bytes.Equal(bucket.Get(keyServerIP), []byte(address.IP)) {
-			return bucket.Put(keyServerIP, []byte(address.IP))
+		if !bytes.Equal(bucket.Get([]byte(keyServerIPName)), []byte(address.IP)) {
+			return bucket.Put([]byte(keyServerIPName), []byte(address.IP))
 		}
 		return nil
 	})
 	if err != nil {
-		return false, false, apperr.Wrap("save server endpoint", err)
+		return nil, apperr.Wrap("save server endpoint", err)
 	}
 	if blocked {
-		return false, false, apperr.New("server identity changed for pinned endpoint")
+		return nil, apperr.New("server identity changed for pinned endpoint")
 	}
-	return exists, changed, nil
-}
-
-type LoginBundle struct {
-	LocalID  int
-	BundleID []byte
+	return &ServerRegistrationStatus{
+		AlreadyExists:   exists,
+		EndpointChanged: changed,
+	}, nil
 }
 
 func SaveLoginBundle(serverID []byte, bundle *LoginBundle) error {
-	if !IsInitialized() || len(serverID) != 32 || bundle == nil || len(bundle.BundleID) != 32 || bundle.LocalID < 0 {
+	return defaultStore.SaveLoginBundle(serverID, bundle)
+}
+
+func (s *Store) SaveLoginBundle(serverID []byte, bundle *LoginBundle) error {
+	if len(serverID) != 32 || bundle == nil || len(bundle.BundleID) != 32 || bundle.LocalID < 0 {
 		return apperr.New("invalid login bundle")
 	}
-	return DB.Update(func(tx *bbolt.Tx) error {
-		servers := tx.Bucket(bucketServers)
+	return s.update(func(tx *bbolt.Tx) error {
+		servers := tx.Bucket([]byte(bucketServersName))
 		if servers == nil {
 			return apperr.New("servers bucket not found")
 		}
 		server := servers.Bucket(serverID)
-		if server == nil || server.Get(keyServerIdentity) == nil {
+		if server == nil || server.Get([]byte(keyServerIdentityName)) == nil {
 			return apperr.New("server identity not found")
 		}
 		privateBundle, err := loadPrivateBundle(tx, bundle.BundleID)
@@ -168,25 +168,29 @@ func SaveLoginBundle(serverID []byte, bundle *LoginBundle) error {
 		if privateBundle.ID != bundle.LocalID {
 			return apperr.New("login bundle does not match local private bundle")
 		}
-		return server.Put(keyLoginBundle, bundle.BundleID)
+		return server.Put([]byte(keyLoginBundleName), bundle.BundleID)
 	})
 }
 
 func LoadLoginBundle(serverID []byte) (*LoginBundle, error) {
-	if !IsInitialized() || len(serverID) != 32 {
-		return nil, apperr.New("invalid server ID or database not initialized")
+	return defaultStore.LoadLoginBundle(serverID)
+}
+
+func (s *Store) LoadLoginBundle(serverID []byte) (*LoginBundle, error) {
+	if len(serverID) != 32 {
+		return nil, apperr.New("invalid server ID")
 	}
 	var bundle *LoginBundle
-	err := DB.View(func(tx *bbolt.Tx) error {
-		servers := tx.Bucket(bucketServers)
+	err := s.view(func(tx *bbolt.Tx) error {
+		servers := tx.Bucket([]byte(bucketServersName))
 		if servers == nil {
 			return nil
 		}
 		server := servers.Bucket(serverID)
-		if server == nil || server.Get(keyLoginBundle) == nil {
+		if server == nil || server.Get([]byte(keyLoginBundleName)) == nil {
 			return nil
 		}
-		bundleID := append([]byte(nil), server.Get(keyLoginBundle)...)
+		bundleID := append([]byte(nil), server.Get([]byte(keyLoginBundleName))...)
 		if len(bundleID) != 32 {
 			return apperr.New("invalid stored login bundle")
 		}
@@ -222,7 +226,7 @@ func findServerByEndpoint(servers *bbolt.Bucket, endpoint string) []byte {
 			continue
 		}
 		server := servers.Bucket(serverID)
-		if server != nil && bytes.Equal(server.Get(keyServerEndpoint), []byte(endpoint)) {
+		if server != nil && bytes.Equal(server.Get([]byte(keyServerEndpointName)), []byte(endpoint)) {
 			return append([]byte(nil), serverID...)
 		}
 	}

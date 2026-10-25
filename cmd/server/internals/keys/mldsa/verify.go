@@ -1,18 +1,13 @@
 package mldsa_keys
 
 import (
-	mldsa87 "P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
-	"P2Chat/pkg/apperr"
+	mldsa "P2Chat/cmd/client/internals/keys/mldsa"
 )
 
 // DecodePublicKey converts the packed ML-DSA public key bytes (as stored in the
-// PublicBundle ik_mldsa field) into a raw ML-DSA public key.
-func DecodePublicKey(publicKey []byte) (*mldsa87.PublicKey, error) {
-	var rawKey mldsa87.PublicKey
-	if err := rawKey.UnmarshalBinary(publicKey); err != nil {
-		return nil, apperr.Wrap("convert bytes in public key", err)
-	}
-	return &rawKey, nil
+// PublicBundle ik_mldsa field) into an operational ML-DSA object.
+func DecodePublicKey(publicKey []byte) (*mldsa.PublicMLDSA, error) {
+	return mldsa.NewPublicKey(publicKey)
 }
 
 // VerifySignature verifies an ML-DSA signature over msg with the given context.
@@ -22,5 +17,5 @@ func VerifySignature(publicKey []byte, msg, ctx, sig []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return mldsa87.Verify(rawKey, msg, ctx, sig), nil
+	return rawKey.Verify(msg, ctx, sig), nil
 }

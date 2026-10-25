@@ -1,7 +1,6 @@
 package server_identification
 
 import (
-	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
 	"P2Chat/cmd/client/database"
 	mldsa_keys "P2Chat/cmd/client/internals/keys/mldsa"
 	"P2Chat/cmd/client/internals/network/phases"
@@ -88,8 +87,8 @@ func handleIdentity(result *phases.Result, currentState *IdentificationClient, b
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.Wrap("decode server identification", err))
 	}
 	if response.VersionP2 > 255 || len(response.Id) != 32 ||
-		len(response.PubMldsa) != mldsa87.PublicKeySize || len(response.PubX25519) != 32 ||
-		len(response.MldsaSign) != mldsa87.SignatureSize || len(response.X25519Sign) != 64 {
+		len(response.PubMldsa) != mldsa_keys.PublicKeySize || len(response.PubX25519) != 32 ||
+		len(response.MldsaSign) != mldsa_keys.SignatureSize || len(response.X25519Sign) != 64 {
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid server identification fields"))
 	}
 	hash := sha256.New()
@@ -102,11 +101,11 @@ func handleIdentity(result *phases.Result, currentState *IdentificationClient, b
 	message = append(message, currentState.nonce[:]...)
 	message = append(message, currentState.Binding...)
 
-	var publicKey mldsa87.PublicKey
-	if err := publicKey.UnmarshalBinary(response.PubMldsa); err != nil {
+	publicKey, err := mldsa_keys.NewPublicKey(response.PubMldsa)
+	if err != nil {
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.Wrap("decode server ML-DSA key", err))
 	}
-	if !(&mldsa_keys.PublicMLDSA{Key: &publicKey}).Verify(message, nil, response.MldsaSign) ||
+	if !publicKey.Verify(message, nil, response.MldsaSign) ||
 		!x25519_keys.VerifySignature(response.PubX25519, message, response.X25519Sign) {
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid server identification signatures"))
 	}
@@ -116,11 +115,15 @@ func handleIdentity(result *phases.Result, currentState *IdentificationClient, b
 		PubMLDSA: response.PubMldsa, PubX25519: response.PubX25519,
 	}
 	var exists, changed bool
-	var err error
 	if currentState.Endpoint == "" {
 		exists, err = database.SaveServerID(serverID)
 	} else {
-		exists, changed, err = database.SaveKnownServer(serverID, currentState.Endpoint)
+		var status *database.ServerRegistrationStatus
+		status, err = database.SaveKnownServer(serverID, currentState.Endpoint)
+		if status != nil {
+			exists = status.AlreadyExists
+			changed = status.EndpointChanged
+		}
 	}
 	if err != nil {
 		return phases.FillResult(result, nil, 0, false, true, nil, err)

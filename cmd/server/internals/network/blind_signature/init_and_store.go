@@ -99,7 +99,7 @@ func GenerateKeyPair() (*PrivateKey, *PublicKey, error) {
 	var Y bls.G2Affine
 	Y.FromJacobian(&Yj)
 
-	return &PrivateKey{x: enclave}, &PublicKey{Y: Y}, nil
+	return &PrivateKey{x: enclave}, &PublicKey{point: Y}, nil
 }
 
 // GenerateBlindKeys creates a new blind-signature key pair.
@@ -146,7 +146,7 @@ func GetPublicKeyByHash(hash []byte) *PublicKey {
 	if pk == nil {
 		return nil
 	}
-	serialized := pk.Y.Bytes()
+	serialized := pk.point.Bytes()
 	fingerprint := sha256.Sum256(serialized[:])
 	if !bytes.Equal(fingerprint[:], hash) {
 		return nil
@@ -189,7 +189,7 @@ func GetLoginKeys() (*LoginKeys, error) {
 	if err != nil {
 		return nil, err
 	}
-	public := pk.Y.Bytes()
+	public := pk.point.Bytes()
 	loginKeys = &LoginKeys{Keys: &KeysBlindSignature{Sk: sk, Pk: pk}, Hash: sha256.Sum256(public[:]), ExpiresAt: time.Now().Add(24 * time.Hour).Unix()}
 	return loginKeys, nil
 }

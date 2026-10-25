@@ -6,6 +6,7 @@ import (
 	"P2Chat/cmd/client/internals/keys/x25519"
 	"P2Chat/cmd/client/internals/network/phases"
 	serverproto "P2Chat/cmd/client/internals/proto_generated/server_identification/proto_struct_server"
+	"P2Chat/cmd/client/internals/storage"
 	idserver "P2Chat/cmd/server/internals/ID_server"
 	"bytes"
 	"crypto/sha256"
@@ -13,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -55,13 +55,15 @@ func TestIdentificationVerification(t *testing.T) {
 			if err := serverConn.Handshake(); err != nil {
 				t.Fatal(err)
 			}
-			db, err := bbolt.Open(filepath.Join(t.TempDir(), "identity.db"), 0600, nil)
-			if err != nil {
+			previousRoot := storage.ProjectRoot
+			storage.ProjectRoot = t.TempDir()
+			if err := database.Init(); err != nil {
 				t.Fatal(err)
 			}
-			oldDB := database.DB
-			database.DB = db
-			defer func() { database.DB = oldDB; db.Close() }()
+			defer func() {
+				_ = database.CloseDB()
+				storage.ProjectRoot = previousRoot
+			}()
 			clientTLSState := conn.ConnectionState()
 			clientBinding, err := clientTLSState.ExportKeyingMaterial("EXPORTER-Channel-Binding", nil, 32)
 			if err != nil {
@@ -137,7 +139,7 @@ func TestIdentificationVerification(t *testing.T) {
 				if name != "oversized payload" && phaseState.(*IdentificationClient).state != stateFailed {
 					t.Fatal("failed identification was not marked as failed")
 				}
-				if err := db.View(func(tx *bbolt.Tx) error {
+				if err := database.DB.View(func(tx *bbolt.Tx) error {
 					servers := tx.Bucket([]byte("servers"))
 					if servers != nil {
 						serverID, _ := servers.Cursor().First()
@@ -155,7 +157,7 @@ func TestIdentificationVerification(t *testing.T) {
 				t.Fatalf("valid response rejected: %+v", result)
 			}
 			var stored idserver.IDServer
-			if err := db.View(func(tx *bbolt.Tx) error {
+			if err := database.DB.View(func(tx *bbolt.Tx) error {
 				return messagepack.Unmarshal(tx.Bucket([]byte("servers")).Bucket(id).Get([]byte("identity")), &stored)
 			}); err != nil {
 				t.Fatal(err)

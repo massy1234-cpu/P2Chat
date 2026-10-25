@@ -57,7 +57,7 @@ func AvailabilityHandler(byteCode byte, msg []byte, phaseState *any) *phases.Res
 
 		present := false
 		if currentState.authenticated {
-			_, err := database.GetValue(append([]byte("nickname:"), request.Nickname...))
+			_, err := database.GetBundleIDByNickname(request.Nickname)
 			present = err == nil
 		}
 		response, err := proto.Marshal(&bundle_request_structs.BundleAvailabilityResponse{

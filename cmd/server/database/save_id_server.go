@@ -11,22 +11,23 @@ import (
 
 var ErrorNotFound error
 
-// SaveID stores the IK keys in the database under the "SERVER_IK" key.
+// SaveID stores the IK keys in the database under the server identity key.
 func SaveID(s *identityproto.StoredServerIdentity) error {
-	if !IsInitialized() {
-		return apperr.New("database not initialized")
-	}
-	if s == nil {
+	return defaultStore.SaveID(s)
+}
+
+func (s *Store) SaveID(identity *identityproto.StoredServerIdentity) error {
+	if identity == nil {
 		return apperr.New("server identity is nil")
 	}
 
-	serialized, err := proto.Marshal(s)
+	serialized, err := proto.Marshal(identity)
 	if err != nil {
 		return apperr.Wrap("marshal server identity", err)
 	}
 
-	err = db_manager.Update(func(txn *badger.Txn) error {
-		return txn.Set([]byte("SERVER_IK"), serialized)
+	err = s.update(func(txn *badger.Txn) error {
+		return txn.Set([]byte(keyServerIdentity), serialized)
 	})
 	if err != nil {
 		return apperr.Wrap("save IK into the database", err)
@@ -37,14 +38,14 @@ func SaveID(s *identityproto.StoredServerIdentity) error {
 
 // LoadID returns the server identity stored as one protobuf message.
 func LoadID() (bool, *identityproto.StoredServerIdentity, error) {
-	if !IsInitialized() {
-		return false, nil, apperr.New("database not initialized")
-	}
+	return defaultStore.LoadID()
+}
 
+func (s *Store) LoadID() (bool, *identityproto.StoredServerIdentity, error) {
 	var getErr error
 	var ikScheme []byte
-	getErr = db_manager.View(func(txn *badger.Txn) error {
-		val, err := txn.Get([]byte("SERVER_IK"))
+	getErr = s.view(func(txn *badger.Txn) error {
+		val, err := txn.Get([]byte(keyServerIdentity))
 		if err != nil {
 			return err
 		}

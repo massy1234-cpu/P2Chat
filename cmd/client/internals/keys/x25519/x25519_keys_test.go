@@ -10,7 +10,7 @@ import (
 
 func rawPrivateKey(t *testing.T, enclave *PrivateX25519) *ecdh.PrivateKey {
 	t.Helper()
-	buffer, err := enclave.Open()
+	buffer, err := enclave.open()
 	if err != nil {
 		t.Fatalf("open enclave: %v", err)
 	}
@@ -61,19 +61,10 @@ func TestDeriveSecretShared(t *testing.T) {
 		t.Fatalf("bob derive: %v", err)
 	}
 
-	aBuf, err := aliceSecret.Open()
-	if err != nil {
-		t.Fatalf("open alice secret: %v", err)
-	}
-	defer aBuf.Destroy()
+	defer aliceSecret.Destroy()
+	defer bobSecret.Destroy()
 
-	bBuf, err := bobSecret.Open()
-	if err != nil {
-		t.Fatalf("open bob secret: %v", err)
-	}
-	defer bBuf.Destroy()
-
-	if !aBuf.EqualTo(bBuf.Bytes()) {
+	if !aliceSecret.EqualTo(bobSecret.Bytes()) {
 		t.Fatal("shared secrets differ")
 	}
 }

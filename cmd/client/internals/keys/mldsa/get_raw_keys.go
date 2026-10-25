@@ -1,28 +1,23 @@
 package mldsa_keys
 
 import (
-	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
 	hsm "P2Chat/cmd/client/internals/encryption/encryption_hsm"
 	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	"P2Chat/pkg/apperr"
 	"github.com/awnumar/memguard"
 )
 
-// DecodePublicKey converts the packed public-key bytes from the protobuf payload into a raw ML-DSA public key
+// DecodePublicKey converts the packed public-key bytes from the protobuf payload into an operational ML-DSA object
 func DecodePublicKey(publicKey *struct_mldsa.PublicKeyMLDSA) (*PublicMLDSA, error) {
-	var rawKey mldsa87.PublicKey
-
-	err := rawKey.UnmarshalBinary(publicKey.Key)
-	if err != nil {
-		return nil, apperr.Wrap("convert bytes in public key", err)
+	if publicKey == nil {
+		return nil, apperr.New("public ML-DSA payload is nil")
 	}
-
-	return &PublicMLDSA{Key: &rawKey}, nil
+	return NewPublicKey(publicKey.GetKey())
 
 }
 
 // DecodePrivateKey decrypts the stored private-key payload and returns it sealed
-// in a memguard Enclave until the caller explicitly opens it. It derives the AES
+// in a private object whose methods open the enclave internally. It derives the AES
 // key via Argon2id or decrypts through the HSM, depending on how the key was protected.
 func DecodePrivateKey(password *memguard.Enclave, privateKey *struct_mldsa.PrivateKeyMLDSA) (*PrivateMLDSA, error) {
 	if password == nil {
@@ -45,7 +40,7 @@ func DecodePrivateKey(password *memguard.Enclave, privateKey *struct_mldsa.Priva
 	if err != nil {
 		return nil, apperr.Wrap("decrypt ML-DSA private key", err)
 	}
-	return &PrivateMLDSA{Enclave: plaintext}, nil
+	return &PrivateMLDSA{enclave: plaintext}, nil
 }
 
 // DecodePairKeys decodes the public key and decrypts the private key together.

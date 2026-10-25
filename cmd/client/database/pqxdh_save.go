@@ -10,31 +10,27 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-var (
-	keyPrivateBundle = []byte("private-bundle")
-	keyCommitment    = []byte("commitment:rawbytes")
-	bucketCurveSets  = []byte("curve-sets")
-	bucketKEMSets    = []byte("kem-sets")
-)
-
 func SaveSets(arraySet [][]byte, bundleID []byte, setType string) error {
+	return defaultStore.SaveSets(arraySet, bundleID, setType)
+}
 
-	if !IsInitialized() || len(bundleID) != 32 {
+func (s *Store) SaveSets(arraySet [][]byte, bundleID []byte, setType string) error {
+	if len(bundleID) != 32 {
 		return apperr.New("invalid private sets storage parameters")
 	}
 
 	var setBucketName []byte
 	switch setType {
 	case "curve":
-		setBucketName = bucketCurveSets
+		setBucketName = []byte(bucketCurveSetsName)
 	case "kem":
-		setBucketName = bucketKEMSets
+		setBucketName = []byte(bucketKEMSetsName)
 	default:
 		return apperr.New("invalid private set type")
 	}
 
-	err := DB.Update(func(tx *bbolt.Tx) error {
-		root, err := tx.CreateBucketIfNotExists(bucketPrivateBundles)
+	err := s.update(func(tx *bbolt.Tx) error {
+		root, err := tx.CreateBucketIfNotExists([]byte(bucketPrivateBundlesName))
 		if err != nil {
 			return err
 		}
@@ -67,15 +63,19 @@ func SaveSets(arraySet [][]byte, bundleID []byte, setType string) error {
 }
 
 func SaveCommitment(commitment *commitmentproto.CommitmentSchemePrivate, bundleID []byte) error {
-	if !IsInitialized() || commitment == nil || len(bundleID) != 32 {
+	return defaultStore.SaveCommitment(commitment, bundleID)
+}
+
+func (s *Store) SaveCommitment(commitment *commitmentproto.CommitmentSchemePrivate, bundleID []byte) error {
+	if commitment == nil || len(bundleID) != 32 {
 		return apperr.New("invalid commitment storage parameters")
 	}
 	serialized, err := proto.Marshal(commitment)
 	if err != nil {
 		return apperr.Wrap("serialize private commitment", err)
 	}
-	return DB.Update(func(tx *bbolt.Tx) error {
-		root, err := tx.CreateBucketIfNotExists(bucketPrivateBundles)
+	return s.update(func(tx *bbolt.Tx) error {
+		root, err := tx.CreateBucketIfNotExists([]byte(bucketPrivateBundlesName))
 		if err != nil {
 			return err
 		}
@@ -83,26 +83,30 @@ func SaveCommitment(commitment *commitmentproto.CommitmentSchemePrivate, bundleI
 		if err != nil {
 			return err
 		}
-		return bundle.Put(keyCommitment, serialized)
+		return bundle.Put([]byte(keyCommitmentName), serialized)
 	})
 }
 
 func LoadCommitment(bundleID []byte) (*commitmentproto.CommitmentSchemePrivate, error) {
-	if !IsInitialized() || len(bundleID) != 32 {
+	return defaultStore.LoadCommitment(bundleID)
+}
+
+func (s *Store) LoadCommitment(bundleID []byte) (*commitmentproto.CommitmentSchemePrivate, error) {
+	if len(bundleID) != 32 {
 		return nil, apperr.New("invalid commitment load parameters")
 	}
 	var commitment *commitmentproto.CommitmentSchemePrivate
-	err := DB.View(func(tx *bbolt.Tx) error {
-		root := tx.Bucket(bucketPrivateBundles)
+	err := s.view(func(tx *bbolt.Tx) error {
+		root := tx.Bucket([]byte(bucketPrivateBundlesName))
 		if root == nil {
 			return apperr.New("private bundles bucket not found")
 		}
 		bundle := root.Bucket(bundleID)
-		if bundle == nil || bundle.Get(keyCommitment) == nil {
+		if bundle == nil || bundle.Get([]byte(keyCommitmentName)) == nil {
 			return apperr.New("private commitment not found")
 		}
 		stored := &commitmentproto.CommitmentSchemePrivate{}
-		if err := proto.Unmarshal(bundle.Get(keyCommitment), stored); err != nil {
+		if err := proto.Unmarshal(bundle.Get([]byte(keyCommitmentName)), stored); err != nil {
 			return apperr.Wrap("decode private commitment", err)
 		}
 		commitment = stored
@@ -113,8 +117,11 @@ func LoadCommitment(bundleID []byte) (*commitmentproto.CommitmentSchemePrivate, 
 
 // save the private part of the bundle inside the database, serialize the privateBundle inside of it
 func SavePrivateBundle(privateBundle *structures.PrivateBundle, bundleID []byte) error {
+	return defaultStore.SavePrivateBundle(privateBundle, bundleID)
+}
 
-	if !IsInitialized() || privateBundle == nil || privateBundle.ID < 0 || len(bundleID) != 32 {
+func (s *Store) SavePrivateBundle(privateBundle *structures.PrivateBundle, bundleID []byte) error {
+	if privateBundle == nil || privateBundle.ID < 0 || privateBundle.SPKID < 0 || privateBundle.LastResortID < 0 || len(bundleID) != 32 {
 		return apperr.New("invalid private bundle storage parameters")
 	}
 
@@ -125,8 +132,8 @@ func SavePrivateBundle(privateBundle *structures.PrivateBundle, bundleID []byte)
 		return apperr.Wrap("error during serialization of the private struct: ", err)
 	}
 
-	err = DB.Update(func(tx *bbolt.Tx) error {
-		root, err := tx.CreateBucketIfNotExists(bucketPrivateBundles)
+	err = s.update(func(tx *bbolt.Tx) error {
+		root, err := tx.CreateBucketIfNotExists([]byte(bucketPrivateBundlesName))
 		if err != nil {
 			return err
 		}
@@ -136,7 +143,7 @@ func SavePrivateBundle(privateBundle *structures.PrivateBundle, bundleID []byte)
 		}
 
 		// the database must contains only the private part, not the public
-		if err := bucket.Put(keyPrivateBundle, serializedStruct); err != nil {
+		if err := bucket.Put([]byte(keyPrivateBundleName), serializedStruct); err != nil {
 			return err
 		}
 
@@ -150,19 +157,19 @@ func SavePrivateBundle(privateBundle *structures.PrivateBundle, bundleID []byte)
 }
 
 func loadPrivateBundle(tx *bbolt.Tx, bundleID []byte) (*structures.PrivateBundle, error) {
-	root := tx.Bucket(bucketPrivateBundles)
+	root := tx.Bucket([]byte(bucketPrivateBundlesName))
 	if root == nil {
 		return nil, apperr.New("private bundles bucket not found")
 	}
 	bucket := root.Bucket(bundleID)
-	if bucket == nil || bucket.Get(keyPrivateBundle) == nil {
+	if bucket == nil || bucket.Get([]byte(keyPrivateBundleName)) == nil {
 		return nil, apperr.New("private bundle not found")
 	}
 	privateBundle := &structures.PrivateBundle{}
-	if err := messagepack.Unmarshal(bucket.Get(keyPrivateBundle), privateBundle); err != nil {
+	if err := messagepack.Unmarshal(bucket.Get([]byte(keyPrivateBundleName)), privateBundle); err != nil {
 		return nil, apperr.Wrap("decode private bundle", err)
 	}
-	if privateBundle.ID < 0 {
+	if privateBundle.ID < 0 || privateBundle.SPKID < 0 || privateBundle.LastResortID < 0 {
 		return nil, apperr.New("invalid stored private bundle")
 	}
 	return privateBundle, nil

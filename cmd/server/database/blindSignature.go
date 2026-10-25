@@ -23,9 +23,13 @@ func InitSignature() error {
 		return nil
 	}
 
-	db, err := badger.Open(badger.DefaultOptions(filepath.Join(storage.BasePath, "token_db")))
+	db, err := badger.Open(badger.DefaultOptions(filepath.Join(storage.BasePath, tokenDatabaseDirectory)).WithSyncWrites(true))
 	if err != nil {
 		return apperr.Wrap("error during open token database", err)
+	}
+	if err := initializeTokenSchema(db); err != nil {
+		_ = db.Close()
+		return err
 	}
 	tokenDB = db
 	return nil
@@ -76,7 +80,7 @@ func SaveBlindKey(skEncrypted []byte) error {
 	}
 
 	err := tokenDB.Update(func(txn *badger.Txn) error {
-		return txn.Set([]byte("privateBlindKey"), skEncrypted)
+		return txn.Set([]byte(keyBlindPrivateKey), skEncrypted)
 	})
 	if err != nil {
 		return apperr.Wrap("save encrypted blind signature private key", err)
@@ -95,7 +99,7 @@ func LoadBlindKey() (skEncrypted []byte, err error) {
 
 	var serialized []byte
 	err = tokenDB.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte("privateBlindKey"))
+		item, err := txn.Get([]byte(keyBlindPrivateKey))
 		if err != nil {
 			return err
 		}

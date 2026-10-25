@@ -52,12 +52,12 @@ func Encrypt(password *memguard.Enclave, plaintext *memguard.Enclave, level int,
 	}
 	defer aesKey.Destroy()
 
-	ciphertext, nonce, err := encryption.EncryptAes256(aesKey, plaintextBuffer.Bytes())
+	encrypted, err := encryption.EncryptAes256(aesKey, plaintextBuffer.Bytes())
 	if err != nil {
 		return nil, nil, apperr.Wrap("encrypt with AES-256-GCM", err)
 	}
-	return ciphertext, &EncryptParams{
-		Nonce:      nonce,
+	return encrypted.Ciphertext, &EncryptParams{
+		Nonce:      encrypted.Nonce,
 		Salt:       argonParams.GetSalt(),
 		ArgonLevel: level,
 		HSMMethod:  0,
@@ -92,7 +92,10 @@ func Decrypt(password *memguard.Enclave, ciphertext []byte, params *EncryptParam
 		}
 		defer aesKey.Destroy()
 
-		plaintext, err = encryption.DecryptAes256(aesKey, params.Nonce, ciphertext)
+		plaintext, err = encryption.DecryptAes256(aesKey, &encryption.EncryptedPayload{
+			Ciphertext: ciphertext,
+			Nonce:      params.Nonce,
+		})
 	case 1, 2:
 		plaintext, err = DecryptHSM(password, ciphertext, params.Nonce, int(params.HSMMethod))
 	default:

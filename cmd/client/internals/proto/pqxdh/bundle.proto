@@ -20,6 +20,8 @@ message PublicBundle {
 	bytes last_resort_pqkem = 8;
 	bytes last_resort_pqkem_signed = 9;
 	proto_struct_commitment.CommitmentSchemeUpload commitment_scheme = 10;
+	int32 spk_id = 11;
+	int32 last_resort_id = 12;
 }
 
 // one-time public curve set

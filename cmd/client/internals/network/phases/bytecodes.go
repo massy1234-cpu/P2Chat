@@ -49,4 +49,7 @@ const (
 	BundleAcquisitionConfirmation byte = 0xb3
 	BundleAvailabilityRequest     byte = 0xb4
 	BundleAvailabilityResponse    byte = 0xb5
+	NicknameCatalogRequest        byte = 0xb6
+	NicknameCatalogResponse       byte = 0xb7
+	NicknameCatalogConfirmation   byte = 0xb8
 )

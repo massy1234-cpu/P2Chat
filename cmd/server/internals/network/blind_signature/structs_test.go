@@ -36,9 +36,19 @@ func TestPrivateKeySerializationRoundTrip(t *testing.T) {
 		t.Fatalf("GetPublicKey: %v", err)
 	}
 
-	want := publicKey.Y.Bytes()
-	got := derivedPublicKey.Y.Bytes()
+	want := publicKey.Bytes()
+	got := derivedPublicKey.Bytes()
 	if !bytes.Equal(want[:], got[:]) {
 		t.Fatal("derived public key changed after private key round trip")
+	}
+	decoded, err := NewPublicKey(want[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Bytes() != want {
+		t.Fatal("public key encoding changed")
+	}
+	if _, err := NewPublicKey(make([]byte, 96)); err == nil {
+		t.Fatal("invalid public key accepted")
 	}
 }

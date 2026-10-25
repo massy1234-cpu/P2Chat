@@ -25,8 +25,8 @@ func CreateKey() (privateKeyEnclaved *PrivateX25519, publicKey *PublicX25519, er
 	}
 	defer memguard.WipeBytes(privateKey.Bytes())
 
-	publicKey = &PublicX25519{Key: privateKey.PublicKey()}
-	privateKeyEnclaved = &PrivateX25519{Enclave: memguard.NewEnclave(privateKey.Bytes())}
+	publicKey = &PublicX25519{key: privateKey.PublicKey()}
+	privateKeyEnclaved = &PrivateX25519{enclave: memguard.NewEnclave(privateKey.Bytes())}
 
 	return privateKeyEnclaved, publicKey, nil
 
@@ -34,11 +34,11 @@ func CreateKey() (privateKeyEnclaved *PrivateX25519, publicKey *PublicX25519, er
 
 // Get the public key using the private key
 func (privateKeyEnclaved *PrivateX25519) PublicKey() (publicKey *PublicX25519) {
-	if privateKeyEnclaved == nil || privateKeyEnclaved.Enclave == nil {
+	if privateKeyEnclaved == nil || privateKeyEnclaved.enclave == nil {
 		return nil
 	}
 
-	buffer, err := privateKeyEnclaved.Enclave.Open()
+	buffer, err := privateKeyEnclaved.enclave.Open()
 	if err != nil {
 		return nil
 	}
@@ -49,26 +49,26 @@ func (privateKeyEnclaved *PrivateX25519) PublicKey() (publicKey *PublicX25519) {
 		return nil
 	}
 
-	return &PublicX25519{Key: key.PublicKey()}
+	return &PublicX25519{key: key.PublicKey()}
 
 }
 
 // derivate the shared_secret with the public key of the other user in the comunication
-func (privateKey *PrivateX25519) DeriveSecret(remotePublicKey *PublicX25519) (sharedSecret *memguard.Enclave, err error) {
-	if remotePublicKey == nil || remotePublicKey.Key == nil {
+func (privateKey *PrivateX25519) DeriveSecret(remotePublicKey *PublicX25519) (sharedSecret *memguard.LockedBuffer, err error) {
+	if remotePublicKey == nil || remotePublicKey.key == nil {
 		return nil, apperr.New("remote public X25519 key is nil")
 	}
-	nativePrivateKey, err := privateKey.Native()
+	nativePrivateKey, err := privateKey.native()
 	if err != nil {
 		return nil, err
 	}
 
-	secret, err := nativePrivateKey.ECDH(remotePublicKey.Key)
+	secret, err := nativePrivateKey.ECDH(remotePublicKey.key)
 	if err != nil {
 		return nil, apperr.Wrap("error during the derivation of the shared secret with X25519 key", err)
 	}
 
-	sharedSecret = memguard.NewEnclave(secret)
+	sharedSecret = memguard.NewBufferFromBytes(secret)
 	memguard.WipeBytes(secret)
 
 	return sharedSecret, nil
@@ -80,10 +80,10 @@ func (privateKey *PrivateX25519) DeriveSecret(remotePublicKey *PublicX25519) (sh
 // If useHSM is false, derives an AES key via Argon2id from the password and encrypts with AES-256-GCM.
 // level must be between 1 and 3.
 func (privateKey *PrivateX25519) Encrypt(password *memguard.Enclave, level int, useHSM bool) (*struct_x25519.PrivateKeyX25519, error) {
-	if privateKey == nil || privateKey.Enclave == nil {
+	if privateKey == nil || privateKey.enclave == nil {
 		return nil, apperr.New("private X25519 key is nil")
 	}
-	ciphertext, params, err := HSM.Encrypt(password, privateKey.Enclave, level, useHSM)
+	ciphertext, params, err := HSM.Encrypt(password, privateKey.enclave, level, useHSM)
 	if err != nil {
 		return nil, apperr.Wrap("protect X25519 private key", err)
 	}
@@ -126,7 +126,7 @@ func (privateKey *PrivateX25519) SerializeAndEncrypt(password *memguard.Enclave,
 	return SerializePrivateKey(encrypted)
 }
 
-// DecryptPrivateKey decrypts a serialized PrivateKeyX25519 key and returns the raw key in a memguard Enclave.
+// DecryptPrivateKey decrypts a serialized PrivateKeyX25519 key and returns an operational private-key object.
 func DecryptPrivateKey(password *memguard.Enclave, serialized []byte) (*PrivateX25519, error) {
 
 	var scheme struct_x25519.PrivateKeyX25519
@@ -147,6 +147,6 @@ func DecryptPrivateKey(password *memguard.Enclave, serialized []byte) (*PrivateX
 	if err != nil {
 		return nil, apperr.Wrap("decrypt X25519 private key", err)
 	}
-	return &PrivateX25519{Enclave: privateKey}, nil
+	return &PrivateX25519{enclave: privateKey}, nil
 
 }

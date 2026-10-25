@@ -1,6 +1,7 @@
 package bundlereceive
 
 import (
+	"P2Chat/cmd/client/internals/commitment"
 	"P2Chat/cmd/client/internals/p2log"
 	"P2Chat/cmd/server/database"
 	PQXDH "P2Chat/cmd/server/internals/PQXDH"
@@ -9,14 +10,13 @@ import (
 	blindsignature "P2Chat/cmd/server/internals/network/blind_signature"
 	"P2Chat/cmd/server/internals/network/dispatcher"
 	"P2Chat/cmd/server/internals/network/phases"
+	nicknameexposure "P2Chat/cmd/server/internals/nicknameExposure"
 	powstruct "P2Chat/cmd/server/internals/proto_generated/PoW/proto_struct_pow"
 	upload "P2Chat/cmd/server/internals/proto_generated/pqxdh/proto_struct_bundle"
 	"P2Chat/pkg/apperr"
 	"crypto/rand"
-	"errors"
 
 	bls "github.com/consensys/gnark-crypto/ecc/bls12-381"
-	"github.com/dgraph-io/badger/v4"
 	proto "google.golang.org/protobuf/proto"
 )
 
@@ -214,6 +214,9 @@ func handleBundle(result *phases.Result, currentState *BundleServer, byteCode by
 	if err != nil {
 		return bundleReject(result, currentState, apperr.Wrap("error decoding bundle", err))
 	}
+	if bundle.GetNickname() != currentState.nickname {
+		return bundleReject(result, currentState, apperr.New("bundle nickname does not match reserved nickname"))
+	}
 	if err := validateCommitment(bundle.GetPublicBundle()); err != nil {
 		return bundleReject(result, currentState, err)
 	}
@@ -224,10 +227,12 @@ func handleBundle(result *phases.Result, currentState *BundleServer, byteCode by
 	currentState.payload.Nickname = bundle.GetNickname()
 
 	currentState.idUser = PQXDH.HashPublicIK(bundle.GetPublicBundle())
-	if _, err := database.GetValue(currentState.idUser[:]); err == nil {
-		return bundleReject(result, currentState, apperr.New("bundle ID already exists"))
-	} else if !errors.Is(err, badger.ErrKeyNotFound) {
+	exists, err := database.BundleExists(currentState.idUser[:])
+	if err != nil {
 		return bundleReject(result, currentState, apperr.Wrap("error checking bundle ID", err))
+	}
+	if exists {
+		return bundleReject(result, currentState, apperr.New("bundle ID already exists"))
 	}
 
 	// verify that the two identity-key signatures over originalM are valid ( user bundle validation )
@@ -247,11 +252,14 @@ func handleBundle(result *phases.Result, currentState *BundleServer, byteCode by
 	p2log.Info("bundle decoded and identity signatures verified, proceed with the bundle storage into the database")
 
 	// save the bundle into the database
-	if err := database.SaveBundle(bundle, bundle.GetCurvePublicSets(), bundle.GetKemPublicSets(), currentState.idUser); err != nil {
-		if delErr := database.DeleteAllAssociation(currentState.idUser, []byte(currentState.nickname), len(bundle.GetCurvePublicSets()), len(bundle.GetKemPublicSets())); delErr != nil {
-			p2log.Error("error deleting bundle associations: ", delErr)
-		}
+	if err := database.SaveBundle(bundle, currentState.idUser); err != nil {
 		return bundleReject(result, currentState, apperr.Wrap("error saving bundle", err))
+	}
+	if err := nicknameexposure.AddNickname(bundle.GetNickname()); err != nil {
+		p2log.Error("error updating nickname catalog after bundle storage: ", err)
+		if reloadErr := nicknameexposure.Reload(); reloadErr != nil {
+			p2log.Error("error rebuilding nickname catalog from database: ", reloadErr)
+		}
 	}
 
 	currentState.state = stateCompleted
@@ -263,33 +271,13 @@ func validateCommitment(bundle *upload.PublicBundle) error {
 		return apperr.New("public bundle is missing")
 	}
 
-	commitment := bundle.GetCommitmentScheme()
-	if commitment == nil {
-		return apperr.New("commitment scheme is missing")
-	}
-	if len(commitment.GetCommitment()) == 0 {
-		return apperr.New("commitment is empty")
-	}
-	if len(commitment.GetSignatureMldsa()) == 0 {
-		return apperr.New("commitment ML-DSA signature is empty")
-	}
-	if len(commitment.GetSignatureX25519()) == 0 {
-		return apperr.New("commitment X25519 signature is empty")
-	}
-	if len(commitment.GetNonce()) == 0 {
-		return apperr.New("commitment nonce is empty")
-	}
-	if commitment.GetArgonParams() == nil || len(commitment.GetArgonParams().GetSalt()) == 0 {
-		return apperr.New("commitment Argon parameters are missing")
-	}
-
-	return nil
+	return commitment.ValidateUpload(bundle.GetCommitmentScheme())
 }
 
 // bundleReject releases the reserved nickname, marks the state as failed and
 // sends a negative BundleConfirmation to the client.
 func bundleReject(result *phases.Result, currentState *BundleServer, err error) *phases.Result {
-	if delErr := database.DeleteNickname(currentState.nickname); delErr != nil {
+	if delErr := database.DeleteReservation(currentState.nickname); delErr != nil {
 		p2log.Error("error deleting the reserved nickname: ", delErr)
 	}
 	currentState.state = stateFailed

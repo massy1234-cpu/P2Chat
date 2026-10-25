@@ -14,12 +14,7 @@ func TestSaveAndLoadIDUsesProtobuf(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	previous := db_manager
-	db_manager = db
-	t.Cleanup(func() {
-		db_manager.Close()
-		db_manager = previous
-	})
+	useTestStore(t, db)
 
 	want := &identityproto.StoredServerIdentity{
 		PubMldsa:  []byte("mldsa-public"),
@@ -30,8 +25,8 @@ func TestSaveAndLoadIDUsesProtobuf(t *testing.T) {
 	}
 
 	var raw []byte
-	if err := db_manager.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte("SERVER_IK"))
+	if err := defaultStore.view(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(keyServerIdentity))
 		if err != nil {
 			return err
 		}

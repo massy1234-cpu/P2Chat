@@ -25,20 +25,20 @@ func LoadIdentity(bundle *database.LoginBundle, password *memguard.Enclave) (*Cr
 	if bundle == nil || password == nil || bundle.LocalID < 0 {
 		return nil, apperr.New("missing login credentials")
 	}
-	skMLDSA, pkMLDSA, skX25519, err := pqxdh.LoadIKKeys(password, storage.BasePath, bundle.LocalID)
+	identity, err := pqxdh.LoadIKKeys(password, storage.BasePath, bundle.LocalID)
 	if err != nil {
 		return nil, err
 	}
-	pkX25519 := skX25519.PublicKey()
+	pkX25519 := identity.PrivateX25519.PublicKey()
 	if pkX25519 == nil {
 		return nil, apperr.New("cannot recover X25519 public key")
 	}
-	h1, h2 := sha256.Sum256(pkX25519.Bytes()), sha256.Sum256(pkMLDSA.Key)
+	h1, h2 := sha256.Sum256(pkX25519.Bytes()), sha256.Sum256(identity.PublicMLDSA.Bytes())
 	id := sha256.Sum256(append(h1[:], h2[:]...))
 	if len(bundle.BundleID) != 0 && !bytes.Equal(bundle.BundleID, id[:]) {
 		return nil, apperr.New("local identity keys do not match registered bundle")
 	}
-	return &Credentials{BundleID: id[:], MLDSA: skMLDSA, X25519: skX25519}, nil
+	return &Credentials{BundleID: id[:], MLDSA: identity.PrivateMLDSA, X25519: identity.PrivateX25519}, nil
 }
 
 func SignProof(keys *Credentials, message []byte) ([]byte, error) {

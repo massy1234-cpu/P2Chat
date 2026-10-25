@@ -94,7 +94,7 @@ func TestEncryptionAndDecryption(t *testing.T) {
 				}
 			}
 
-			ciphertext, nonce, err := EncryptAes256(encryptKey, secretBytes)
+			encrypted, err := EncryptAes256(encryptKey, secretBytes)
 			if err != nil {
 				if !tt.wantError {
 					t.Fatalf("unexpected encryption error: %v", err)
@@ -107,29 +107,34 @@ func TestEncryptionAndDecryption(t *testing.T) {
 				decryptKey = tt.decryptKey
 			}
 
+			payload := &EncryptedPayload{
+				Ciphertext: encrypted.Ciphertext,
+				Nonce:      encrypted.Nonce,
+			}
+
 			if tt.forceNonce != nil || (tt.wantError && tt.name == "nil nonce during decrypt") {
-				nonce = tt.forceNonce
+				payload.Nonce = tt.forceNonce
 			}
 
 			if tt.forceCiphertext != nil || (tt.wantError && tt.name == "nil ciphertext during decrypt") {
-				ciphertext = tt.forceCiphertext
+				payload.Ciphertext = tt.forceCiphertext
 			}
 
 			if tt.corruptNonce {
-				nonce = append([]byte(nil), nonce...)
-				nonce[0] ^= 0xFF
+				payload.Nonce = append([]byte(nil), payload.Nonce...)
+				payload.Nonce[0] ^= 0xFF
 			}
 
 			if tt.truncateCiphertext {
-				ciphertext = append([]byte(nil), ciphertext[:len(ciphertext)-1]...)
+				payload.Ciphertext = append([]byte(nil), payload.Ciphertext[:len(payload.Ciphertext)-1]...)
 			}
 
 			if tt.corruptCiphertext {
-				ciphertext = append([]byte(nil), ciphertext...)
-				ciphertext[len(ciphertext)-1] ^= 0xFF
+				payload.Ciphertext = append([]byte(nil), payload.Ciphertext...)
+				payload.Ciphertext[len(payload.Ciphertext)-1] ^= 0xFF
 			}
 
-			plaintext, err := DecryptAes256(decryptKey, nonce, ciphertext)
+			plaintext, err := DecryptAes256(decryptKey, payload)
 			if plaintext != nil {
 				defer plaintext.Destroy()
 			}
@@ -168,7 +173,7 @@ func TestEncryptFailed(t *testing.T) {
 	}
 	defer aesKey.Destroy()
 
-	ciphertext, nonce, err := EncryptAes256(aesKey, secret.Bytes())
+	encrypted, err := EncryptAes256(aesKey, secret.Bytes())
 	if err != nil {
 		t.Fatalf("error during encrypting")
 	}
@@ -182,7 +187,7 @@ func TestEncryptFailed(t *testing.T) {
 	}
 	defer wrongAesKey.Destroy()
 
-	_, err = DecryptAes256(wrongAesKey, nonce, ciphertext)
+	_, err = DecryptAes256(wrongAesKey, encrypted)
 	if err == nil {
 		t.Fatal("expected decrypt failure with wrong password")
 	}

@@ -1,15 +1,12 @@
-package mldsa_data
+package mldsa_data_test
 
 import (
-	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
-	"P2Chat/cmd/client/internals/argon"
-	keyencryption "P2Chat/cmd/client/internals/encryption/encryption_hsm"
-	"P2Chat/cmd/client/internals/p2version"
+	mldsa "P2Chat/cmd/client/internals/keys/mldsa"
 	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	data "P2Chat/cmd/client/internals/storage"
+	mldsadata "P2Chat/cmd/client/internals/storage/mldsa_data"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/awnumar/memguard"
 
@@ -19,12 +16,12 @@ import (
 func TestLoadKeysFromFileErrors(t *testing.T) {
 	tempDir := t.TempDir()
 
-	_, err := LoadPrivateKeyFromFile(tempDir, "missing.bin")
+	_, err := mldsadata.LoadPrivateKeyFromFile(tempDir, "missing.bin")
 	if err == nil {
 		t.Fatal("missing private key file should return error")
 	}
 
-	_, err = LoadPublicKeyFromFile(tempDir, "missing.bin")
+	_, err = mldsadata.LoadPublicKeyFromFile(tempDir, "missing.bin")
 	if err == nil {
 		t.Fatal("missing public key file should return error")
 	}
@@ -61,7 +58,7 @@ func TestLoadPrivateKeyMLDSAFromCorruptedFile(t *testing.T) {
 		t.Fatal("error during corrupted private key save", err)
 	}
 
-	_, err = LoadPrivateKeyFromFile(tempDir, "SK.bin")
+	_, err = mldsadata.LoadPrivateKeyFromFile(tempDir, "SK.bin")
 	if err == nil {
 		t.Fatal("corrupted private key file should return error")
 	}
@@ -98,7 +95,7 @@ func TestLoadPublicKeyMLDSAFromCorruptedFile(t *testing.T) {
 		t.Fatal("error during corrupted public key save", err)
 	}
 
-	_, err = LoadPublicKeyFromFile(tempDir, "PK.bin")
+	_, err = mldsadata.LoadPublicKeyFromFile(tempDir, "PK.bin")
 	if err == nil {
 		t.Fatal("corrupted public key file should return error")
 	}
@@ -106,55 +103,23 @@ func TestLoadPublicKeyMLDSAFromCorruptedFile(t *testing.T) {
 
 func createRealKeyPairForTest() (*struct_mldsa.PrivateKeyMLDSA, *struct_mldsa.PublicKeyMLDSA, error) {
 	password := memguard.NewEnclave([]byte("password1"))
-
-	publicKey, privateKeyExposed, err := mldsa87.GenerateKey(nil)
+	private, public, err := mldsa.CreateKeys()
 	if err != nil {
 		return nil, nil, err
 	}
-	defer privateKeyExposed.Destroy()
-
-	privateKeyBuf, err := privateKeyExposed.LockedBuffer()
+	encrypted, err := private.Encrypt(password, 3, false)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer privateKeyBuf.Destroy()
-
-	privateKeyEnc := memguard.NewEnclave(privateKeyBuf.Bytes())
-
-	ciphertext, encryptionParams, err := keyencryption.Encrypt(password, privateKeyEnc, 3, false)
+	serializedPublic, err := public.Serialize()
 	if err != nil {
 		return nil, nil, err
 	}
-
-	argonParams := argon.CreateArgonParams(3)
-	argonParams.Salt = encryptionParams.Salt
-
-	privateKeyStruct := &struct_mldsa.PrivateKeyMLDSA{
-		Algorithm:     "ML-DSA-87",
-		P2ChatVersion: p2version.MagicByte(),
-		Timestamp:     time.Now().Unix(),
-		Nonce:         encryptionParams.Nonce,
-		Key:           ciphertext,
-		ArgonParams:   argonParams,
-	}
-
-	if err := privateKeyStruct.SetChecksum(); err != nil {
+	if err := encrypted.SetChecksum(); err != nil {
 		return nil, nil, err
 	}
-
-	var packedPublic [mldsa87.PublicKeySize]byte
-	publicKey.Pack(&packedPublic)
-
-	publicKeyStruct := &struct_mldsa.PublicKeyMLDSA{
-		Algorithm:     "ML-DSA-87",
-		P2ChatVersion: string(p2version.MagicByte()),
-		Timestamp:     uint32(time.Now().Unix()),
-		Key:           packedPublic[:],
-	}
-
-	if err := publicKeyStruct.SetChecksum(); err != nil {
+	if err := serializedPublic.SetChecksum(); err != nil {
 		return nil, nil, err
 	}
-
-	return privateKeyStruct, publicKeyStruct, nil
+	return encrypted, serializedPublic, nil
 }

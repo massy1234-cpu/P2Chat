@@ -2,10 +2,8 @@ package transmission
 
 import (
 	"P2Chat/cmd/client/internals/p2log"
-	"P2Chat/pkg/apperr"
 	"bytes"
 	"crypto/sha256"
-	"encoding/binary"
 	"io"
 	"net"
 	"time"
@@ -18,32 +16,23 @@ func ReadMessage(conn net.Conn) (data []byte, err error) {
 
 	conn.SetReadDeadline(time.Now().Add(10 * time.Minute))
 
-	var header [38]byte
+	var rawHeader [HeaderSize]byte
 
-	_, err = io.ReadFull(conn, header[:])
+	_, err = io.ReadFull(conn, rawHeader[:])
 	if err != nil {
 		p2log.Warning("Packet NOT received correctly", err)
 		return nil, err
 	}
 
-	totalSize := binary.BigEndian.Uint32(header[:4])
-	padLen := binary.BigEndian.Uint16(header[4:6])
-	checksum := header[6:]
-
-	if totalSize == 0 {
-		return nil, apperr.New("empty packet")
+	header := parseHeader(rawHeader)
+	if err := header.Validate(); err != nil {
+		if header.TotalSize > MaxMessageSize && uint32(header.PadLen) < header.TotalSize {
+			p2log.Error("Packet is too much larger, possible attacker ", err)
+		}
+		return nil, err
 	}
 
-	if uint32(padLen) >= totalSize {
-		return nil, apperr.New("invalid padding length")
-	}
-
-	if totalSize > MaxMessageSize {
-		p2log.Error("Packet is too much larger, possible attacker ", err)
-		return nil, apperr.New("max lenght exceeded")
-	}
-
-	buf := make([]byte, totalSize)
+	buf := make([]byte, header.TotalSize)
 	_, err = io.ReadFull(conn, buf)
 
 	if err != nil {
@@ -51,13 +40,13 @@ func ReadMessage(conn net.Conn) (data []byte, err error) {
 		return nil, err
 	}
 
-	dataLen := totalSize - uint32(padLen)
-	data = buf[:dataLen]
-
-	if !MatchChecksum(data, checksum) {
+	dataLen := header.TotalSize - uint32(header.PadLen)
+	packet := Packet{Header: header, Payload: buf[:dataLen], Padding: buf[dataLen:]}
+	if err := packet.Validate(); err != nil {
 		p2log.Error("error in the checksum match")
-		return nil, apperr.New("error, packet is corrupt, possible manomission")
+		return nil, err
 	}
+	data = packet.Payload
 
 	return data, nil
 

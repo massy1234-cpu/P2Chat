@@ -2259,6 +2259,55 @@ and now using the session secret and verifing that they have the correct frindsh
 this is for now the most clean, secure and simple way to do it
 
 
+## Roadmap: primo contatto e header cifrato (2026-10-25)
+
+Questa sezione documenta la strada scelta per il primo contatto e le richieste di amicizia. È una roadmap, non una dichiarazione di implementazione completa; integra le idee precedenti sulle mailbox e sul friendship secret.
+
+### Flusso previsto
+
+1. Alice recupera il bundle pubblico di Bob e verifica le firme delle chiavi utilizzate.
+2. Alice esegue la derivazione PQXDH per ottenere il segreto iniziale `SK`. Da questo deriva, con una KDF e un contesto dedicato, la chiave AEAD del messaggio iniziale, che può contenere la richiesta di amicizia.
+3. Alice prepara l'header necessario a Bob per ricostruire `SK`: identità pubblica del mittente e relativi dati di verifica previsti dalla variante del progetto, pubblica effimera X25519, identificatori delle prekey utilizzate e ciphertext ML-KEM interno a PQXDH.
+4. Per nascondere questi metadati, inclusa la IK fissa di Alice, Alice effettua un secondo incapsulamento indipendente con la pubblica ML-KEM last-resort di Bob. Ottiene `ss_esterno` e `ciphertext_esterno`; deriva da `ss_esterno` una chiave dedicata alla cifratura AEAD dell'header. Non usa direttamente il ciphertext come chiave e non pubblica `ss_esterno`.
+5. Alice deposita la richiesta nella mailbox del primo contatto. Bob usa la privata last-resort per decapsulare il ciphertext esterno e tenta l'apertura autenticata dell'header. Se questa riesce, ricostruisce `SK` con le proprie private e i metadati ricevuti, quindi verifica e decifra il messaggio.
+6. Dopo il primo scambio valido, il friendship secret permette di derivare TAG e riferimenti alle mailbox per le richieste successive tra amici. Derivazione, rotazione, sincronizzazione e conferma reciproca del segreto restano da specificare.
+
+Schema concettuale del pacchetto:
+
+```text
+Versione e informazioni per selezionare la chiave esterna
+Ciphertext ML-KEM esterno
+Nonce header + header cifrato con tag AEAD
+Nonce messaggio + messaggio cifrato con tag AEAD
+```
+
+Il ciphertext ML-KEM esterno rimane pubblico. Il ciphertext ML-KEM di PQXDH è invece dentro l'header cifrato. Ogni richiesta usa un incapsulamento fresco; chiavi e contesti di derivazione dei due livelli devono essere separati. Il protocollo dovrà definire gli associated data per legare header, contenuto e contesto, la gestione dei nonce, la protezione dai replay e la rotazione delle last-resort con una finestra di conservazione delle vecchie private.
+
+Un piccolo controllo AEAD separato è un'opzione da valutare, non un requisito: non elimina il decapsulamento per ogni richiesta candidata. Il solo successo del decapsulamento non identifica il destinatario; serve la verifica AEAD. L'apertura dell'involucro non autentica Alice, perché chiunque può incapsulare usando la pubblica di Bob. L'autenticazione del mittente appartiene al protocollo interno.
+
+La protezione riguarda il contenuto dell'header, non tutti i metadati del server: accesso al bundle, connessione autenticata, tempi e gruppi di mailbox possono ancora rivelare informazioni. La futura compromissione della privata last-resort permette inoltre di aprire gli header registrati che erano protetti con quella chiave.
+
+### Benchmark di fattibilità
+
+Misure locali su **Apple M4, macOS darwin/arm64**, tramite `BenchmarkMLKEM768` in `cmd/client/internals/keys/mlkem/mlkem_keys_test.go`:
+
+| Operazione | Iterazioni | Tempo medio | Allocazioni Go |
+|---|---:|---:|---:|
+| Encapsulate | 23.420 | 50.975 ns/op = 50,975 µs | 1.400 B/op, 4 allocs/op |
+| Decapsulate | 8.299 | 144.620 ns/op = 144,620 µs | 8.873 B/op, 10 allocs/op |
+
+Il benchmark usa le API del progetto e include la gestione memguard: nel decapsulamento apre l'enclave, ricostruisce la chiave operativa e distrugge il buffer del segreto risultante. La preparazione iniziale è esclusa dal tempo misurato.
+
+Questi dati mostrano la fattibilità del passaggio ML-KEM su hardware consumer, senza richiedere un server dedicato, per volumi moderati. L'M4 è comunque un processore moderno e performante: non abbiamo ancora misure su dispositivi meno potenti. Non è stato misurato il flusso completo con download, KDF e AEAD. Usando il tempo osservato, il solo decapsulamento sequenziale richiederebbe circa 0,145 s per 1.000 richieste, 1,45 s per 10.000 e 14,5 s per 100.000: sono proiezioni, non benchmark di scansione completa.
+
+### Limiti di saturazione e crescita degli utenti
+
+La cifratura non impedisce di riempire le mailbox con richieste inutili. PoW di registrazione/login e token di login già introdotti forniscono costi o controlli di accesso parziali, ma non costituiscono una quota di pubblicazione. In particolare il quick login con token salta la PoW di login, e un accesso autenticato non limita automaticamente quanti messaggi si possono inserire.
+
+Restano quindi da progettare limiti specifici per le mailbox: dimensione massima delle richieste, scadenza automatica, quote di invio, eventuale PoW per pubblicazione, suddivisione in gruppi e recupero incrementale tramite cursore. Questi sono interventi previsti da valutare, non protezioni mailbox già implementate.
+
+Esiste anche un limite dovuto al traffico legittimo: all'aumentare degli utenti e delle richieste, una mailbox globale richiederebbe a ogni destinatario download e decapsulamenti crescenti. La suddivisione riduce il lavoro per lettore ma espone un gruppo di possibili destinatari; non riduce da sola lo spazio totale. La capacità sostenibile e i parametri dei gruppi dovranno essere verificati con prove di carico.
+
 ## PQXDH and now server
 
 i have implemented the protocol PQXDH into the code, the client side and now i have to implement the functions for the server, specifically the connections, the registration and other things but now we will go in order 
@@ -2616,6 +2665,8 @@ servers
     │   ├── 0x01       → serialized LoginToken
     │   ├── 0x02       → serialized LoginToken
     │   └── 0x03       → serialized LoginToken
+    ├── nickname-catalog
+    │   └── Nickname-catalog → JSON nickname list
     └── users
         └── <nickname> → protobuf UserBundle
 
@@ -2630,6 +2681,12 @@ private:bundles
     └── kem-sets
         └── uint32BE(index) → serialized private KEM set
 ```
+
+#### Nickname catalog and bundle freshness
+
+Keeping a local nickname catalog is not a bundle-freshness problem. The catalog is only an index used to discover and select nicknames; it does not contain the authoritative public bundle and it is not used as a snapshot of a user's keys. When the client later requests a bundle for a selected nickname, the server resolves the current nickname association and returns the most recently stored bundle for that user. Therefore, updating or rotating a user's bundle does not require every client to receive a new catalog before retrieving the updated bundle.
+
+This separation is preferable: the catalog can be cached and consulted efficiently, while bundle acquisition remains authoritative and fresh at request time. A stale catalog may at most contain a nickname that has subsequently been removed or renamed, in which case the server rejects that lookup; it must never cause the server to return an older cached bundle from the catalog.
 
 `SavePassTokens` replaces the server's `pass-tokens` bucket atomically with exactly three entries. `LoadPassToken` returns the lowest remaining slot and `DeletePassToken` removes the acknowledged or rejected slot. Serialized Pass Tokens are bearer secrets and are currently stored as raw protobuf values in bbolt; protobuf serialization is not encryption.
 

@@ -15,7 +15,7 @@ var dst = []byte("P2CHAT-BLINDBLS_BLS12381G1_XMD:SHA-256_SSWU_RO_")
 
 // pkHash returns the SHA-256 fingerprint of a public key.
 func pkHash(pk *PublicKey) [32]byte {
-	b := pk.Y.Bytes()
+	b := pk.point.Bytes()
 	return sha256.Sum256(b[:])
 }
 
@@ -26,7 +26,7 @@ func (sk *PrivateKey) SignBlind(blindedPoint *bls.G1Affine) (*bls.G1Affine, [32]
 	}
 	xBig := new(big.Int)
 	defer xBig.SetInt64(0)
-	x := sk.GetX()
+	x := sk.getX()
 	if x == nil {
 		p2log.Error("error during blind signature, x is nil")
 		return nil, [32]byte{}
@@ -65,7 +65,7 @@ func Verify(pk *PublicKey, msg []byte, sig *bls.G1Affine) (bool, error) {
 	_, _, _, g2Gen := bls.Generators()
 
 	var negY bls.G2Affine
-	negY.Neg(&pk.Y)
+	negY.Neg(&pk.point)
 
 	ok, err := bls.PairingCheck(
 		[]bls.G1Affine{*sig, M},

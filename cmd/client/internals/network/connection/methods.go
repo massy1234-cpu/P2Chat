@@ -5,6 +5,7 @@ import (
 	bundlereg "P2Chat/cmd/client/internals/network/phases/bundle_reg"
 	getuserbundle "P2Chat/cmd/client/internals/network/phases/get_user_bundle"
 	"P2Chat/cmd/client/internals/network/phases/login"
+	nicknamecatalog "P2Chat/cmd/client/internals/network/phases/nickname_catalog"
 	"P2Chat/cmd/client/internals/network/phases/server_identification"
 	"P2Chat/cmd/client/internals/network/phases/token_registration"
 	session "P2Chat/cmd/client/internals/network/session"
@@ -229,8 +230,8 @@ func (c *Connection) CheckBundleAvailability() (*session.SingleSession, <-chan [
 }
 
 // GetUserBundle opens the bundle acquisition phase. The caller injects
-// getuserbundle.AcquisitionNickname through PutRouter and receives the
-// serialized UserBundle on Events when the phase completes.
+// getuserbundle.AcquisitionBundle with three nicknames through PutRouter and
+// receives the serialized bundle batch on Events when the phase completes.
 func (c *Connection) GetUserBundle() (*session.SingleSession, <-chan []byte, error) {
 	newStream, err := c.MasterSession.OpenStream()
 	if err != nil {
@@ -240,6 +241,23 @@ func (c *Connection) GetUserBundle() (*session.SingleSession, <-chan []byte, err
 	sess := c.NewSession(newStream)
 	sess.Tag = "User bundle acquisition"
 	sess.Handler = getuserbundle.Handler
+	sess.Init()
+
+	return sess, sess.Events, nil
+}
+
+// GetNicknameCatalog opens the nickname catalog acquisition phase. The caller
+// injects nicknamecatalog.AcquisitionNicknames through PutRouter and receives
+// the validated catalog JSON on Events when the phase completes.
+func (c *Connection) GetNicknameCatalog() (*session.SingleSession, <-chan []byte, error) {
+	newStream, err := c.MasterSession.OpenStream()
+	if err != nil {
+		return nil, nil, apperr.Wrap("open user bundle stream", err)
+	}
+
+	sess := c.NewSession(newStream)
+	sess.Tag = "Nickname catalog acquisition"
+	sess.Handler = nicknamecatalog.Handler
 	sess.Init()
 
 	return sess, sess.Events, nil

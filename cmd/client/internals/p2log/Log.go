@@ -17,16 +17,16 @@ const (
 	colorGreen  = "\033[32m"
 	colorOrange = "\033[38;5;214m" // 256-color orange (no standard ANSI orange)
 	colorRed    = "\033[31m"
-	nameDir 	= "Log Files"
+	nameDir     = "Log Files"
 )
 
 var encoder *json.Encoder
 
 type log struct {
-	Time 	string	`json:"time"`
-	Level 	int		`json:"level"`
-	Message	string	`json:"message"`
-	Args    string	`json:"args"`
+	Time    string `json:"time"`
+	Level   int    `json:"level"`
+	Message string `json:"message"`
+	Args    string `json:"args"`
 }
 
 // Debug : details
@@ -37,7 +37,7 @@ type log struct {
 var initialized bool = false
 var mu sync.Mutex
 
-// create a log 
+// create a log
 func createLog(prototype string, level int, msg string, args ...any) {
 
 	mu.Lock()
@@ -62,51 +62,50 @@ func createLog(prototype string, level int, msg string, args ...any) {
 		color2 = colorRed
 	}
 
-	// print in the console
-	fmt.Println(color2 + Logmsg + colorReset)
+	formattedMessage := color2 + Logmsg + colorReset
+	if level == 4 {
+		fmt.Fprintln(os.Stderr, formattedMessage)
+	}
+	if level >= 3 {
+		fmt.Fprintln(os.Stdout, formattedMessage)
+	}
 
 	// create the JSON structure and write it on the file
 	logMessage := log{
-		Time:		timestamp,
-		Level:		level,
-		Message:	msg,
-		Args: 		argsMsg,	
+		Time:    timestamp,
+		Level:   level,
+		Message: msg,
+		Args:    argsMsg,
 	}
 	if encoder != nil {
 		encoder.Encode(logMessage)
 	}
 }
 
-
 func Debug(msg string, args ...any) {
 	createLog("DEBUG", 1, msg, args...)
 }
-
 
 func Info(msg string, args ...any) {
 	createLog("INFO", 2, msg, args...)
 }
 
-
 func Warning(msg string, args ...any) {
 	createLog("WARNING", 3, msg, args...)
 }
-
 
 func Error(msg string, args ...any) {
 	createLog("ERROR", 4, msg, args...)
 }
 
-
-// initialize the log file 
+// initialize the log file
 func initMessage(file *os.File) {
 	timestamp := time.Now().Format("02-01-2006 15:04:05")
-	message := fmt.Sprint("--- NEW OPENING LOG FILE ---\n--- TIME : ",timestamp," ---\n")
-	fmt.Fprintf(file,message)
+	message := fmt.Sprint("--- NEW OPENING LOG FILE ---\n--- TIME : ", timestamp, " ---\n")
+	fmt.Fprint(file, message)
 }
 
-
-// initialize the FILE LOG 
+// initialize the FILE LOG
 func initializeLog() {
 	var err error
 
@@ -116,7 +115,8 @@ func initializeLog() {
 
 	file, err := os.OpenFile(filepath.Join(dir, "log_console.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		fmt.Println("Error with opening log file : ", err)
+		fmt.Fprintln(os.Stderr, "Error with opening log file: ", err)
+		fmt.Fprintln(os.Stdout, "Error with opening log file: ", err)
 	}
 
 	// initialize the JSON stream writer ( global variable )

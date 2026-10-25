@@ -3,13 +3,10 @@
 package HSM
 
 import (
-	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
-	"P2Chat/cmd/client/internals/argon"
-	struct_mldsa "P2Chat/cmd/client/internals/proto_generated/mldsa/proto_struct_mldsa"
 	"P2Chat/cmd/client/internals/HSM/SE"
-	"P2Chat/cmd/client/internals/p2version"
+	mldsa "P2Chat/cmd/client/internals/keys/mldsa"
+	"github.com/awnumar/memguard"
 	"testing"
-	"time"
 )
 
 func TestSEEncryptKey(t *testing.T) {
@@ -17,30 +14,13 @@ func TestSEEncryptKey(t *testing.T) {
 		t.Skip("SE not available on this machine")
 	}
 
-	publicKey, privateKeyExposed, err := mldsa87.GenerateKey(nil)
+	private, _, err := mldsa.CreateKeys()
 	if err != nil {
-		t.Fatal("GenerateKey failed: ", err)
+		t.Fatal(err)
 	}
-	defer privateKeyExposed.Destroy()
-
-	privateKey, err := privateKeyExposed.LockedBuffer()
+	realKey, err := private.Encrypt(memguard.NewBufferRandom(32).Seal(), 1, false)
 	if err != nil {
-		t.Fatal("LockedBuffer failed: ", err)
-	}
-	defer privateKey.Destroy()
-
-	var packedPublic [mldsa87.PublicKeySize]byte
-	publicKey.Pack(&packedPublic)
-
-	argonParams := argon.CreateArgonParams(3)
-
-	realKey := &struct_mldsa.PrivateKeyMLDSA{
-		Algorithm:     "ML-DSA-87",
-		P2ChatVersion: p2version.MagicByte(),
-		Timestamp:     time.Now().Unix(),
-		Nonce:         make([]byte, 12),
-		Key:           privateKey.Bytes(),
-		ArgonParams:   argonParams,
+		t.Fatal(err)
 	}
 
 	encrypted, err := EncryptKey(realKey)

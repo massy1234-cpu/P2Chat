@@ -1,7 +1,7 @@
 package login
 
 import (
-	"P2Chat/cmd/client/cirl-custom/circl/sign/mldsa/mldsa87"
+	"P2Chat/cmd/client/internals/keys/mldsa"
 	blind "P2Chat/cmd/client/internals/network/blind_signature"
 	"P2Chat/cmd/client/internals/network/phases"
 	"P2Chat/cmd/client/internals/p2log"
@@ -123,7 +123,7 @@ func handleSigned(result *phases.Result, current *LoginClient, tag byte, msg []b
 	if err := proto.Unmarshal(msg, signatures); err != nil {
 		return phases.FillResult(result, nil, 0, false, true, nil, err)
 	}
-	if len(signatures.MldsaSignature) != mldsa87.SignatureSize || len(signatures.X25519Signature) != 64 {
+	if len(signatures.MldsaSignature) != mldsa_keys.SignatureSize || len(signatures.X25519Signature) != 64 {
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid login signatures"))
 	}
 	current.proof.MldsaSignature = signatures.MldsaSignature
@@ -157,8 +157,8 @@ func handleToken(result *phases.Result, currentState *LoginClient, byteCode byte
 	if !bytes.Equal(hash[:], reply.KeyHash) {
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("login public key hash mismatch"))
 	}
-	var public serverblind.PublicKey
-	if _, err := public.Y.SetBytes(reply.PublicKey); err != nil || public.Y.IsInfinity() || !public.Y.IsInSubGroup() {
+	public, err := serverblind.NewPublicKey(reply.PublicKey)
+	if err != nil {
 		return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid login public key"))
 	}
 	batch := &loginproto.LoginTokenBatch{}
@@ -168,7 +168,7 @@ func handleToken(result *phases.Result, currentState *LoginClient, byteCode byte
 			return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("invalid login blind signature"))
 		}
 		sig := currentState.blindStates[i].Unblind(&point)
-		ok, err := serverblind.Verify(&public, currentState.blindStates[i].Msg, &sig)
+		ok, err := serverblind.Verify(public, currentState.blindStates[i].Msg, &sig)
 		if err != nil || !ok {
 			return phases.FillResult(result, nil, 0, false, true, nil, apperr.New("login token verification failed"))
 		}

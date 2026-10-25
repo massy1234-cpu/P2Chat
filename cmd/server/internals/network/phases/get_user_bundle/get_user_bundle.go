@@ -11,6 +11,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const bundleRequestCount = 3
+
 func init() {
 	dispatcher.RegistryByteCode(phases.BundleAcquisitionRequest, Handler)
 }
@@ -61,29 +63,44 @@ func Handler(byteCode byte, msg []byte, phaseState *any) *phases.Result {
 }
 
 func handleRequest(result *phases.Result, currentState *BundleSearched, msg []byte) *phases.Result {
+	if !currentState.authenticated {
+		currentState.state = stateFailed
+		return phases.FillResult(result, nil, 0, false, true, apperr.New("authentication required"))
+	}
+
 	request := &bundle_request_structs.BundleRequest{}
 	if err := proto.Unmarshal(msg, request); err != nil {
 		currentState.state = stateFailed
-		return phases.FillResult(result, nil, 0, false, true, apperr.New("invalid bundle request"))
+		return phases.FillResult(result, nil, 0, false, true, apperr.Wrap("decode bundle request", err))
+	}
+	if err := validateNicknames(request.GetNicknames()); err != nil {
+		currentState.state = stateFailed
+		return phases.FillResult(result, nil, 0, false, true, err)
 	}
 	currentState.request = request
 
-	response := &bundle_request_structs.BundleResponse{}
-	if currentState.authenticated {
-		if id, err := database.GetValue(append([]byte("nickname:"), request.Nickname...)); err == nil {
-			if bundle, err := database.GetValue(id); err == nil {
-				payload := &bundleproto.UserBundle{}
-				if err := proto.Unmarshal(bundle, payload); err == nil {
-					response.Bundle = payload
-				}
-			}
+	response := &bundle_request_structs.BundleResponse{Bundles: make([]*bundleproto.UserBundle, 0, bundleRequestCount)}
+	for _, nickname := range request.GetNicknames() {
+		bundleID, err := database.GetBundleIDByNickname(nickname)
+		if err != nil {
+			currentState.state = stateFailed
+			return phases.FillResult(result, nil, 0, false, true, apperr.Wrap("resolve requested nickname", err))
 		}
+		publicBundle, err := database.LoadPublicBundle(bundleID)
+		if err != nil {
+			currentState.state = stateFailed
+			return phases.FillResult(result, nil, 0, false, true, apperr.Wrap("load requested bundle", err))
+		}
+		response.Bundles = append(response.Bundles, &bundleproto.UserBundle{
+			Nickname:     string(nickname),
+			PublicBundle: publicBundle,
+		})
 	}
 
 	serialized, err := proto.Marshal(response)
 	if err != nil {
 		currentState.state = stateFailed
-		return phases.FillResult(result, nil, 0, false, true, apperr.New("error serializing bundle response"))
+		return phases.FillResult(result, nil, 0, false, true, apperr.Wrap("serialize bundle response", err))
 	}
 	currentState.state = stateAwaitConfirmation
 	return phases.FillResult(result, [][]byte{append([]byte{phases.BundleAcquisitionResponse}, serialized...)}, 0, false, false, nil)
@@ -98,10 +115,28 @@ func handleConfirmation(result *phases.Result, currentState *BundleSearched, byt
 	return phases.FillResult(result, nil, 0, true, false, nil)
 }
 
+func validateNicknames(nicknames [][]byte) error {
+	if len(nicknames) != bundleRequestCount {
+		return apperr.New("bundle request must contain exactly three nicknames")
+	}
+	seen := make(map[string]struct{}, bundleRequestCount)
+	for _, nickname := range nicknames {
+		if err := database.ValidateNickname(string(nickname)); err != nil {
+			return apperr.Wrap("validate requested nickname", err)
+		}
+		value := string(nickname)
+		if _, exists := seen[value]; exists {
+			return apperr.New("duplicate nickname in bundle request")
+		}
+		seen[value] = struct{}{}
+	}
+	return nil
+}
+
 func CheckSize(tag byte, payloadLen int) bool {
 	switch tag {
 	case phases.BundleAcquisitionRequest:
-		return payloadLen > 0 && payloadLen <= 128
+		return payloadLen > 0 && payloadLen <= 512
 	case phases.BundleAcquisitionConfirmation:
 		return payloadLen == 0
 	default:

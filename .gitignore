@@ -1,6 +1,8 @@
 # Binaries and compiled outputs
-client
-server
+/client
+/server
+/p2chat
+*.app/
 *.test
 *.dylib
 *.so
@@ -21,29 +23,55 @@ server
 ehthumbs.db
 Thumbs.db
 
-# Tor cache and runtime data
-data/Tor/
-data/Log Files/
+# Local runtime data: keys, certificates, Tor cache and logs
+/data/
+/cmd/client/data/
+/cmd/server/data/
+/cmd/client/internals/keys/mldsa/data/
+*.log
 
-# Databases and local runtime keys
-database.db
-data/bundle_*_IK_keys/
+# Databases
+*.db
+*.db-shm
+*.db-wal
+
+# Private keys, credentials and signing profiles
+*.key
+*.pem
+*.crt
+*.bin
+*.p12
+*.pfx
+*.provisionprofile
+.env
+.env.*
+!.env.example
 
 # Python & CNN Password Classifier build artifacts / virtualenvs
 **/_internal/
 **/build/
 **/dist/
 **/__pycache__/
+.venv/
+venv/
+.pytest_cache/
 *.pyc
 *.pyo
 *.pyd
 *.pt
-*.spec
 password_cnn/build/
 password_cnn/dist/
 password_cnn/rockyou.txt
 password_cnn/passwords_full.csv
 cmd/client/internals/cnn_password/neuralNetwork/
 
+# Frontend dependencies and Tauri generated outputs
+node_modules/
+/P2Chat-UI/src-tauri/target/
+/P2Chat-UI/src-tauri/gen/
+
 # Output CAD/Test artifacts
 output/
+
+# Local Obsidian knowledge base
+/Knowledge Base/
